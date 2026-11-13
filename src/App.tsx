@@ -306,7 +306,6 @@ export default function App() {
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
-        onOpenBrandModal={() => setBrandModalOpen(true)}
       />
 
       <PushToast

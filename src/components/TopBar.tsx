@@ -8,7 +8,6 @@ interface TopBarProps {
   unreadNotifications: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
-  onOpenBrandModal: () => void;
 }
 
 export function TopBar({
@@ -17,7 +16,6 @@ export function TopBar({
   unreadNotifications,
   theme,
   onToggleTheme,
-  onOpenBrandModal,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -35,18 +33,13 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-30 h-13 md:h-16 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
       <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-8">
-        {/* Zone 1: Logo brand with icon */}
-        <button
-          type="button"
-          onClick={onOpenBrandModal}
-          aria-label="Open Looma brand and logo assets"
-          className="flex items-center gap-2 font-display text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 cursor-pointer group focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600"
-        >
-          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm group-hover:bg-blue-700 transition-colors">
-            <img src="/icon.svg" alt="Looma logo" className="w-4 h-4 object-contain filter brightness-200" />
+        {/* Zone 1: Static Logo brand with icon */}
+        <div className="flex items-center gap-2 font-display text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 select-none">
+          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
+            <img src="/icon.svg" alt="" className="w-4 h-4 object-contain filter brightness-200" />
           </div>
           <span>Looma</span>
-        </button>
+        </div>
 
         {/* Zone 2: 4 single-line navigation links */}
         <nav
