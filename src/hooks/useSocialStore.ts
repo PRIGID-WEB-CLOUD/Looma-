@@ -63,6 +63,7 @@ import {
   canUseAutostart,
   computeConnections,
   computeOtherUserConnections,
+  extractMentions,
   groupStoriesByAuthor,
   isAuthorizedSession,
   normalizeAssetUrl,
@@ -1267,6 +1268,21 @@ export function useSocialStore() {
         targetPostId: postId,
       });
 
+      const mentionedHandles = extractMentions(newPost.caption);
+      for (const handle of mentionedHandles) {
+        if (handle !== profile.handle.toLowerCase()) {
+          await triggerNotification({
+            actorId: profile.uid,
+            actorName: profile.displayName,
+            actorAvatar: profile.avatarUrl,
+            type: 'mention',
+            title: `${profile.displayName} mentioned you in a post`,
+            body: newPost.caption.slice(0, 90),
+            targetPostId: postId,
+          });
+        }
+      }
+
       return newPost;
     },
     [firebaseUser, profile, triggerNotification]
@@ -1418,6 +1434,21 @@ export function useSocialStore() {
         body: newComment.text,
         targetPostId: post.id,
       });
+
+      const mentionedHandles = extractMentions(newComment.text);
+      for (const handle of mentionedHandles) {
+        if (handle !== profile.handle.toLowerCase()) {
+          await triggerNotification({
+            actorId: profile.uid,
+            actorName: profile.displayName,
+            actorAvatar: profile.avatarUrl,
+            type: 'mention',
+            title: `${profile.displayName} mentioned you in a comment`,
+            body: newComment.text.slice(0, 90),
+            targetPostId: post.id,
+          });
+        }
+      }
     },
     [firebaseUser, profile, remotePosts, triggerNotification]
   );

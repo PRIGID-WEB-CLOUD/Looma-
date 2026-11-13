@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus, Search, X } from 'lucide-react';
+import { Hash, ImagePlus, Search, X } from 'lucide-react';
 import type { Post, PostComment, StoryGroup, UserProfile } from '../types/social';
-import { paginateFeed } from '../utils/socialLogic';
+import { POPULAR_HASHTAGS, paginateFeed } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
 import { StoriesStrip } from './StoriesStrip';
@@ -13,6 +13,8 @@ interface FeedViewProps {
   commentsByPost: Record<string, PostComment[]>;
   likedPostIds: string[];
   bookmarkedPostIds: string[];
+  searchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
   onOpenComposer: () => void;
   onOpenStory: (group: StoryGroup) => void;
   onOpenAddStory: () => void;
@@ -21,6 +23,8 @@ interface FeedViewProps {
   onAddComment: (post: Post, text: string) => Promise<void>;
   onShareToStory: (post: Post) => Promise<unknown> | void;
   onAuthorClick: (post: Post) => void;
+  onMentionClick?: (handle: string) => void;
+  onSelectHashtag?: (tag: string) => void;
 }
 
 const PAGE_SIZE = 4;
@@ -32,6 +36,8 @@ export function FeedView({
   commentsByPost,
   likedPostIds,
   bookmarkedPostIds,
+  searchQuery: externalSearchQuery,
+  onSearchQueryChange,
   onOpenComposer,
   onOpenStory,
   onOpenAddStory,
@@ -40,8 +46,15 @@ export function FeedView({
   onAddComment,
   onShareToStory,
   onAuthorClick,
+  onMentionClick,
+  onSelectHashtag,
 }: FeedViewProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalQuery, setInternalQuery] = useState('');
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalQuery;
+  const setSearchQuery = (q: string) => {
+    if (onSearchQueryChange) onSearchQueryChange(q);
+    else setInternalQuery(q);
+  };
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -136,6 +149,38 @@ export function FeedView({
         )}
       </div>
 
+      {/* Popular Hashtags Quick Filter Bar */}
+      <div
+        data-testid="feed-hashtag-chips"
+        className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs"
+      >
+        <span className="text-slate-500 dark:text-slate-400 font-semibold shrink-0 flex items-center gap-1">
+          <Hash className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Tags:</span>
+        </span>
+        {POPULAR_HASHTAGS.slice(0, 8).map((tag) => {
+          const isSelected = searchQuery.trim().toLowerCase() === `#${tag}`;
+          return (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => {
+                const next = isSelected ? '' : tag;
+                setSearchQuery(next ? `#${next}` : '');
+                if (next) onSelectHashtag?.(next);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors shrink-0 cursor-pointer ${
+                isSelected
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+            >
+              #{tag}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Feed Cards */}
       {items.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-2">
@@ -159,6 +204,11 @@ export function FeedView({
               onAddComment={onAddComment}
               onShareToStory={onShareToStory}
               onAuthorClick={onAuthorClick}
+              onSelectHashtag={(tag) => {
+                setSearchQuery(`#${tag}`);
+                onSelectHashtag?.(tag);
+              }}
+              onMentionClick={onMentionClick}
             />
           ))}
         </div>

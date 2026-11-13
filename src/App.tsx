@@ -76,6 +76,7 @@ export default function App() {
     followerIds: string[];
     followingIds: string[];
   } | null>(null);
+  const [feedSearchQuery, setFeedSearchQuery] = useState('');
 
   const unreadCount = countUnreadNotifications(store.notifications);
   const appStage = resolveAppStage(
@@ -89,6 +90,7 @@ export default function App() {
     setPreviewOnboarding(false);
     setAuthMode('signin');
     setActiveTab('feed');
+    setFeedSearchQuery('');
     setActiveChatId(null);
     setSelectedPublicProfile(null);
     setConnectionsOwner(null);
@@ -96,6 +98,40 @@ export default function App() {
     setComposerOpen(false);
     setAddStoryOpen(false);
     setActiveStoryAuthorId(null);
+  };
+
+  const handleOpenMention = (handle: string) => {
+    const clean = handle.toLowerCase().replace(/^@+/, '');
+    if (clean === store.profile.handle.toLowerCase()) {
+      setActiveTab('profile');
+      return;
+    }
+    const foundUser =
+      store.communityUsers.find((u) => u.handle.toLowerCase() === clean) ||
+      SEED_CREATORS.find((u) => u.handle.toLowerCase() === clean);
+    if (foundUser) {
+      handleOpenPublicProfile(
+        foundUser.uid,
+        undefined,
+        activeTab === 'public-profile' ? publicProfileReturnTab : (activeTab as any)
+      );
+      return;
+    }
+    const postMatch = store.posts.find(
+      (p) => p.authorHandle.toLowerCase() === clean
+    );
+    if (postMatch) {
+      handleOpenPublicProfile(
+        postMatch.authorId,
+        postMatch,
+        activeTab === 'public-profile' ? publicProfileReturnTab : (activeTab as any)
+      );
+    }
+  };
+
+  const handleHashtagClick = (tag: string) => {
+    setFeedSearchQuery(tag ? `#${tag}` : '');
+    setActiveTab('feed');
   };
 
   const handleOpenDm = async (creator: UserProfile) => {
@@ -425,6 +461,8 @@ export default function App() {
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
               bookmarkedPostIds={store.bookmarkedPostIds}
+              searchQuery={feedSearchQuery}
+              onSearchQueryChange={setFeedSearchQuery}
               onOpenComposer={() => setComposerOpen(true)}
               onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
               onOpenAddStory={() => setAddStoryOpen(true)}
@@ -435,6 +473,8 @@ export default function App() {
               onAuthorClick={(post) =>
                 handleOpenPublicProfile(post.authorId, post)
               }
+              onMentionClick={handleOpenMention}
+              onSelectHashtag={handleHashtagClick}
             />
           )}
 
@@ -472,6 +512,8 @@ export default function App() {
                 onToggleLike={store.toggleLike}
                 onToggleBookmark={store.toggleBookmark}
                 onAddComment={store.addComment}
+                onMentionClick={handleOpenMention}
+                onSelectHashtag={handleHashtagClick}
               />
             );
           })()}
@@ -523,6 +565,8 @@ export default function App() {
               onAuthorClick={(post) =>
                 handleOpenPublicProfile(post.authorId, post, 'profile')
               }
+              onMentionClick={handleOpenMention}
+              onSelectHashtag={handleHashtagClick}
             />
           )}
 
@@ -700,6 +744,7 @@ export default function App() {
       <CreatePostModal
         open={composerOpen}
         profile={store.profile}
+        communityUsers={store.communityUsers}
         onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);

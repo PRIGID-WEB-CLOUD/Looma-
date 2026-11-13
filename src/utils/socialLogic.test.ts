@@ -28,6 +28,13 @@ import {
   validateCommentInput,
   validatePostInput,
   validateProfileInput,
+  extractHashtags,
+  extractMentions,
+  parseTextWithTagsAndMentions,
+  getMentionQueryAtCursor,
+  getHashtagQueryAtCursor,
+  filterCreatorsForMention,
+  filterHashtags,
 } from './socialLogic';
 import type {
   AppNotification,
@@ -571,6 +578,88 @@ test('canSharePostToStory and buildStoryFromPost enforce ownership, media fallba
   const fromText = buildStoryFromPost(textPost);
   assert.equal(fromText.imageUrl, '');
   assert.equal(fromText.caption, 'Quiet morning desk notes.');
+});
+
+test('extractHashtags extracts unique lowercase tags without # symbol', () => {
+  const text = 'Exploring #Architecture in #Kyoto and #architecture again with #Minimalism!';
+  const tags = extractHashtags(text);
+  assert.deepEqual(tags, ['architecture', 'kyoto', 'minimalism']);
+  assert.deepEqual(extractHashtags('No tags here'), []);
+  assert.deepEqual(extractHashtags(''), []);
+});
+
+test('extractMentions extracts unique lowercase handles without @ and strips trailing punctuation', () => {
+  const text = 'Hello @maya.lin and @kenji_sato! Also pinging @maya.lin.';
+  const mentions = extractMentions(text);
+  assert.deepEqual(mentions, ['maya.lin', 'kenji_sato']);
+  assert.deepEqual(extractMentions('No mentions here'), []);
+  assert.deepEqual(extractMentions(''), []);
+});
+
+test('parseTextWithTagsAndMentions tokenizes text, hashtags, and mentions preserving punctuation', () => {
+  const text = 'Notes with @maya.lin on #Minimalism.';
+  const tokens = parseTextWithTagsAndMentions(text);
+  assert.deepEqual(tokens, [
+    { type: 'text', value: 'Notes with ', raw: 'Notes with ' },
+    { type: 'mention', value: 'maya.lin', raw: '@maya.lin' },
+    { type: 'text', value: ' on ', raw: ' on ' },
+    { type: 'hashtag', value: 'minimalism', raw: '#Minimalism' },
+    { type: 'text', value: '.', raw: '.' },
+  ]);
+});
+
+test('getMentionQueryAtCursor and getHashtagQueryAtCursor detect active query at cursor', () => {
+  const mentionText = 'Hey @may';
+  const mentionQuery = getMentionQueryAtCursor(mentionText, mentionText.length);
+  assert.deepEqual(mentionQuery, { query: 'may', startIndex: 4 });
+
+  const hashText = 'Studying #arch';
+  const hashQuery = getHashtagQueryAtCursor(hashText, hashText.length);
+  assert.deepEqual(hashQuery, { query: 'arch', startIndex: 9 });
+
+  assert.equal(getMentionQueryAtCursor('Hello world', 5), null);
+  assert.equal(getHashtagQueryAtCursor('Hello world', 5), null);
+});
+
+test('filterCreatorsForMention and filterHashtags filter candidates cleanly', () => {
+  const creators: UserProfile[] = [
+    {
+      uid: 'c1',
+      displayName: 'Maya Lin',
+      handle: 'maya.lin',
+      bio: '',
+      avatarUrl: '',
+      location: '',
+      interests: [],
+      followersCount: 0,
+      followingCount: 0,
+      onboardingCompleted: true,
+      createdAtMs: 0,
+      updatedAtMs: 0,
+    },
+    {
+      uid: 'c2',
+      displayName: 'Kenji Sato',
+      handle: 'kenji.sato',
+      bio: '',
+      avatarUrl: '',
+      location: '',
+      interests: [],
+      followersCount: 0,
+      followingCount: 0,
+      onboardingCompleted: true,
+      createdAtMs: 0,
+      updatedAtMs: 0,
+    },
+  ];
+
+  const matchedCreators = filterCreatorsForMention('maya', creators);
+  assert.equal(matchedCreators.length, 1);
+  assert.equal(matchedCreators[0].handle, 'maya.lin');
+
+  const matchedTags = filterHashtags('arch');
+  assert.ok(matchedTags.includes('architecture'));
+  assert.ok(!matchedTags.includes('kyoto'));
 });
 
 

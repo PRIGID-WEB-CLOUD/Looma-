@@ -171,7 +171,7 @@ export function createSeedPosts(now = Date.now()): Post[] {
       authorHandle: 'maya.lin',
       authorAvatar: ASSET_AVATAR_MAYA,
       caption:
-        'Late afternoon sun cutting across the cedar louvers and travertine pool. Watching how the shadow grid shifts every fifteen minutes reminds me why physical models still beat renders.',
+        'Late afternoon sun cutting across the cedar louvers and travertine pool. Shadow study with @kenji.sato on timber acoustics. #architecture #minimalism',
       imageUrl: ASSET_POST_ARCH,
       category: 'Architecture',
       likesCount: 142,
@@ -186,7 +186,7 @@ export function createSeedPosts(now = Date.now()): Post[] {
       authorHandle: 'kenji.sato',
       authorAvatar: ASSET_AVATAR_KENJI,
       caption:
-        'Morning ritual before studio crit: single-origin pour-over, linen sketchbook, brass pocket pen, and 35mm rangefinder loaded with Tri-X.',
+        'Morning ritual before studio crit: single-origin pour-over, linen sketchbook, brass pocket pen, and 35mm rangefinder loaded with Tri-X. Tagging @maya.lin for notes. #design #photography',
       imageUrl: ASSET_POST_CAFE,
       category: 'Design',
       likesCount: 98,
@@ -201,7 +201,7 @@ export function createSeedPosts(now = Date.now()): Post[] {
       authorHandle: 'elena.vance',
       authorAvatar: ASSET_AVATAR_ELENA,
       caption:
-        'Above the inversion layer at 06:40. Twenty minutes of crisp granite ridge air before descending back into the valley mist.',
+        'Above the inversion layer at 06:40. Twenty minutes of crisp granite ridge air with @elena.vance before descending back into valley mist. #travel #photography',
       imageUrl: ASSET_POST_ALPINE,
       category: 'Travel',
       likesCount: 215,
@@ -216,7 +216,7 @@ export function createSeedPosts(now = Date.now()): Post[] {
       authorHandle: 'maya.lin',
       authorAvatar: ASSET_AVATAR_MAYA,
       caption:
-        'Quick note on responsive typography: pairing a geometric display face with generous 1.65 body leading makes long-form mobile threads effortless to scan on the train.',
+        'Quick note on responsive typography: pairing a geometric display face with generous 1.65 body leading makes long-form mobile threads effortless to scan. #typography #design',
       imageUrl: '',
       category: 'Journal',
       likesCount: 64,
@@ -337,7 +337,7 @@ export function createSeedComments(now = Date.now()): Record<string, PostComment
         authorName: 'Elena Vance',
         authorHandle: 'elena.vance',
         authorAvatar: ASSET_AVATAR_ELENA,
-        text: 'Love how the reflecting pool doubles the canopy depth.',
+        text: 'Love how the reflecting pool doubles the canopy depth @maya.lin! #architecture',
         createdAtMs: now - 4 * 60_000,
       },
     ],
@@ -349,7 +349,7 @@ export function createSeedComments(now = Date.now()): Record<string, PostComment
         authorName: 'Maya Lin',
         authorHandle: 'maya.lin',
         authorAvatar: ASSET_AVATAR_MAYA,
-        text: 'Nothing beats Tri-X in morning window light.',
+        text: 'Nothing beats Tri-X in morning window light @kenji.sato.',
         createdAtMs: now - 31 * 60_000,
       },
     ],

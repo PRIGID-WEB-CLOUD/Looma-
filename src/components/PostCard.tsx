@@ -21,6 +21,7 @@ import {
   validateCommentInput,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { RichText } from './RichText';
 
 interface PostCardProps {
   post: Post;
@@ -33,6 +34,8 @@ interface PostCardProps {
   onAddComment: (post: Post, text: string) => Promise<void>;
   onShareToStory?: (post: Post) => Promise<unknown> | void;
   onAuthorClick?: (post: Post) => void;
+  onSelectHashtag?: (tag: string) => void;
+  onMentionClick?: (handle: string) => void;
 }
 
 export function PostCard({
@@ -46,6 +49,8 @@ export function PostCard({
   onAddComment,
   onShareToStory,
   onAuthorClick,
+  onSelectHashtag,
+  onMentionClick,
 }: PostCardProps) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -196,9 +201,13 @@ export function PostCard({
 
       {/* Caption */}
       {post.caption && (
-        <p className="mt-3 text-[15px] leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line break-words">
-          {post.caption}
-        </p>
+        <div className="mt-3 text-[15px] leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line break-words">
+          <RichText
+            text={post.caption}
+            onHashtagClick={onSelectHashtag}
+            onMentionClick={onMentionClick}
+          />
+        </div>
       )}
 
       {/* Media Frame with zero-broken-image fallback */}
@@ -414,9 +423,13 @@ export function PostCard({
                       <span aria-hidden="true">·</span>{' '}
                       <span>{formatRelativeTime(cmt.createdAtMs)}</span>
                     </p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300 mt-0.5">
-                      {cmt.text}
-                    </p>
+                    <div className="text-sm text-slate-700 dark:text-slate-300 mt-0.5">
+                      <RichText
+                        text={cmt.text}
+                        onHashtagClick={onSelectHashtag}
+                        onMentionClick={onMentionClick}
+                      />
+                    </div>
                   </div>
                 </div>
               ))}

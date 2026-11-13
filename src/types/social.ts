@@ -103,7 +103,13 @@ export interface ChatMessage {
   createdAtMs: number;
 }
 
-export type NotificationType = 'like' | 'comment' | 'message' | 'follow' | 'system';
+export type NotificationType =
+  | 'like'
+  | 'comment'
+  | 'message'
+  | 'follow'
+  | 'system'
+  | 'mention';
 
 export interface AppNotification {
   id: string;

@@ -2,6 +2,7 @@ import { ArrowLeft, MapPin, MessageSquare, UserCheck, UserPlus, Users } from 'lu
 import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
+import { RichText } from './RichText';
 
 interface PublicProfileViewProps {
   creator: UserProfile;
@@ -22,6 +23,8 @@ interface PublicProfileViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onSelectHashtag?: (tag: string) => void;
+  onMentionClick?: (handle: string) => void;
 }
 
 export function PublicProfileView({
@@ -43,6 +46,8 @@ export function PublicProfileView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onSelectHashtag,
+  onMentionClick,
 }: PublicProfileViewProps) {
   const creatorPosts = posts.filter((p) => p.authorId === creator.uid);
   const displayedFollowers =
@@ -94,9 +99,13 @@ export function PublicProfileView({
               ) : (
                 <>
                   {creator.bio && (
-                    <p className="text-sm text-slate-700 dark:text-slate-300 mt-2.5 max-w-xl leading-relaxed">
-                      {creator.bio}
-                    </p>
+                    <div className="text-sm text-slate-700 dark:text-slate-300 mt-2.5 max-w-xl leading-relaxed">
+                      <RichText
+                        text={creator.bio}
+                        onHashtagClick={onSelectHashtag}
+                        onMentionClick={onMentionClick}
+                      />
+                    </div>
                   )}
                   {creator.interests.length > 0 && (
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-2.5">
@@ -225,6 +234,8 @@ export function PublicProfileView({
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onSelectHashtag={onSelectHashtag}
+              onMentionClick={onMentionClick}
             />
           ))
         )}

@@ -3,6 +3,7 @@ import { MapPin, Settings, Users } from 'lucide-react';
 import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
+import { RichText } from './RichText';
 
 interface ProfileViewProps {
   profile: UserProfile;
@@ -20,6 +21,8 @@ interface ProfileViewProps {
   onOpenSettings: () => void;
   onOpenConnections: (tab: ConnectionsTab) => void;
   onAuthorClick: (post: Post) => void;
+  onSelectHashtag?: (tag: string) => void;
+  onMentionClick?: (handle: string) => void;
 }
 
 export function ProfileView({
@@ -38,6 +41,8 @@ export function ProfileView({
   onOpenSettings,
   onOpenConnections,
   onAuthorClick,
+  onSelectHashtag,
+  onMentionClick,
 }: ProfileViewProps) {
   const [subTab, setSubTab] = useState<'posts' | 'saved'>('posts');
 
@@ -76,9 +81,13 @@ export function ProfileView({
                   </>
                 )}
               </p>
-              <p className="text-sm text-slate-700 dark:text-slate-300 mt-2.5 max-w-xl leading-relaxed">
-                {profile.bio}
-              </p>
+              <div className="text-sm text-slate-700 dark:text-slate-300 mt-2.5 max-w-xl leading-relaxed">
+                <RichText
+                  text={profile.bio}
+                  onHashtagClick={onSelectHashtag}
+                  onMentionClick={onMentionClick}
+                />
+              </div>
               {profile.interests.length > 0 && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-2.5">
                   {profile.interests.join(' · ')}
@@ -203,6 +212,8 @@ export function ProfileView({
               onAddComment={onAddComment}
               onShareToStory={onShareToStory}
               onAuthorClick={onAuthorClick}
+              onSelectHashtag={onSelectHashtag}
+              onMentionClick={onMentionClick}
             />
           ))}
         </div>

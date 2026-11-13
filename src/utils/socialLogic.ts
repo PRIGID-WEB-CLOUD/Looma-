@@ -736,4 +736,171 @@ export function buildStoryFromPost(post: Post): {
   return { imageUrl, caption };
 }
 
+export interface TextToken {
+  type: 'text' | 'hashtag' | 'mention';
+  value: string;
+  raw: string;
+}
+
+export const POPULAR_HASHTAGS: string[] = [
+  'architecture',
+  'photography',
+  'design',
+  'travel',
+  'journal',
+  'studio',
+  'minimalism',
+  'typography',
+  'analog',
+  'copenhagen',
+  'kyoto',
+  'zurich',
+];
+
+export function extractHashtags(text: string): string[] {
+  if (!text) return [];
+  const regex = /(?:^|\s)#([a-zA-Z0-9_]+)/g;
+  const matches: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const tag = m[1].toLowerCase();
+    if (!matches.includes(tag)) {
+      matches.push(tag);
+    }
+  }
+  return matches;
+}
+
+export function extractMentions(text: string): string[] {
+  if (!text) return [];
+  const regex = /(?:^|\s)@([a-zA-Z0-9_.]{2,32})/g;
+  const matches: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const handle = m[1].toLowerCase().replace(/\.+$/, '');
+    if (handle.length >= 2 && !matches.includes(handle)) {
+      matches.push(handle);
+    }
+  }
+  return matches;
+}
+
+export function parseTextWithTagsAndMentions(text: string): TextToken[] {
+  if (!text) return [];
+  const tokens: TextToken[] = [];
+  const tokenRegex = /(^|\s)(#[a-zA-Z0-9_]+|@[a-zA-Z0-9_.]{2,32})/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    const fullMatch = match[0];
+    const leadingSpace = match[1];
+    const tagOrMention = match[2];
+    const matchStart = match.index;
+    const tagStart = matchStart + leadingSpace.length;
+
+    if (tagStart > lastIndex) {
+      tokens.push({
+        type: 'text',
+        value: text.slice(lastIndex, tagStart),
+        raw: text.slice(lastIndex, tagStart),
+      });
+    }
+
+    if (tagOrMention.startsWith('#')) {
+      const tagValue = tagOrMention.slice(1);
+      tokens.push({
+        type: 'hashtag',
+        value: tagValue.toLowerCase(),
+        raw: tagOrMention,
+      });
+    } else {
+      let handleValue = tagOrMention.slice(1);
+      let trailingPunct = '';
+      if (handleValue.endsWith('.')) {
+        handleValue = handleValue.slice(0, -1);
+        trailingPunct = '.';
+      }
+      tokens.push({
+        type: 'mention',
+        value: handleValue.toLowerCase(),
+        raw: `@${handleValue}`,
+      });
+      if (trailingPunct) {
+        tokens.push({
+          type: 'text',
+          value: trailingPunct,
+          raw: trailingPunct,
+        });
+      }
+    }
+
+    lastIndex = tagStart + tagOrMention.length;
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({
+      type: 'text',
+      value: text.slice(lastIndex),
+      raw: text.slice(lastIndex),
+    });
+  }
+
+  return tokens;
+}
+
+export function getMentionQueryAtCursor(
+  text: string,
+  cursorPosition: number
+): { query: string; startIndex: number } | null {
+  if (cursorPosition <= 0) return null;
+  const left = text.slice(0, cursorPosition);
+  const match = left.match(/(?:^|\s)@([a-zA-Z0-9_.]*)$/);
+  if (!match) return null;
+  const query = match[1].toLowerCase();
+  const atPos = left.lastIndexOf('@');
+  return { query, startIndex: atPos };
+}
+
+export function getHashtagQueryAtCursor(
+  text: string,
+  cursorPosition: number
+): { query: string; startIndex: number } | null {
+  if (cursorPosition <= 0) return null;
+  const left = text.slice(0, cursorPosition);
+  const match = left.match(/(?:^|\s)#([a-zA-Z0-9_]*)$/);
+  if (!match) return null;
+  const query = match[1].toLowerCase();
+  const hashPos = left.lastIndexOf('#');
+  return { query, startIndex: hashPos };
+}
+
+export function filterCreatorsForMention(
+  query: string,
+  creators: UserProfile[]
+): UserProfile[] {
+  const clean = query.trim().toLowerCase();
+  return creators
+    .filter((c) => {
+      if (!clean) return true;
+      return (
+        c.handle.toLowerCase().includes(clean) ||
+        c.displayName.toLowerCase().includes(clean)
+      );
+    })
+    .slice(0, 5);
+}
+
+export function filterHashtags(
+  query: string,
+  availableTags: string[] = POPULAR_HASHTAGS
+): string[] {
+  const clean = query.trim().toLowerCase().replace(/^#/, '');
+  const combined = Array.from(new Set([...availableTags, ...POPULAR_HASHTAGS]));
+  return combined
+    .filter((tag) => (!clean ? true : tag.toLowerCase().includes(clean)))
+    .slice(0, 6);
+}
+
+
 
