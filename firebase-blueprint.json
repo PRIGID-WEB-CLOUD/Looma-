@@ -1,0 +1,660 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public user profile information without PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_.]+$"
+        },
+        "bio": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "interests": {
+          "type": "array",
+          "description": "Up to 8 interest topics"
+        },
+        "followersCount": {
+          "type": "number"
+        },
+        "followingCount": {
+          "type": "number"
+        },
+        "onboardingCompleted": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "handle",
+        "bio",
+        "avatarUrl",
+        "location",
+        "interests",
+        "followersCount",
+        "followingCount",
+        "onboardingCompleted",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateSettings": {
+      "title": "UserPrivateSettings",
+      "description": "Private user settings and PII isolated under user subcollection.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "pushEnabled": {
+          "type": "boolean"
+        },
+        "themePreference": {
+          "type": "string",
+          "enum": ["light", "dark", "system"]
+        },
+        "notifyLikes": {
+          "type": "boolean"
+        },
+        "notifyComments": {
+          "type": "boolean"
+        },
+        "notifyMessages": {
+          "type": "boolean"
+        },
+        "profileVisibility": {
+          "type": "string",
+          "enum": ["public", "followers"]
+        },
+        "messagePrivacy": {
+          "type": "string",
+          "enum": ["everyone", "following"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "pushEnabled",
+        "themePreference",
+        "notifyLikes",
+        "notifyComments",
+        "notifyMessages",
+        "profileVisibility",
+        "messagePrivacy",
+        "updatedAt"
+      ]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "A social media feed post with optional compressed image.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "authorHandle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_.]+$"
+        },
+        "authorAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 600000
+        },
+        "videoUrl": {
+          "type": "string",
+          "maxLength": 750000
+        },
+        "audioUrl": {
+          "type": "string",
+          "maxLength": 750000
+        },
+        "linkUrl": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "mediaTitle": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Architecture", "Photography", "Design", "Travel", "Journal"]
+        },
+        "likesCount": {
+          "type": "number"
+        },
+        "commentsCount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "authorId",
+        "authorName",
+        "authorHandle",
+        "authorAvatar",
+        "caption",
+        "imageUrl",
+        "category",
+        "likesCount",
+        "commentsCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PostLike": {
+      "title": "PostLike",
+      "description": "User like record on a post.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "createdAt"]
+    },
+    "PostComment": {
+      "title": "PostComment",
+      "description": "Comment on a social post.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "postId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "authorHandle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_.]+$"
+        },
+        "authorAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "postId",
+        "authorId",
+        "authorName",
+        "authorHandle",
+        "authorAvatar",
+        "text",
+        "createdAt"
+      ]
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "User-saved post bookmark.",
+      "type": "object",
+      "properties": {
+        "postId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["postId", "createdAt"]
+    },
+    "ChatThread": {
+      "title": "ChatThread",
+      "description": "Direct or small-group real-time chat conversation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "isGroup": {
+          "type": "boolean"
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs (max 10)"
+        },
+        "lastMessageText": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "lastMessageSenderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "isGroup",
+        "memberIds",
+        "lastMessageText",
+        "lastMessageSenderId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Message inside a chat thread.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "senderAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs matching parent thread"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "chatId",
+        "senderId",
+        "senderName",
+        "senderAvatar",
+        "text",
+        "memberIds",
+        "createdAt"
+      ]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Real-time notification item for user activity.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recipientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "actorAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "type": {
+          "type": "string",
+          "enum": ["like", "comment", "message", "follow", "system"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "targetPostId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "recipientId",
+        "actorId",
+        "actorName",
+        "actorAvatar",
+        "type",
+        "title",
+        "body",
+        "targetPostId",
+        "read",
+        "createdAt"
+      ]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "Ephemeral 24-hour visual story shown in the homefeed header.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "authorHandle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_.]+$"
+        },
+        "authorAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 600000
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "expiresAtMs": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "authorId",
+        "authorName",
+        "authorHandle",
+        "authorAvatar",
+        "imageUrl",
+        "caption",
+        "expiresAtMs",
+        "createdAt"
+      ]
+    },
+    "FollowRelation": {
+      "title": "FollowRelation",
+      "description": "Directed follow relationship owned by the follower user.",
+      "type": "object",
+      "properties": {
+        "followerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "targetUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["followerId", "targetUid", "createdAt"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "Live online status heartbeat for real-time messenger presence.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "lastSeenAtMs": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "online", "lastSeenAtMs", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public profile documents keyed by UID."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateSettings" },
+      "description": "Private PII and notification/theme preferences accessible only to owner."
+    },
+    "/users/{userId}/bookmarks/{postId}": {
+      "schema": { "$ref": "#/entities/Bookmark" },
+      "description": "Private user post bookmarks."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AppNotification" },
+      "description": "Real-time notifications scoped to recipient user."
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/Post" },
+      "description": "Social media feed posts."
+    },
+    "/posts/{postId}/likes/{userId}": {
+      "schema": { "$ref": "#/entities/PostLike" },
+      "description": "Per-user like document for a post."
+    },
+    "/posts/{postId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/PostComment" },
+      "description": "Comments belonging to a post."
+    },
+    "/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/ChatThread" },
+      "description": "Chat threads restricted to memberIds."
+    },
+    "/users/{userId}/following/{targetUid}": {
+      "schema": { "$ref": "#/entities/FollowRelation" },
+      "description": "Users followed by userId."
+    },
+    "/users/{userId}/followers/{followerId}": {
+      "schema": { "$ref": "#/entities/FollowRelation" },
+      "description": "Users who follow userId."
+    },
+    "/stories/{storyId}": {
+      "schema": { "$ref": "#/entities/Story" },
+      "description": "24-hour homefeed stories."
+    },
+    "/presence/{userId}": {
+      "schema": { "$ref": "#/entities/UserPresence" },
+      "description": "Online presence status keyed by UID."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Messages inside a chat thread."
+    }
+  }
+}

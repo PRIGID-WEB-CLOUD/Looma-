@@ -1,0 +1,8 @@
+{
+  "name": "Looma",
+  "description": "Cross-platform social media app with real-time feeds, instant messaging, push notifications, OAuth authentication, image uploads, and dark mode.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

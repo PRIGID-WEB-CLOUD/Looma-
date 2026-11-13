@@ -1,0 +1,739 @@
+import { useState } from 'react';
+import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
+import { useSocialStore } from './hooks/useSocialStore';
+import { SEED_CREATORS, SEED_FOLLOW_GRAPH } from './services/seedData';
+import type {
+  ConnectionsTab,
+  Post,
+  StoryGroup,
+  TabId,
+  UserProfile,
+} from './types/social';
+import {
+  computeOtherUserConnections,
+  countUnreadNotifications,
+  formatRelativeTime,
+  getThreadOnlineStatus,
+  isUserOnline,
+  resolveAppStage,
+  resolvePublicProfile,
+} from './utils/socialLogic';
+import { AddStoryModal } from './components/AddStoryModal';
+import { Avatar } from './components/Avatar';
+import { AuthView, type AuthMode } from './components/AuthView';
+import { ChatView } from './components/ChatView';
+import { ConnectionsView } from './components/ConnectionsView';
+import { CreatePostModal } from './components/CreatePostModal';
+import { FeedView } from './components/FeedView';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { NotificationsView } from './components/NotificationsView';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { OnboardingFlow } from './components/OnboardingFlow';
+import { ProfileSettingsView } from './components/ProfileSettingsView';
+import { ProfileView } from './components/ProfileView';
+import { PublicProfileView } from './components/PublicProfileView';
+import { PushToast } from './components/PushToast';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { StoryViewerModal } from './components/StoryViewerModal';
+import { TopBar } from './components/TopBar';
+import { BrandLogoModal } from './components/BrandLogoModal';
+
+export default function App() {
+  const store = useSocialStore();
+  const searchParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : null;
+  const onboardingParam = searchParams?.get('onboarding') === '1';
+  const authQuery = searchParams?.get('auth');
+  const initialAuthMode: AuthMode =
+    authQuery === 'signup' ? 'signup' : 'signin';
+
+  const [activeTab, setActiveTab] = useState<TabId>('feed');
+  const [connectionsTab, setConnectionsTab] =
+    useState<ConnectionsTab>('followers');
+  const [authMode, setAuthMode] = useState<AuthMode>(initialAuthMode);
+  const [previewOnboarding, setPreviewOnboarding] =
+    useState<boolean>(onboardingParam);
+  const [publicProfileReturnTab, setPublicProfileReturnTab] = useState<
+    'feed' | 'connections' | 'profile' | 'messages'
+  >('feed');
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [addStoryOpen, setAddStoryOpen] = useState(false);
+  const [brandModalOpen, setBrandModalOpen] = useState(false);
+  const [activeStoryAuthorId, setActiveStoryAuthorId] = useState<string | null>(
+    null
+  );
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [selectedPublicProfile, setSelectedPublicProfile] =
+    useState<UserProfile | null>(null);
+  const [loadingPublicProfile, setLoadingPublicProfile] = useState(false);
+  const [connectionsOwner, setConnectionsOwner] = useState<UserProfile | null>(
+    null
+  );
+  const [remoteOtherConnections, setRemoteOtherConnections] = useState<{
+    targetUid: string;
+    followerIds: string[];
+    followingIds: string[];
+  } | null>(null);
+
+  const unreadCount = countUnreadNotifications(store.notifications);
+  const appStage = resolveAppStage(
+    store.isAuthorized,
+    store.profile.onboardingCompleted,
+    store.authReady
+  );
+
+  const handleLogout = async () => {
+    await store.logout();
+    setPreviewOnboarding(false);
+    setAuthMode('signin');
+    setActiveTab('feed');
+    setActiveChatId(null);
+    setSelectedPublicProfile(null);
+    setConnectionsOwner(null);
+    setRemoteOtherConnections(null);
+    setComposerOpen(false);
+    setAddStoryOpen(false);
+    setActiveStoryAuthorId(null);
+  };
+
+  const handleOpenDm = async (creator: UserProfile) => {
+    const thread = await store.startDirectThread(creator);
+    setActiveChatId(thread.id);
+    setActiveTab('messages');
+  };
+
+  const handleOpenPublicProfile = async (
+    targetUid: string,
+    fallbackPost?: Post,
+    returnTab: 'feed' | 'connections' | 'profile' | 'messages' = 'feed'
+  ) => {
+    if (targetUid === store.profile.uid) {
+      setActiveTab('profile');
+      return;
+    }
+    setPublicProfileReturnTab(returnTab);
+    const immediate = resolvePublicProfile(
+      targetUid,
+      store.profile,
+      store.communityUsers,
+      fallbackPost ? [fallbackPost, ...store.posts] : store.posts
+    );
+    if (immediate) {
+      setSelectedPublicProfile(immediate);
+    }
+    setActiveTab('public-profile');
+    setLoadingPublicProfile(true);
+    try {
+      const [resolved, otherConns] = await Promise.all([
+        store.fetchPublicUserProfile(targetUid, fallbackPost),
+        store.fetchOtherUserConnections(targetUid),
+      ]);
+      if (resolved) {
+        setSelectedPublicProfile(resolved);
+      }
+      setRemoteOtherConnections({
+        targetUid,
+        followerIds: otherConns.followerIds,
+        followingIds: otherConns.followingIds,
+      });
+    } finally {
+      setLoadingPublicProfile(false);
+    }
+  };
+
+  const openConnections = (
+    tab: ConnectionsTab = 'followers',
+    owner: UserProfile | null = null
+  ) => {
+    setConnectionsOwner(owner);
+    setConnectionsTab(tab);
+    setActiveTab('connections');
+  };
+
+  const getConnectionsForUser = (target: UserProfile) => {
+    const remoteMatch =
+      remoteOtherConnections?.targetUid === target.uid
+        ? remoteOtherConnections
+        : null;
+    return computeOtherUserConnections(
+      target.uid,
+      store.profile,
+      store.communityUsers,
+      store.followedUserIds,
+      store.followerUserIds,
+      SEED_FOLLOW_GRAPH,
+      remoteMatch?.followerIds || [],
+      remoteMatch?.followingIds || []
+    );
+  };
+
+  const handleReplyToStory = async (group: StoryGroup, text: string) => {
+    const matchedCreator =
+      store.communityUsers.find((u) => u.uid === group.authorId) ||
+      SEED_CREATORS.find((u) => u.uid === group.authorId) || {
+        uid: group.authorId,
+        displayName: group.authorName,
+        handle: group.authorHandle,
+        bio: 'Creator on Looma.',
+        avatarUrl: group.authorAvatar,
+        location: 'Looma Community',
+        interests: [],
+        followersCount: 0,
+        followingCount: 0,
+        onboardingCompleted: true,
+        createdAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      };
+    const thread = await store.startDirectThread(matchedCreator);
+    await store.sendChatMessage(thread, `Story reply: ${text}`);
+  };
+
+  if (appStage === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex items-center justify-center p-6">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div
+            className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin"
+            aria-hidden="true"
+          />
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+            Restoring your session...
+          </p>
+        </div>
+        <OfflineIndicator />
+      </div>
+    );
+  }
+
+  if (appStage === 'auth' || !store.isAuthorized) {
+    return (
+      <>
+        <AuthView
+          initialMode={authMode}
+          profile={store.profile}
+          firebaseUser={store.firebaseUser}
+          authLoading={store.authLoading}
+          authError={store.authError}
+          theme={store.theme}
+          onSetTheme={store.setThemeExplicit}
+          onLoginGoogle={async () => {
+            await store.loginWithGoogle();
+            setActiveTab('feed');
+          }}
+          onLogout={handleLogout}
+          onContinueAuthenticated={() => {
+            setActiveTab('feed');
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
+  if (previewOnboarding || appStage === 'onboarding') {
+    return (
+      <>
+        <OnboardingFlow
+          profile={store.profile}
+          firebaseUser={store.firebaseUser}
+          theme={store.theme}
+          pushPermission={store.pushPermission}
+          suggestedCreators={SEED_CREATORS}
+          followedUserIds={store.followedUserIds}
+          followersCount={store.profile.followersCount}
+          onToggleFollow={store.toggleFollowUser}
+          onSetTheme={store.setThemeExplicit}
+          onEnablePush={store.enablePushNotifications}
+          onSkip={async () => {
+            await store.completeOnboarding({});
+            setPreviewOnboarding(false);
+            setActiveTab('feed');
+          }}
+          onComplete={async (data) => {
+            await store.completeOnboarding(data);
+            setPreviewOnboarding(false);
+            setActiveTab('feed');
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors">
+      <TopBar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        unreadNotifications={unreadCount}
+        theme={store.theme}
+        onToggleTheme={store.toggleTheme}
+        onOpenBrandModal={() => setBrandModalOpen(true)}
+      />
+
+      <PushToast
+        notification={store.activeToast}
+        onDismiss={store.dismissToast}
+        onOpenNotifications={() => setActiveTab('notifications')}
+      />
+
+      <main className="max-w-7xl mx-auto px-4 md:px-6 pt-5 md:pt-7 flex items-start gap-6">
+        {/* Left Navigation & Account Rail (Desktop) */}
+        <aside
+          aria-label="Account and appearance controls"
+          className="hidden lg:flex lg:w-64 shrink-0 flex-col gap-4 sticky top-23"
+        >
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+            <button
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              className="w-full flex items-center gap-3 text-left cursor-pointer group"
+            >
+              <Avatar
+                src={store.profile.avatarUrl}
+                name={store.profile.displayName}
+                size="md"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                  {store.profile.displayName}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  @{store.profile.handle}
+                </p>
+              </div>
+            </button>
+
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs tabular-nums">
+              <button
+                type="button"
+                onClick={() => openConnections('followers')}
+                className="text-left hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+              >
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {store.profile.followersCount}
+                </span>{' '}
+                <span className="text-slate-500 dark:text-slate-400">
+                  Followers
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openConnections('following')}
+                className="text-left hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+              >
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {store.profile.followingCount}
+                </span>{' '}
+                <span className="text-slate-500 dark:text-slate-400">
+                  Following
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1.5">
+            <button
+              type="button"
+              onClick={store.toggleTheme}
+              className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-2.5">
+                {store.theme === 'dark' ? (
+                  <Sun className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <Moon className="w-4 h-4" aria-hidden="true" />
+                )}
+                <span>{store.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+              </span>
+              <span className="text-slate-400 capitalize">{store.theme}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('notifications')}
+              className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer tabular-nums"
+            >
+              <span className="flex items-center gap-2.5">
+                <Bell className="w-4 h-4" aria-hidden="true" />
+                <span>Push Alerts</span>
+              </span>
+              <span className="text-blue-600 dark:text-blue-400 font-semibold">
+                {unreadCount > 0 ? `${unreadCount} new` : 'Active'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => openConnections('friends')}
+              className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer tabular-nums ${
+                activeTab === 'connections'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <Users className="w-4 h-4" aria-hidden="true" />
+                <span>Connections</span>
+              </span>
+              <span className="text-slate-400">
+                {store.connections.friends.length} friends
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <Settings className="w-4 h-4" aria-hidden="true" />
+                <span>Profile Settings</span>
+              </span>
+            </button>
+
+            <PWAInstallButton />
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full min-h-[42px] px-3 rounded-xl flex items-center gap-2.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Log Out</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Center Main Content */}
+        <div
+          className={`flex-1 min-w-0 ${
+            activeTab === 'messages' ? 'max-w-5xl' : 'max-w-2xl mx-auto lg:mx-0'
+          }`}
+        >
+          {activeTab === 'feed' && (
+            <FeedView
+              profile={store.profile}
+              posts={store.posts}
+              storyGroups={store.storyGroups}
+              commentsByPost={store.commentsByPost}
+              likedPostIds={store.likedPostIds}
+              bookmarkedPostIds={store.bookmarkedPostIds}
+              onOpenComposer={() => setComposerOpen(true)}
+              onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
+              onOpenAddStory={() => setAddStoryOpen(true)}
+              onToggleLike={store.toggleLike}
+              onToggleBookmark={store.toggleBookmark}
+              onAddComment={store.addComment}
+              onShareToStory={store.sharePostToStory}
+              onAuthorClick={(post) =>
+                handleOpenPublicProfile(post.authorId, post)
+              }
+            />
+          )}
+
+          {activeTab === 'public-profile' && selectedPublicProfile && (() => {
+            const creatorConnections = getConnectionsForUser(selectedPublicProfile);
+            return (
+              <PublicProfileView
+                creator={selectedPublicProfile}
+                loading={loadingPublicProfile}
+                isFollowing={store.followedUserIds.includes(
+                  selectedPublicProfile.uid
+                )}
+                followersCount={creatorConnections.followers.length}
+                followingCount={creatorConnections.following.length}
+                friendsCount={creatorConnections.friends.length}
+                posts={store.posts}
+                likedPostIds={store.likedPostIds}
+                bookmarkedPostIds={store.bookmarkedPostIds}
+                commentsByPost={store.commentsByPost}
+                backLabel={
+                  publicProfileReturnTab === 'connections'
+                    ? 'Back to Connections'
+                    : publicProfileReturnTab === 'profile'
+                      ? 'Back to Profile'
+                      : publicProfileReturnTab === 'messages'
+                        ? 'Back to Messages'
+                        : 'Back to Feed'
+                }
+                onToggleFollow={store.toggleFollowUser}
+                onMessage={handleOpenDm}
+                onOpenConnections={(tab) =>
+                  openConnections(tab, selectedPublicProfile)
+                }
+                onBack={() => setActiveTab(publicProfileReturnTab)}
+                onToggleLike={store.toggleLike}
+                onToggleBookmark={store.toggleBookmark}
+                onAddComment={store.addComment}
+              />
+            );
+          })()}
+
+          {activeTab === 'messages' && (
+            <ChatView
+              profile={store.profile}
+              threads={store.threads}
+              messagesByChat={store.messagesByChat}
+              onlineUserIds={store.onlineUserIds}
+              communityUsers={store.communityUsers}
+              initialThreadId={activeChatId}
+              onSubscribeThread={store.subscribeChatMessages}
+              onSendMessage={store.sendChatMessage}
+              onStartDirectThread={store.startDirectThread}
+              onOpenPublicProfile={(uid) =>
+                handleOpenPublicProfile(uid, undefined, 'messages')
+              }
+            />
+          )}
+
+          {activeTab === 'notifications' && (
+            <NotificationsView
+              profile={store.profile}
+              notifications={store.notifications}
+              pushPermission={store.pushPermission}
+              onEnablePush={store.enablePushNotifications}
+              onMarkRead={store.markNotificationRead}
+              onMarkAllRead={store.markAllNotificationsRead}
+            />
+          )}
+
+          {activeTab === 'profile' && (
+            <ProfileView
+              profile={store.profile}
+              posts={store.posts}
+              followersCount={store.connections.followers.length}
+              followingCount={store.connections.following.length}
+              friendsCount={store.connections.friends.length}
+              likedPostIds={store.likedPostIds}
+              bookmarkedPostIds={store.bookmarkedPostIds}
+              commentsByPost={store.commentsByPost}
+              onToggleLike={store.toggleLike}
+              onToggleBookmark={store.toggleBookmark}
+              onAddComment={store.addComment}
+              onShareToStory={store.sharePostToStory}
+              onOpenSettings={() => setActiveTab('settings')}
+              onOpenConnections={(tab) => openConnections(tab, null)}
+              onAuthorClick={(post) =>
+                handleOpenPublicProfile(post.authorId, post, 'profile')
+              }
+            />
+          )}
+
+          {activeTab === 'connections' && (() => {
+            const viewingOther =
+              connectionsOwner && connectionsOwner.uid !== store.profile.uid;
+            const activeConnections = viewingOther
+              ? getConnectionsForUser(connectionsOwner)
+              : store.connections;
+            return (
+              <ConnectionsView
+                initialTab={connectionsTab}
+                targetUser={viewingOther ? connectionsOwner : null}
+                currentUserId={store.profile.uid}
+                followers={activeConnections.followers}
+                following={activeConnections.following}
+                friends={activeConnections.friends}
+                followerIds={store.followerUserIds}
+                followedUserIds={store.followedUserIds}
+                onBack={() => {
+                  if (viewingOther) {
+                    setSelectedPublicProfile(connectionsOwner);
+                    setActiveTab('public-profile');
+                  } else {
+                    setActiveTab('profile');
+                  }
+                }}
+                onToggleFollow={store.toggleFollowUser}
+                onMessage={handleOpenDm}
+                onOpenPublicProfile={(person) => {
+                  if (person.uid === store.profile.uid) {
+                    setActiveTab('profile');
+                    return;
+                  }
+                  handleOpenPublicProfile(person.uid, undefined, 'connections');
+                }}
+              />
+            );
+          })()}
+
+          {activeTab === 'settings' && (
+            <ProfileSettingsView
+              profile={store.profile}
+              privateSettings={store.privateSettings}
+              accountEmail={store.firebaseUser?.email || null}
+              theme={store.theme}
+              pushPermission={store.pushPermission}
+              onSetTheme={store.setThemeExplicit}
+              onEnablePush={store.enablePushNotifications}
+              onLogout={handleLogout}
+              onUpdateProfile={store.updateProfile}
+              onUpdatePrivateSettings={store.updatePrivateSettings}
+              onBack={() => setActiveTab('profile')}
+            />
+          )}
+        </div>
+
+        {/* Right Discovery & Active Chats Sidebar (Desktop) */}
+        {activeTab !== 'messages' && (
+          <aside
+            aria-label="Community creators and active conversations"
+            className="hidden xl:flex xl:w-80 shrink-0 flex-col gap-4 sticky top-23"
+          >
+            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-sm font-bold">
+                  Active Chats
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('messages')}
+                  className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  Open all
+                </button>
+              </div>
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {store.threads.slice(0, 3).map((thread) => (
+                  <button
+                    key={thread.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveChatId(thread.id);
+                      setActiveTab('messages');
+                    }}
+                    className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
+                  >
+                    <Avatar
+                      src={thread.partnerAvatar}
+                      name={thread.title}
+                      size="sm"
+                      online={
+                        getThreadOnlineStatus(
+                          thread,
+                          store.profile.uid,
+                          store.onlineUserIds
+                        ).isOnline
+                      }
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold truncate">
+                          {thread.title}
+                        </p>
+                        <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
+                          {formatRelativeTime(thread.updatedAtMs)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {thread.lastMessageText}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+              <h2 className="font-display text-sm font-bold">
+                Featured Creators
+              </h2>
+              <div className="space-y-3">
+                {SEED_CREATORS.map((creator) => (
+                  <div
+                    key={creator.uid}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPublicProfile(creator.uid)}
+                      aria-label={`View ${creator.displayName}'s profile`}
+                      className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
+                    >
+                      <Avatar
+                        src={creator.avatarUrl}
+                        name={creator.displayName}
+                        size="sm"
+                        online={isUserOnline(
+                          creator.uid,
+                          store.onlineUserIds
+                        )}
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                          {creator.displayName}
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                          @{creator.handle} · {creator.location}
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDm(creator)}
+                      aria-label={`Message ${creator.displayName}`}
+                      className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Chat</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
+      </main>
+
+      <MobileBottomNav
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        unreadNotifications={unreadCount}
+      />
+
+      <CreatePostModal
+        open={composerOpen}
+        profile={store.profile}
+        onClose={() => setComposerOpen(false)}
+        onCreatePost={async (caption, category, imageUrl, extra) => {
+          await store.createPost(caption, category, imageUrl, extra);
+          setActiveTab('feed');
+        }}
+      />
+
+      <StoryViewerModal
+        groups={store.storyGroups}
+        activeAuthorId={activeStoryAuthorId}
+        currentUid={store.profile.uid}
+        onClose={() => setActiveStoryAuthorId(null)}
+        onSelectAuthor={(authorId) => setActiveStoryAuthorId(authorId)}
+        onMarkViewed={store.markStoryViewed}
+        onOpenAuthorProfile={(authorId) => handleOpenPublicProfile(authorId)}
+        onReplyToStory={handleReplyToStory}
+      />
+
+      <AddStoryModal
+        open={addStoryOpen}
+        onClose={() => setAddStoryOpen(false)}
+        onCreateStory={async (caption, imageUrl) => {
+          await store.addStory(caption, imageUrl);
+          setActiveTab('feed');
+        }}
+      />
+
+      <BrandLogoModal
+        open={brandModalOpen}
+        onClose={() => setBrandModalOpen(false)}
+        onGoToFeed={() => setActiveTab('feed')}
+      />
+
+      <OfflineIndicator />
+    </div>
+  );
+}
