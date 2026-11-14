@@ -25,6 +25,11 @@ import {
   validateDecodedFirebaseTokenClaims,
   type R2Config,
 } from './src/utils/storageLogic.ts';
+import {
+  parseCallsConfig,
+  buildCloudflareCallsUrl,
+  formatCallsHeaders,
+} from './src/utils/callsLogic.ts';
 
 interface FirebaseAppletConfig {
   projectId: string;
@@ -162,6 +167,8 @@ async function startServer(): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
 
   app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    const origin = req.headers.origin || '*';
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
@@ -572,6 +579,115 @@ async function startServer(): Promise<void> {
         const info = classifyR2BackendError(err);
         console.warn(`[storage/delete] ${info.code}: ${info.message}`);
         res.status(info.status).json({ code: info.code, error: info.message });
+      }
+    }
+  );
+
+  // Cloudflare Calls / RealtimeKit WebRTC Endpoints
+  app.get(['/api/calls/status', '/api/calls/status/'], (_req: Request, res: Response) => {
+    const parsed = parseCallsConfig(process.env);
+    res.json({
+      provider: 'cloudflare-calls',
+      configured: parsed.configured,
+      appId: parsed.appId,
+    });
+  });
+
+  app.post(
+    ['/api/calls/sessions/new', '/api/calls/sessions/new/'],
+    async (_req: Request, res: Response) => {
+      const parsed = parseCallsConfig(process.env);
+      if (!parsed.configured || !parsed.config) {
+        res.status(503).json({
+          error:
+            'Cloudflare Calls is not configured. Set CLOUDFLARE_CALLS_APP_ID and CLOUDFLARE_CALLS_APP_TOKEN.',
+        });
+        return;
+      }
+
+      try {
+        const cfUrl = buildCloudflareCallsUrl(parsed.config.appId, 'sessions/new');
+        const cfRes = await fetch(cfUrl, {
+          method: 'POST',
+          headers: formatCallsHeaders(parsed.config.appToken),
+        });
+
+        const data = await cfRes.json();
+        if (!cfRes.ok) {
+          res.status(cfRes.status).json(data);
+          return;
+        }
+
+        res.status(201).json(data);
+      } catch (err) {
+        console.error('Failed to create Cloudflare Calls session:', err);
+        res.status(502).json({ error: 'Failed to create Cloudflare Calls session.' });
+      }
+    }
+  );
+
+  app.post(
+    ['/api/calls/sessions/:sessionId/tracks/new', '/api/calls/sessions/:sessionId/tracks/new/'],
+    express.json({ limit: '128kb' }),
+    async (req: Request, res: Response) => {
+      const parsed = parseCallsConfig(process.env);
+      if (!parsed.configured || !parsed.config) {
+        res.status(503).json({
+          error: 'Cloudflare Calls is not configured.',
+        });
+        return;
+      }
+
+      const sessionId = req.params.sessionId;
+      try {
+        const cfUrl = buildCloudflareCallsUrl(
+          parsed.config.appId,
+          `sessions/${encodeURIComponent(sessionId)}/tracks/new`
+        );
+        const cfRes = await fetch(cfUrl, {
+          method: 'POST',
+          headers: formatCallsHeaders(parsed.config.appToken),
+          body: JSON.stringify(req.body),
+        });
+
+        const data = await cfRes.json();
+        res.status(cfRes.status).json(data);
+      } catch (err) {
+        console.error('Failed to publish tracks to Cloudflare Calls:', err);
+        res.status(502).json({ error: 'Failed to publish tracks to Cloudflare Calls.' });
+      }
+    }
+  );
+
+  app.put(
+    ['/api/calls/sessions/:sessionId/tracks/close', '/api/calls/sessions/:sessionId/tracks/close/'],
+    express.json({ limit: '64kb' }),
+    async (req: Request, res: Response) => {
+      const parsed = parseCallsConfig(process.env);
+      if (!parsed.configured || !parsed.config) {
+        res.status(503).json({
+          error: 'Cloudflare Calls is not configured.',
+        });
+        return;
+      }
+
+      const sessionId = req.params.sessionId;
+      try {
+        const cfUrl = buildCloudflareCallsUrl(
+          parsed.config.appId,
+          `sessions/${encodeURIComponent(sessionId)}/tracks/close`
+        );
+        const cfRes = await fetch(cfUrl, {
+          method: 'PUT',
+          headers: formatCallsHeaders(parsed.config.appToken),
+          body: JSON.stringify(req.body),
+        });
+
+        const data = await cfRes.json();
+        res.status(cfRes.status).json(data);
+      } catch (err) {
+        console.error('Failed to close tracks on Cloudflare Calls:', err);
+        res.status(502).json({ error: 'Failed to close tracks on Cloudflare Calls.' });
       }
     }
   );

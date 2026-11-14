@@ -1,4 +1,4 @@
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Video } from 'lucide-react';
 import type { TabId, ThemeMode } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -9,6 +9,7 @@ interface TopBarProps {
   unreadNotifications: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  onStartCall?: (title: string, isAudioOnly: boolean) => void;
 }
 
 export function TopBar({
@@ -17,6 +18,7 @@ export function TopBar({
   unreadNotifications,
   theme,
   onToggleTheme,
+  onStartCall,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -65,8 +67,19 @@ export function TopBar({
           })}
         </nav>
 
-        {/* Mobile & tablet quick PWA install + theme toggle */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Mobile & tablet quick PWA install + Call button + theme toggle */}
+        <div className="flex items-center gap-2 shrink-0">
+          {onStartCall && (
+            <button
+              type="button"
+              onClick={() => onStartCall('Studio Live Room', false)}
+              aria-label="Start live video call"
+              className="min-h-[36px] px-2.5 sm:px-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+            >
+              <Video className="w-4 h-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Live Call</span>
+            </button>
+          )}
           <div className="lg:hidden">
             <PWAInstallButton compact />
           </div>

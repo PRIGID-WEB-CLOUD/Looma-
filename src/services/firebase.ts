@@ -2,7 +2,11 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
+  OAuthProvider,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   signOut,
   type User,
 } from 'firebase/auth';
@@ -57,6 +61,10 @@ export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export const appleProvider = new OAuthProvider('apple.com');
+appleProvider.addScope('email');
+appleProvider.addScope('name');
 
 export enum OperationType {
   CREATE = 'create',
@@ -152,6 +160,28 @@ export async function testFirestoreConnection(): Promise<boolean> {
 
 export async function signInWithGoogle(): Promise<User> {
   const result = await signInWithPopup(auth, googleProvider);
+  return result.user;
+}
+
+export async function signInWithApple(): Promise<User> {
+  const result = await signInWithPopup(auth, appleProvider);
+  return result.user;
+}
+
+export async function signInWithEmail(email: string, pass: string): Promise<User> {
+  const result = await signInWithEmailAndPassword(auth, email, pass);
+  return result.user;
+}
+
+export async function signUpWithEmail(
+  email: string,
+  pass: string,
+  displayName: string
+): Promise<User> {
+  const result = await createUserWithEmailAndPassword(auth, email, pass);
+  if (result.user && displayName) {
+    await updateProfile(result.user, { displayName });
+  }
   return result.user;
 }
 

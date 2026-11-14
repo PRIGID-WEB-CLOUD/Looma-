@@ -5,9 +5,11 @@ import {
   Check,
   Info,
   MessageSquarePlus,
+  Phone,
   Send,
   UserPlus,
   Users,
+  Video,
 } from 'lucide-react';
 import type { ChatMessage, ChatThread, UserProfile } from '../types/social';
 import {
@@ -43,7 +45,8 @@ interface ChatViewProps {
   onRenameGroup: (chatId: string, nextTitle: string) => Promise<void>;
   onToggleMuteChat: (chatId: string) => void;
   onEnablePush: () => Promise<unknown>;
-  onOpenPublicProfile: (uid: string) => void;
+  onStartCall: (thread: ChatThread, isAudioOnly: boolean) => void;
+  onStartInstantCall: (title: string, isAudioOnly: boolean) => void;
 }
 
 export function ChatView({
@@ -65,6 +68,8 @@ export function ChatView({
   onToggleMuteChat,
   onEnablePush,
   onOpenPublicProfile,
+  onStartCall,
+  onStartInstantCall,
 }: ChatViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(
     initialThreadId || threads[0]?.id || null
@@ -199,6 +204,15 @@ export function ChatView({
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => onStartInstantCall('Studio Live Call', false)}
+                aria-label="Start instant call room"
+                className="min-h-[38px] px-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer"
+              >
+                <Video className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Call</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -591,6 +605,24 @@ export function ChatView({
                 )}
                 <button
                   type="button"
+                  onClick={() => onStartCall(activeThread, true)}
+                  aria-label="Start audio call"
+                  className="min-h-[36px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                  <span className="hidden sm:inline">Audio</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onStartCall(activeThread, false)}
+                  aria-label="Start video call"
+                  className="min-h-[36px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Video className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span className="hidden sm:inline">Video</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowChatInfo(true)}
                   aria-label="Chat information"
                   className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
@@ -697,8 +729,34 @@ export function ChatView({
             </form>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-500">
-            Select a conversation to begin messaging.
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center text-slate-500">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+              <Video className="w-7 h-7" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-slate-900 dark:text-white">Cloudflare Calls WebRTC Room</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mt-1">
+                Start an instant audio or video call room powered by Cloudflare RealtimeKit SFU, or select a conversation to message.
+              </p>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => onStartInstantCall('Studio Video Call', false)}
+                className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-md shadow-blue-600/20"
+              >
+                <Video className="w-4 h-4" aria-hidden="true" />
+                <span>Start Video Room</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onStartInstantCall('Studio Audio Call', true)}
+                className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 cursor-pointer"
+              >
+                <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                <span>Audio Room</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

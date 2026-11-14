@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, MapPin, MessageSquare, UserCheck, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, MapPin, MessageSquare, Phone, UserCheck, UserPlus, Users, Video } from 'lucide-react';
 import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
 import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
@@ -22,6 +22,7 @@ interface PublicProfileViewProps {
   backLabel?: string;
   onToggleFollow: (uid: string) => void;
   onMessage: (creator: UserProfile) => void;
+  onStartCallWithUser?: (creator: UserProfile, isAudioOnly: boolean) => void;
   onOpenConnections: (tab: ConnectionsTab) => void;
   onBack: () => void;
   onToggleLike: (post: Post) => void;
@@ -45,6 +46,7 @@ export function PublicProfileView({
   backLabel = 'Back to Feed',
   onToggleFollow,
   onMessage,
+  onStartCallWithUser,
   onOpenConnections,
   onBack,
   onToggleLike,
@@ -165,6 +167,29 @@ export function PublicProfileView({
               <MessageSquare className="w-4 h-4" aria-hidden="true" />
               <span>Message</span>
             </button>
+
+            {onStartCallWithUser && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onStartCallWithUser(creator, true)}
+                  aria-label={`Audio call with ${creator.displayName}`}
+                  className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                  <span>Audio</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onStartCallWithUser(creator, false)}
+                  aria-label={`Video call with ${creator.displayName}`}
+                  className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Video className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span>Video</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 

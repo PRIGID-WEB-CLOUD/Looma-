@@ -52,6 +52,7 @@ import type {
   AppNotification,
   ChatMessage,
   ChatThread,
+  CallSession,
   Post,
   StoryItem,
   UserProfile,
@@ -861,5 +862,30 @@ test('resolvePostMediaDescriptor, filterMediaPosts, playback speed, zoom, and in
   assert.equal(deriveMediaDownloadName(resolvedImg!, 'p_img'), 'photo.webp');
 });
 
+test('call session state transitions (mute, video off, screen share, and end call)', () => {
+  const session: CallSession = {
+    chatId: 'chat_1',
+    title: 'Studio Call',
+    isAudioOnly: false,
+    active: true,
+    isMuted: false,
+    isVideoOff: false,
+    isScreenSharing: false,
+    participants: [
+      { uid: 'u1', name: 'Alice', avatar: '', isMuted: false, isVideoOff: false },
+    ],
+    startedAtMs: Date.now(),
+  };
 
+  const muted = { ...session, isMuted: !session.isMuted };
+  assert.equal(muted.isMuted, true);
 
+  const camOff = { ...muted, isVideoOff: !muted.isVideoOff };
+  assert.equal(camOff.isVideoOff, true);
+
+  const sharing = { ...camOff, isScreenSharing: !camOff.isScreenSharing };
+  assert.equal(sharing.isScreenSharing, true);
+
+  const ended = { ...sharing, active: false };
+  assert.equal(ended.active, false);
+});

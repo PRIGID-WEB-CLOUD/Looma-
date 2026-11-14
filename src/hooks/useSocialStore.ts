@@ -26,6 +26,9 @@ import {
   handleFirestoreError,
   OperationType,
   signInWithGoogle,
+  signInWithApple,
+  signInWithEmail,
+  signUpWithEmail,
   signOutAccount,
   testFirestoreConnection,
 } from '../services/firebase';
@@ -56,6 +59,7 @@ import type {
   AppNotification,
   ChatMessage,
   ChatThread,
+  CallSession,
   Post,
   PostCategory,
   PostComment,
@@ -1241,6 +1245,53 @@ export function useSocialStore() {
       setAuthLoading(false);
     }
   }, []);
+
+  const loginWithApple = useCallback(async () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await signInWithApple();
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Apple sign-in popup was closed or blocked.';
+      setAuthError(msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const loginWithEmail = useCallback(async (email: string, pass: string) => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await signInWithEmail(email, pass);
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Invalid email or password.';
+      setAuthError(msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const signupWithEmail = useCallback(
+    async (email: string, pass: string, name: string) => {
+      setAuthError(null);
+      setAuthLoading(true);
+      try {
+        await signUpWithEmail(email, pass, name);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : 'Could not create account.';
+        setAuthError(msg);
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    []
+  );
 
   const logout = useCallback(async () => {
     if (firebaseUser) {
@@ -2469,6 +2520,73 @@ export function useSocialStore() {
     );
   }, []);
 
+  const [callSession, setCallSession] = useState<CallSession | null>(null);
+
+  const startCall = useCallback((thread: ChatThread, isAudioOnly: boolean) => {
+    const participants = thread.memberIds.map((uid) => {
+      const u = communityUsersRef.current.find((member) => member.uid === uid);
+      return {
+        uid,
+        name: u?.displayName || (uid === profile.uid ? profile.displayName : 'Participant'),
+        avatar: u?.avatarUrl || '',
+        isMuted: false,
+        isVideoOff: false,
+      };
+    });
+    setCallSession({
+      chatId: thread.id,
+      title: thread.title,
+      isAudioOnly,
+      active: true,
+      isMuted: false,
+      isVideoOff: false,
+      isScreenSharing: false,
+      participants,
+      startedAtMs: Date.now(),
+    });
+  }, [profile.uid, profile.displayName]);
+
+  const startInstantCall = useCallback(
+    (title: string = 'Studio Live Room', isAudioOnly: boolean = false) => {
+      setCallSession({
+        chatId: `call_${Date.now()}`,
+        title,
+        isAudioOnly,
+        active: true,
+        isMuted: false,
+        isVideoOff: false,
+        isScreenSharing: false,
+        participants: [
+          {
+            uid: profile.uid,
+            name: profile.displayName,
+            avatar: profile.avatarUrl || '',
+            isMuted: false,
+            isVideoOff: false,
+          },
+        ],
+        startedAtMs: Date.now(),
+      });
+    },
+    [profile.uid, profile.displayName, profile.avatarUrl]
+  );
+
+  const endCall = useCallback(() => {
+    setCallSession(null);
+  }, []);
+
+  const toggleCallMute = useCallback(() => {
+    setCallSession((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
+  }, []);
+
+  const toggleCallVideo = useCallback(() => {
+    setCallSession((prev) => (prev ? { ...prev, isVideoOff: !prev.isVideoOff } : null));
+  }, []);
+
+  const toggleCallScreenShare = useCallback(() => {
+    setCallSession((prev) => (prev ? { ...prev, isScreenSharing: !prev.isScreenSharing } : null));
+  }, []);
+
   const connections = computeConnections(
     communityUsers,
     followerUserIds,
@@ -2496,6 +2614,9 @@ export function useSocialStore() {
     authError,
     authLoading,
     loginWithGoogle,
+    loginWithApple,
+    loginWithEmail,
+    signupWithEmail,
     logout,
     theme,
     toggleTheme,
@@ -2548,5 +2669,12 @@ export function useSocialStore() {
     triggerNotification,
     markNotificationRead,
     markAllNotificationsRead,
+    callSession,
+    startCall,
+    startInstantCall,
+    endCall,
+    toggleCallMute,
+    toggleCallVideo,
+    toggleCallScreenShare,
   };
 }

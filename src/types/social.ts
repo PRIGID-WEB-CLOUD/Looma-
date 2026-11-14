@@ -103,6 +103,27 @@ export interface ChatMessage {
   createdAtMs: number;
 }
 
+export interface CallParticipant {
+  uid: string;
+  name: string;
+  avatar: string;
+  isMuted: boolean;
+  isVideoOff: boolean;
+  isSpeaking?: boolean;
+}
+
+export interface CallSession {
+  chatId: string;
+  title: string;
+  isAudioOnly: boolean;
+  active: boolean;
+  isMuted: boolean;
+  isVideoOff: boolean;
+  isScreenSharing: boolean;
+  participants: CallParticipant[];
+  startedAtMs: number;
+}
+
 export type NotificationType =
   | 'like'
   | 'comment'

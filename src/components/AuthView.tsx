@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowRight, Check, Lock, LogOut, Moon, Sun } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
+import { ArrowRight, Check, Lock, LogOut, Mail, Moon, Sun } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { ThemeMode, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
@@ -16,17 +16,16 @@ interface AuthViewProps {
   theme: ThemeMode;
   onSetTheme: (theme: ThemeMode) => void;
   onLoginGoogle: () => Promise<void>;
+  onLoginApple: () => Promise<void>;
+  onLoginEmail: (email: string, pass: string) => Promise<void>;
+  onSignupEmail: (email: string, pass: string, name: string) => Promise<void>;
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
 }
 
 function GoogleMark() {
   return (
-    <svg
-      className="w-4 h-4 shrink-0"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
+    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
       <path
         fill="#4285F4"
         d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
@@ -47,6 +46,14 @@ function GoogleMark() {
   );
 }
 
+function AppleMark() {
+  return (
+    <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 5.15c.57-.69 0.96-1.65.86-2.61-.84.04-1.85.56-2.45 1.25-.53.6-1 1.58-.87 2.54.94.07 1.89-.48 2.46-1.18z" />
+    </svg>
+  );
+}
+
 export function AuthView({
   initialMode = 'signin',
   profile,
@@ -56,17 +63,49 @@ export function AuthView({
   theme,
   onSetTheme,
   onLoginGoogle,
+  onLoginApple,
+  onLoginEmail,
+  onSignupEmail,
   onLogout,
   onContinueAuthenticated,
 }: AuthViewProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [useEmailForm, setUseEmailForm] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
+    setLocalError(null);
   };
 
   const isSignIn = mode === 'signin';
-  const displayError = authError;
+  const displayError = localError || authError;
+
+  const handleEmailSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
+      setLocalError('Enter both email and password.');
+      return;
+    }
+    if (!isSignIn && !displayName.trim()) {
+      setLocalError('Enter your display name to sign up.');
+      return;
+    }
+    try {
+      if (isSignIn) {
+        await onLoginEmail(cleanEmail, password);
+      } else {
+        await onSignupEmail(cleanEmail, password, displayName.trim());
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Authentication failed.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
@@ -94,7 +133,7 @@ export function AuthView({
 
       {/* Main Responsive Auth Canvas */}
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 md:px-8 py-5 md:py-12 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch">
-        {/* Editorial Visual Column (Compact Banner on Mobile, Full Panel on Desktop) */}
+        {/* Editorial Visual Column */}
         <section
           aria-label="Looma community highlights"
           className="lg:col-span-5 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col"
@@ -140,10 +179,10 @@ export function AuthView({
               </div>
               <div>
                 <p className="font-semibold text-slate-900 dark:text-white">
-                  03. Synced via Google OAuth
+                  03. Google, Apple & Email Auth
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Your profile, dark mode preference, and privacy settings stay synchronized across devices.
+                  Secure sign in with Google OAuth, Apple ID, or Email and password.
                 </p>
               </div>
             </div>
@@ -195,8 +234,8 @@ export function AuthView({
               </h1>
               <p className="text-sm text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
                 {isSignIn
-                  ? 'Sign in with a verified Google account to access your feed, messages, and profile.'
-                  : 'Create your Looma member profile with a verified Google account to get started.'}
+                  ? 'Sign in with Google, Apple, or Email to access your feed, messages, and profile.'
+                  : 'Create your Looma member profile to get started.'}
               </p>
             </div>
 
@@ -209,7 +248,7 @@ export function AuthView({
               </div>
             )}
 
-            {/* Authenticated Google OAuth Card or OAuth CTA */}
+            {/* Authenticated User Card or OAuth & Email CTAs */}
             {firebaseUser ? (
               <div className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 space-y-4">
                 <div className="flex items-center justify-between gap-3">
@@ -224,7 +263,7 @@ export function AuthView({
                         {firebaseUser.displayName || profile.displayName}
                       </p>
                       <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                        {firebaseUser.email} · {firebaseUser.emailVerified ? 'Verified Google OAuth' : 'Email verification required'}
+                        {firebaseUser.email} · Connected via Firebase Auth
                       </p>
                     </div>
                   </div>
@@ -235,16 +274,14 @@ export function AuthView({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5">
-                  {firebaseUser.emailVerified && (
-                    <button
-                      type="button"
-                      onClick={onContinueAuthenticated}
-                      className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <span>Continue to Looma</span>
-                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={onContinueAuthenticated}
+                    className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>Continue to Looma</span>
+                    <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     onClick={onLogout}
@@ -257,23 +294,130 @@ export function AuthView({
               </div>
             ) : (
               <div className="space-y-4">
-                <button
-                  type="button"
-                  disabled={authLoading}
-                  onClick={onLoginGoogle}
-                  className="w-full min-h-[48px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
-                >
-                  <span className="w-6 h-6 rounded-full bg-white flex items-center justify-center">
-                    <GoogleMark />
-                  </span>
-                  <span>
-                    {authLoading
-                      ? 'Verifying Google Session...'
-                      : isSignIn
-                        ? 'Continue with Google'
-                        : 'Sign up with Google'}
-                  </span>
-                </button>
+                {!useEmailForm ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={onLoginGoogle}
+                      className="w-full min-h-[48px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
+                    >
+                      <span className="w-6 h-6 rounded-full bg-white flex items-center justify-center">
+                        <GoogleMark />
+                      </span>
+                      <span>
+                        {authLoading
+                          ? 'Connecting...'
+                          : isSignIn
+                            ? 'Continue with Google'
+                            : 'Sign up with Google'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={onLoginApple}
+                      className="w-full min-h-[48px] px-5 rounded-xl bg-black hover:bg-slate-900 dark:bg-white dark:hover:bg-slate-200 dark:text-slate-900 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
+                    >
+                      <AppleMark />
+                      <span>
+                        {authLoading
+                          ? 'Connecting...'
+                          : isSignIn
+                            ? 'Continue with Apple'
+                            : 'Sign up with Apple'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={() => setUseEmailForm(true)}
+                      className="w-full min-h-[48px] px-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <Mail className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                      <span>Continue with Email & Password</span>
+                    </button>
+                  </>
+                ) : (
+                  <form onSubmit={handleEmailSubmit} className="space-y-4">
+                    {!isSignIn && (
+                      <div>
+                        <label
+                          htmlFor="auth-display-name"
+                          className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                        >
+                          Display Name
+                        </label>
+                        <input
+                          id="auth-display-name"
+                          type="text"
+                          value={displayName}
+                          onChange={(e) => setDisplayName(e.target.value)}
+                          placeholder="e.g. Maya Lin"
+                          required
+                          className="w-full min-h-[44px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label
+                        htmlFor="auth-email"
+                        className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                      >
+                        Email Address
+                      </label>
+                      <input
+                        id="auth-email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        required
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="auth-password"
+                        className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                      >
+                        Password
+                      </label>
+                      <input
+                        id="auth-password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        required
+                        minLength={6}
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2.5 pt-1">
+                      <button
+                        type="submit"
+                        disabled={authLoading}
+                        className="flex-1 min-h-[46px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <span>{authLoading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}</span>
+                        <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUseEmailForm(false)}
+                        className="min-h-[46px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        Back
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-start gap-3">
                   <Lock className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
@@ -282,7 +426,7 @@ export function AuthView({
                       Protected Workspace Access
                     </p>
                     <p className="mt-0.5">
-                      Feed posts, direct messages, and profile settings are restricted to authenticated users with verified Google accounts.
+                      Feed posts, direct messages, and profile settings are restricted to authenticated members.
                     </p>
                   </div>
                 </div>

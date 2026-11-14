@@ -20,6 +20,7 @@ import {
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
+import { CallRoomModal } from './components/CallRoomModal';
 import { ChatView } from './components/ChatView';
 import { ConnectionsView } from './components/ConnectionsView';
 import { CreatePostModal } from './components/CreatePostModal';
@@ -254,6 +255,18 @@ export default function App() {
           onSetTheme={store.setThemeExplicit}
           onLoginGoogle={async () => {
             await store.loginWithGoogle();
+            setActiveTab('feed');
+          }}
+          onLoginApple={async () => {
+            await store.loginWithApple();
+            setActiveTab('feed');
+          }}
+          onLoginEmail={async (email, pass) => {
+            await store.loginWithEmail(email, pass);
+            setActiveTab('feed');
+          }}
+          onSignupEmail={async (email, pass, name) => {
+            await store.signupWithEmail(email, pass, name);
             setActiveTab('feed');
           }}
           onLogout={handleLogout}
@@ -561,6 +574,7 @@ export default function App() {
               onOpenPublicProfile={(uid) =>
                 handleOpenPublicProfile(uid, undefined, 'messages')
               }
+              onStartCall={store.startCall}
             />
           )}
 
@@ -818,6 +832,15 @@ export default function App() {
         open={brandModalOpen}
         onClose={() => setBrandModalOpen(false)}
         onGoToFeed={() => setActiveTab('feed')}
+      />
+
+      <CallRoomModal
+        session={store.callSession}
+        profile={store.profile}
+        onEndCall={store.endCall}
+        onToggleMute={store.toggleCallMute}
+        onToggleVideo={store.toggleCallVideo}
+        onToggleScreenShare={store.toggleCallScreenShare}
       />
 
       <OfflineIndicator />
