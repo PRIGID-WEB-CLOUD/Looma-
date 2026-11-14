@@ -35,6 +35,12 @@ import {
   getHashtagQueryAtCursor,
   filterCreatorsForMention,
   filterHashtags,
+  validateGroupChatInput,
+  createGroupThreadRecord,
+  addGroupParticipantsState,
+  removeGroupParticipantState,
+  formatChatPushPayload,
+  shouldDispatchChatPushNotification,
 } from './socialLogic';
 import type {
   AppNotification,
@@ -661,5 +667,122 @@ test('filterCreatorsForMention and filterHashtags filter candidates cleanly', ()
   assert.ok(matchedTags.includes('architecture'));
   assert.ok(!matchedTags.includes('kyoto'));
 });
+
+test('group chat creation, participant management, and push notification rules work accurately', () => {
+  const makeUser = (uid: string, name: string): UserProfile => ({
+    uid,
+    displayName: name,
+    handle: uid,
+    bio: '',
+    avatarUrl: `/images/${uid}.jpg`,
+    location: 'Studio',
+    interests: [],
+    followersCount: 0,
+    followingCount: 0,
+    onboardingCompleted: true,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+  });
+
+  const me = makeUser('me', 'Alex Rivera');
+  const maya = makeUser('creator_maya', 'Maya Lin');
+  const kenji = makeUser('creator_kenji', 'Kenji Sato');
+  const elena = makeUser('creator_elena', 'Elena Vance');
+
+  assert.equal(validateGroupChatInput('   ', ['creator_maya'], 'me').valid, false);
+  assert.equal(validateGroupChatInput('Studio Crit', [], 'me').valid, false);
+  assert.equal(
+    validateGroupChatInput('Studio Crit', ['creator_maya', 'creator_kenji'], 'me').valid,
+    true
+  );
+
+  const group = createGroupThreadRecord({
+    id: 'group_1',
+    title: 'Studio Crit',
+    creator: me,
+    participants: [maya, kenji],
+    nowMs: 1000,
+  });
+  assert.equal(group.isGroup, true);
+  assert.deepEqual(group.memberIds, ['me', 'creator_maya', 'creator_kenji']);
+  assert.equal(group.partnerHandle, '3 members');
+
+  const added = addGroupParticipantsState(group, [elena, maya], 'Alex Rivera', 2000);
+  assert.equal(added.addedUsers.length, 1);
+  assert.deepEqual(added.thread.memberIds, [
+    'me',
+    'creator_maya',
+    'creator_kenji',
+    'creator_elena',
+  ]);
+  assert.equal(added.thread.partnerHandle, '4 members');
+
+  const removed = removeGroupParticipantState(
+    added.thread,
+    'creator_kenji',
+    'Kenji Sato',
+    'me',
+    3000
+  );
+  assert.equal(removed.removedSelf, false);
+  assert.deepEqual(removed.thread.memberIds, ['me', 'creator_maya', 'creator_elena']);
+  assert.equal(removed.thread.partnerHandle, '3 members');
+
+  const selfLeft = removeGroupParticipantState(
+    removed.thread,
+    'me',
+    'Alex Rivera',
+    'me',
+    4000
+  );
+  assert.equal(selfLeft.removedSelf, true);
+  assert.deepEqual(selfLeft.thread.memberIds, ['creator_maya', 'creator_elena']);
+
+  const payload = formatChatPushPayload(group, 'Maya Lin', 'Updated the elevation!');
+  assert.equal(payload.title, 'Studio Crit');
+  assert.equal(payload.body, 'Maya Lin: Updated the elevation!');
+
+  assert.equal(
+    shouldDispatchChatPushNotification({
+      senderId: 'creator_maya',
+      currentUid: 'me',
+      chatId: 'group_1',
+      mutedChatIds: [],
+      notifyMessages: true,
+    }),
+    true
+  );
+  assert.equal(
+    shouldDispatchChatPushNotification({
+      senderId: 'me',
+      currentUid: 'me',
+      chatId: 'group_1',
+      mutedChatIds: [],
+      notifyMessages: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldDispatchChatPushNotification({
+      senderId: 'creator_maya',
+      currentUid: 'me',
+      chatId: 'group_1',
+      mutedChatIds: ['group_1'],
+      notifyMessages: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldDispatchChatPushNotification({
+      senderId: 'creator_maya',
+      currentUid: 'me',
+      chatId: 'group_1',
+      mutedChatIds: [],
+      notifyMessages: false,
+    }),
+    false
+  );
+});
+
 
 

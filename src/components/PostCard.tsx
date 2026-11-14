@@ -172,8 +172,6 @@ export function PostCard({
               <span>@{post.authorHandle}</span>
               <span className="mx-1" aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAtMs)}</span>
-              <span className="mx-1" aria-hidden="true">·</span>
-              <span>{post.category}</span>
             </p>
           </div>
         </button>

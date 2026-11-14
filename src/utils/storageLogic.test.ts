@@ -5,7 +5,9 @@ import {
   classifyUploadMime,
   decodeJwtPayload,
   extractStorageKeyFromUrl,
+  getInlineMediaByteLimit,
   isOwnedStorageKey,
+  isRetryableUploadHttpError,
   isValidStorageObjectKey,
   MAX_IMAGE_BYTES,
   MAX_MEDIA_BYTES,
@@ -150,3 +152,17 @@ test('decodeJwtPayload and validateDecodedFirebaseTokenClaims enforce project, e
     false
   );
 });
+
+test('isRetryableUploadHttpError detects 405/404/501 and getInlineMediaByteLimit respects Firestore bounds', () => {
+  assert.equal(isRetryableUploadHttpError(405), true);
+  assert.equal(isRetryableUploadHttpError(404), true);
+  assert.equal(isRetryableUploadHttpError(501), true);
+  assert.equal(isRetryableUploadHttpError(401), false);
+  assert.equal(isRetryableUploadHttpError(413), false);
+
+  assert.equal(getInlineMediaByteLimit('avatars', 'image') <= 250_000, true);
+  assert.equal(getInlineMediaByteLimit('posts', 'image') <= 600_000, true);
+  assert.equal(getInlineMediaByteLimit('stories', 'image') <= 600_000, true);
+  assert.equal(getInlineMediaByteLimit('posts', 'video') <= 750_000, true);
+});
+

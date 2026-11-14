@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
-import { SEED_CREATORS, SEED_FOLLOW_GRAPH } from './services/seedData';
 import type {
   ConnectionsTab,
   Post,
@@ -106,9 +105,9 @@ export default function App() {
       setActiveTab('profile');
       return;
     }
-    const foundUser =
-      store.communityUsers.find((u) => u.handle.toLowerCase() === clean) ||
-      SEED_CREATORS.find((u) => u.handle.toLowerCase() === clean);
+    const foundUser = store.communityUsers.find(
+      (u) => u.handle.toLowerCase() === clean
+    );
     if (foundUser) {
       handleOpenPublicProfile(
         foundUser.uid,
@@ -199,7 +198,7 @@ export default function App() {
       store.communityUsers,
       store.followedUserIds,
       store.followerUserIds,
-      SEED_FOLLOW_GRAPH,
+      {},
       remoteMatch?.followerIds || [],
       remoteMatch?.followingIds || []
     );
@@ -207,8 +206,7 @@ export default function App() {
 
   const handleReplyToStory = async (group: StoryGroup, text: string) => {
     const matchedCreator =
-      store.communityUsers.find((u) => u.uid === group.authorId) ||
-      SEED_CREATORS.find((u) => u.uid === group.authorId) || {
+      store.communityUsers.find((u) => u.uid === group.authorId) || {
         uid: group.authorId,
         displayName: group.authorName,
         handle: group.authorHandle,
@@ -276,7 +274,7 @@ export default function App() {
           firebaseUser={store.firebaseUser}
           theme={store.theme}
           pushPermission={store.pushPermission}
-          suggestedCreators={SEED_CREATORS}
+          suggestedCreators={store.communityUsers}
           followedUserIds={store.followedUserIds}
           followersCount={store.profile.followersCount}
           onToggleFollow={store.toggleFollowUser}
@@ -522,12 +520,26 @@ export default function App() {
               profile={store.profile}
               threads={store.threads}
               messagesByChat={store.messagesByChat}
+              mutedChatIds={store.mutedChatIds}
+              pushEnabled={store.pushEnabled}
               onlineUserIds={store.onlineUserIds}
               communityUsers={store.communityUsers}
               initialThreadId={activeChatId}
               onSubscribeThread={store.subscribeChatMessages}
               onSendMessage={store.sendChatMessage}
               onStartDirectThread={store.startDirectThread}
+              onCreateGroupThread={store.createGroupThread}
+              onAddParticipants={async (chatId, ids) => {
+                await store.addGroupParticipants(chatId, ids);
+              }}
+              onRemoveParticipant={async (chatId, uid) => {
+                await store.removeGroupParticipant(chatId, uid);
+              }}
+              onRenameGroup={async (chatId, nextTitle) => {
+                await store.renameGroupThread(chatId, nextTitle);
+              }}
+              onToggleMuteChat={store.toggleMuteChat}
+              onEnablePush={store.enablePushNotifications}
               onOpenPublicProfile={(uid) =>
                 handleOpenPublicProfile(uid, undefined, 'messages')
               }
@@ -642,93 +654,106 @@ export default function App() {
                   Open all
                 </button>
               </div>
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {store.threads.slice(0, 3).map((thread) => (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveChatId(thread.id);
-                      setActiveTab('messages');
-                    }}
-                    className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
-                  >
-                    <Avatar
-                      src={thread.partnerAvatar}
-                      name={thread.title}
-                      size="sm"
-                      online={
-                        getThreadOnlineStatus(
-                          thread,
-                          store.profile.uid,
-                          store.onlineUserIds
-                        ).isOnline
-                      }
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold truncate">
-                          {thread.title}
+              {store.threads.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400 py-2">
+                  No active conversations yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {store.threads.slice(0, 3).map((thread) => (
+                    <button
+                      key={thread.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveChatId(thread.id);
+                        setActiveTab('messages');
+                      }}
+                      className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
+                    >
+                      <Avatar
+                        src={thread.partnerAvatar}
+                        name={thread.title}
+                        size="sm"
+                        online={
+                          getThreadOnlineStatus(
+                            thread,
+                            store.profile.uid,
+                            store.onlineUserIds
+                          ).isOnline
+                        }
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold truncate">
+                            {thread.title}
+                          </p>
+                          <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
+                            {formatRelativeTime(thread.updatedAtMs)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                          {thread.lastMessageText}
                         </p>
-                        <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
-                          {formatRelativeTime(thread.updatedAtMs)}
-                        </span>
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                        {thread.lastMessageText}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
               <h2 className="font-display text-sm font-bold">
-                Featured Creators
+                Community Members
               </h2>
-              <div className="space-y-3">
-                {SEED_CREATORS.map((creator) => (
-                  <div
-                    key={creator.uid}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleOpenPublicProfile(creator.uid)}
-                      aria-label={`View ${creator.displayName}'s profile`}
-                      className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
+              {store.communityUsers.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400 py-1">
+                  No other members have joined yet.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {store.communityUsers.slice(0, 4).map((creator) => (
+                    <div
+                      key={creator.uid}
+                      className="flex items-center justify-between gap-3"
                     >
-                      <Avatar
-                        src={creator.avatarUrl}
-                        name={creator.displayName}
-                        size="sm"
-                        online={isUserOnline(
-                          creator.uid,
-                          store.onlineUserIds
-                        )}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                          {creator.displayName}
-                        </p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                          @{creator.handle} · {creator.location}
-                        </p>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenDm(creator)}
-                      aria-label={`Message ${creator.displayName}`}
-                      className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
-                      <span>Chat</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPublicProfile(creator.uid)}
+                        aria-label={`View ${creator.displayName}'s profile`}
+                        className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
+                      >
+                        <Avatar
+                          src={creator.avatarUrl}
+                          name={creator.displayName}
+                          size="sm"
+                          online={isUserOnline(
+                            creator.uid,
+                            store.onlineUserIds
+                          )}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                            {creator.displayName}
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            @{creator.handle}
+                            {creator.location ? ` · ${creator.location}` : ''}
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDm(creator)}
+                        aria-label={`Message ${creator.displayName}`}
+                        className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Chat</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </aside>
         )}

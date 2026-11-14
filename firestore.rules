@@ -209,7 +209,7 @@ service cloud.firestore {
         && isValidId(data.actorId) && data.actorId == request.auth.uid
         && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 60
         && data.actorAvatar is string && data.actorAvatar.size() <= 250000
-        && data.type in ['like', 'comment', 'message', 'follow', 'system']
+        && data.type in ['like', 'comment', 'message', 'follow', 'system', 'mention']
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
         && data.body is string && data.body.size() >= 1 && data.body.size() <= 240
         && data.targetPostId is string && data.targetPostId.size() <= 128
@@ -462,12 +462,27 @@ service cloud.firestore {
         && isValidChatThread(incoming())
         && request.auth.uid in existing().memberIds
         && incoming().id == existing().id
+        && incoming().isGroup == existing().isGroup
         && incoming().createdAt == existing().createdAt
-        && incoming().memberIds == existing().memberIds
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'lastMessageText', 'lastMessageSenderId', 'updatedAt'
-        ]);
+        && (
+          // Action 1: Standard message preview update (membership unchanged)
+          (
+            incoming().memberIds == existing().memberIds
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastMessageText', 'lastMessageSenderId', 'updatedAt'
+            ])
+          )
+          // Action 2: Group chat participant or title management by existing group member
+          || (
+            existing().isGroup == true
+            && incoming().memberIds.size() >= 1
+            && incoming().memberIds.size() <= 10
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'memberIds', 'title', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
+            ])
+          )
+        );
       allow delete: if false;
 
       match /messages/{messageId} {

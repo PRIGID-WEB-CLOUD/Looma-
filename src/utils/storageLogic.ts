@@ -363,3 +363,21 @@ export function validateDecodedFirebaseTokenClaims(
   }
   return { valid: true };
 }
+
+export function isRetryableUploadHttpError(status: number): boolean {
+  return status === 404 || status === 405 || status === 501;
+}
+
+export function getInlineMediaByteLimit(
+  folder: StorageFolder,
+  kind: UploadMediaKind
+): number {
+  if (folder === 'avatars') {
+    return 200_000;
+  }
+  if (kind === 'image') {
+    return 500_000;
+  }
+  return 680_000;
+}
+

@@ -158,7 +158,20 @@ async function startServer(): Promise<void> {
   const port = Number(process.env.PORT || 3000);
   const isProd = process.env.NODE_ENV === 'production';
 
-  app.get('/api/storage/status', (_req: Request, res: Response) => {
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Authorization, Content-Type, X-Content-Type, X-Filename, X-Folder'
+    );
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  app.get(['/api/storage/status', '/api/storage/status/'], (_req: Request, res: Response) => {
     const parsed = parseR2Config(process.env);
     res.json({
       provider: 'cloudflare-r2',
@@ -169,11 +182,7 @@ async function startServer(): Promise<void> {
     });
   });
 
-  app.post(
-    '/api/storage/upload',
-    requireVerifiedFirebaseAuth,
-    express.raw({ limit: '52mb', type: '*/*' }),
-    async (req: AuthenticatedRequest, res: Response) => {
+  const handleStorageUpload = async (req: AuthenticatedRequest, res: Response) => {
       const r2 = getR2ClientAndConfig();
       if (!r2) {
         res.status(503).json({
@@ -274,11 +283,24 @@ async function startServer(): Promise<void> {
               : 'Cloudflare R2 upload failed.',
         });
       }
-    }
+    };
+
+  const uploadBodyParser = express.raw({ limit: '52mb', type: '*/*' });
+  app.post(
+    ['/api/storage/upload', '/api/storage/upload/'],
+    requireVerifiedFirebaseAuth,
+    uploadBodyParser,
+    handleStorageUpload
+  );
+  app.put(
+    ['/api/storage/upload', '/api/storage/upload/'],
+    requireVerifiedFirebaseAuth,
+    uploadBodyParser,
+    handleStorageUpload
   );
 
   app.post(
-    '/api/storage/presign',
+    ['/api/storage/presign', '/api/storage/presign/'],
     requireVerifiedFirebaseAuth,
     express.json({ limit: '64kb' }),
     async (req: AuthenticatedRequest, res: Response) => {
@@ -565,6 +587,13 @@ async function startServer(): Promise<void> {
       next(err);
     }
   );
+
+  // Ensure unknown /api/* routes return JSON instead of falling through to static/Vite 405 handlers
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({
+      error: `API route not found: ${req.method} ${req.path}`,
+    });
+  });
 
   if (isProd) {
     const distDir = path.resolve(process.cwd(), 'dist');

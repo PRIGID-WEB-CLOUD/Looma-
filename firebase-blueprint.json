@@ -456,7 +456,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["like", "comment", "message", "follow", "system"]
+          "enum": ["like", "comment", "message", "follow", "system", "mention"]
         },
         "title": {
           "type": "string",

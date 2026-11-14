@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Hash, ImagePlus, Search, X } from 'lucide-react';
+import { ImagePlus, Search, X } from 'lucide-react';
 import type { Post, PostComment, StoryGroup, UserProfile } from '../types/social';
-import { POPULAR_HASHTAGS, paginateFeed } from '../utils/socialLogic';
+import { paginateFeed } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
 import { StoriesStrip } from './StoriesStrip';
@@ -149,45 +149,26 @@ export function FeedView({
         )}
       </div>
 
-      {/* Popular Hashtags Quick Filter Bar */}
-      <div
-        data-testid="feed-hashtag-chips"
-        className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs"
-      >
-        <span className="text-slate-500 dark:text-slate-400 font-semibold shrink-0 flex items-center gap-1">
-          <Hash className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Tags:</span>
-        </span>
-        {POPULAR_HASHTAGS.slice(0, 8).map((tag) => {
-          const isSelected = searchQuery.trim().toLowerCase() === `#${tag}`;
-          return (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => {
-                const next = isSelected ? '' : tag;
-                setSearchQuery(next ? `#${next}` : '');
-                if (next) onSelectHashtag?.(next);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors shrink-0 cursor-pointer ${
-                isSelected
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
-              }`}
-            >
-              #{tag}
-            </button>
-          );
-        })}
-      </div>
-
       {/* Feed Cards */}
       {items.length === 0 ? (
-        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-2">
-          <p className="text-sm font-semibold">No matching posts</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Try clearing your search to view all posts.
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
+          <p className="text-sm font-semibold">
+            {posts.length === 0 ? 'No posts yet' : 'No matching posts'}
           </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {posts.length === 0
+              ? 'Be the first to share a note, photo, video, or link with the community.'
+              : 'Try clearing your search to view all posts.'}
+          </p>
+          {posts.length === 0 && (
+            <button
+              type="button"
+              onClick={onOpenComposer}
+              className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
+            >
+              Create First Post
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">

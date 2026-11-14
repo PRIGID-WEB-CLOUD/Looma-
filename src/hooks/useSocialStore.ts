@@ -27,18 +27,15 @@ import {
 } from '../services/firebase';
 import {
   createInitialMemberProfile,
-  createSeedChats,
-  createSeedComments,
-  createSeedNotifications,
-  createSeedPosts,
-  createSeedStories,
-  createStarterRegisteredAccounts,
-  DEFAULT_FOLLOWED_IDS,
-  DEFAULT_FOLLOWER_IDS,
-  DEFAULT_ONLINE_USER_IDS,
-  SEED_COMMUNITY_MEMBERS,
-  SEED_CREATORS,
-  SEED_FOLLOW_GRAPH,
+  isDemoPostId,
+  isDemoUserId,
+  stripDemoComments,
+  stripDemoMessages,
+  stripDemoNotifications,
+  stripDemoPosts,
+  stripDemoStories,
+  stripDemoThreads,
+  stripDemoUsers,
 } from '../services/seedData';
 import {
   dispatchBrowserPush,
@@ -59,18 +56,24 @@ import type {
   UserProfile,
 } from '../types/social';
 import {
+  addGroupParticipantsState,
   buildStoryFromPost,
   canUseAutostart,
   computeConnections,
   computeOtherUserConnections,
+  createGroupThreadRecord,
   extractMentions,
+  formatChatPushPayload,
   groupStoriesByAuthor,
   isAuthorizedSession,
   normalizeAssetUrl,
   POST_CATEGORIES,
+  removeGroupParticipantState,
   resolvePublicProfile,
   sanitizeHandle,
+  shouldDispatchChatPushNotification,
   toggleFollowState,
+  validateGroupChatInput,
 } from '../utils/socialLogic';
 
 const STORAGE_KEYS = {
@@ -88,6 +91,7 @@ const STORAGE_KEYS = {
   FOLLOWER_IDS: 'looma_follower_ids_v1',
   CHATS: 'looma_chats_v1',
   MESSAGES: 'looma_messages_v1',
+  MUTED_CHATS: 'looma_muted_chats_v1',
   NOTIFICATIONS: 'looma_notifications_v1',
   THEME: 'looma_theme_v1',
   PUSH_ENABLED: 'looma_push_enabled_v1',
@@ -166,9 +170,11 @@ export function useSocialStore() {
         null
       );
       if (Array.isArray(stored) && stored.length > 0) {
-        return stored.filter((acc) => acc.uid !== 'guest_local_user');
+        return stripDemoUsers(
+          stored.filter((acc) => acc.uid !== 'guest_local_user')
+        );
       }
-      return createStarterRegisteredAccounts();
+      return [];
     }
   );
 
@@ -204,36 +210,45 @@ export function useSocialStore() {
     };
   });
 
-  const [seedPosts] = useState<Post[]>(() => createSeedPosts());
   const [remotePosts, setRemotePosts] = useState<Post[]>([]);
   const [localPosts, setLocalPosts] = useState<Post[]>(() =>
-    readStorage<Post[]>(STORAGE_KEYS.POSTS, createSeedPosts())
+    stripDemoPosts(readStorage<Post[]>(STORAGE_KEYS.POSTS, []))
   );
 
   const [commentsByPost, setCommentsByPost] = useState<
     Record<string, PostComment[]>
-  >(() => readStorage<Record<string, PostComment[]>>(STORAGE_KEYS.COMMENTS, createSeedComments()));
+  >(() =>
+    stripDemoComments(
+      readStorage<Record<string, PostComment[]>>(STORAGE_KEYS.COMMENTS, {})
+    )
+  );
 
   const [likedPostIds, setLikedPostIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.LIKED_IDS, [])
+    readStorage<string[]>(STORAGE_KEYS.LIKED_IDS, []).filter(
+      (id) => !isDemoPostId(id)
+    )
   );
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.BOOKMARK_IDS, ['seed_post_1'])
+    readStorage<string[]>(STORAGE_KEYS.BOOKMARK_IDS, []).filter(
+      (id) => !isDemoPostId(id)
+    )
   );
   const [followedUserIds, setFollowedUserIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.FOLLOWED_IDS, DEFAULT_FOLLOWED_IDS)
+    readStorage<string[]>(STORAGE_KEYS.FOLLOWED_IDS, []).filter(
+      (id) => !isDemoUserId(id)
+    )
   );
   const [followerUserIds, setFollowerUserIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.FOLLOWER_IDS, DEFAULT_FOLLOWER_IDS)
+    readStorage<string[]>(STORAGE_KEYS.FOLLOWER_IDS, []).filter(
+      (id) => !isDemoUserId(id)
+    )
   );
   const hasRemoteFollowingRef = useRef(false);
-  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>(
-    () => SEED_COMMUNITY_MEMBERS
-  );
+  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>([]);
 
   const [remoteStories, setRemoteStories] = useState<StoryItem[]>([]);
   const [localStories, setLocalStories] = useState<StoryItem[]>(() =>
-    readStorage<StoryItem[]>(STORAGE_KEYS.STORIES, createSeedStories())
+    stripDemoStories(readStorage<StoryItem[]>(STORAGE_KEYS.STORIES, []))
   );
   const [viewedStoryIds, setViewedStoryIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.VIEWED_STORIES, [])
@@ -242,24 +257,28 @@ export function useSocialStore() {
   const onlineUserIds = Array.from(
     new Set([
       ...(isAuthenticated ? [profile.uid] : []),
-      ...DEFAULT_ONLINE_USER_IDS,
-      ...remoteOnlineIds,
+      ...remoteOnlineIds.filter((id) => !isDemoUserId(id)),
     ])
   );
   const hydratedRemotePostIdsRef = useRef<Set<string>>(new Set());
 
-  const initialChats = createSeedChats(profile.uid);
   const [threads, setThreads] = useState<ChatThread[]>(() =>
-    readStorage<ChatThread[]>(STORAGE_KEYS.CHATS, initialChats.threads)
+    stripDemoThreads(readStorage<ChatThread[]>(STORAGE_KEYS.CHATS, []))
   );
   const [messagesByChat, setMessagesByChat] = useState<
     Record<string, ChatMessage[]>
-  >(() => readStorage<Record<string, ChatMessage[]>>(STORAGE_KEYS.MESSAGES, initialChats.messagesByChat));
+  >(() =>
+    stripDemoMessages(
+      readStorage<Record<string, ChatMessage[]>>(STORAGE_KEYS.MESSAGES, {})
+    )
+  );
+  const [mutedChatIds, setMutedChatIds] = useState<string[]>(() =>
+    readStorage<string[]>(STORAGE_KEYS.MUTED_CHATS, [])
+  );
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() =>
-    readStorage<AppNotification[]>(
-      STORAGE_KEYS.NOTIFICATIONS,
-      createSeedNotifications(profile.uid)
+    stripDemoNotifications(
+      readStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, [])
     )
   );
 
@@ -268,6 +287,14 @@ export function useSocialStore() {
   const broadcastRef = useRef<BroadcastChannel | null>(null);
   const themeRef = useRef<ThemeMode>(theme);
   const pushEnabledRef = useRef<boolean>(pushEnabled);
+  const profileRef = useRef<UserProfile>(profile);
+  const privateSettingsRef = useRef<UserPrivateSettings>(privateSettings);
+  const mutedChatIdsRef = useRef<string[]>(mutedChatIds);
+  const threadsRef = useRef<ChatThread[]>(threads);
+  const communityUsersRef = useRef<UserProfile[]>(communityUsers);
+  const initialChatsSyncedRef = useRef(false);
+  const notifiedChatStampsRef = useRef<Set<string>>(new Set());
+  const leftChatIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     themeRef.current = theme;
@@ -276,6 +303,27 @@ export function useSocialStore() {
   useEffect(() => {
     pushEnabledRef.current = pushEnabled;
   }, [pushEnabled]);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
+    privateSettingsRef.current = privateSettings;
+  }, [privateSettings]);
+
+  useEffect(() => {
+    mutedChatIdsRef.current = mutedChatIds;
+    writeStorage(STORAGE_KEYS.MUTED_CHATS, mutedChatIds);
+  }, [mutedChatIds]);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  useEffect(() => {
+    communityUsersRef.current = communityUsers;
+  }, [communityUsers]);
 
   // Sync dark mode class on <html>
   useEffect(() => {
@@ -353,6 +401,57 @@ export function useSocialStore() {
     [pushEnabled]
   );
 
+  const notifyIncomingChatMessage = useCallback(
+    (params: {
+      thread: Pick<ChatThread, 'id' | 'title' | 'isGroup'>;
+      senderId: string;
+      senderName: string;
+      senderAvatar: string;
+      text: string;
+      dedupeKey: string;
+    }) => {
+      if (notifiedChatStampsRef.current.has(params.dedupeKey)) {
+        return;
+      }
+      const allowed = shouldDispatchChatPushNotification({
+        senderId: params.senderId,
+        currentUid: profileRef.current.uid,
+        chatId: params.thread.id,
+        mutedChatIds: mutedChatIdsRef.current,
+        notifyMessages: privateSettingsRef.current.notifyMessages,
+      });
+      if (!allowed) return;
+
+      notifiedChatStampsRef.current.add(params.dedupeKey);
+      if (notifiedChatStampsRef.current.size > 200) {
+        const first = notifiedChatStampsRef.current.values().next().value;
+        if (first) notifiedChatStampsRef.current.delete(first);
+      }
+
+      const payload = formatChatPushPayload(
+        params.thread,
+        params.senderName,
+        params.text
+      );
+      const newNotif: AppNotification = {
+        id: makeSafeId('notif_msg'),
+        recipientId: profileRef.current.uid,
+        actorId: params.senderId,
+        actorName: params.senderName,
+        actorAvatar: params.senderAvatar || '',
+        type: 'message',
+        title: payload.title,
+        body: payload.body,
+        targetPostId: '',
+        read: false,
+        createdAtMs: Date.now(),
+      };
+      setNotifications((prev) => [newNotif, ...prev]);
+      showToast(newNotif);
+    },
+    [showToast]
+  );
+
   // Cross-tab real-time BroadcastChannel sync
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') return;
@@ -363,6 +462,8 @@ export function useSocialStore() {
         | { type: 'post:new'; post: Post }
         | { type: 'story:new'; story: StoryItem }
         | { type: 'chat:message'; threadId: string; message: ChatMessage }
+        | { type: 'chat:thread_created'; thread: ChatThread }
+        | { type: 'chat:thread_updated'; thread: ChatThread }
         | { type: 'notif:new'; notification: AppNotification };
       if (!payload) return;
       if (payload.type === 'post:new') {
@@ -377,6 +478,33 @@ export function useSocialStore() {
             ? prev
             : [...prev, payload.story]
         );
+      } else if (payload.type === 'chat:thread_created') {
+        if (
+          payload.thread.memberIds.includes(profileRef.current.uid) &&
+          !leftChatIdsRef.current.has(payload.thread.id)
+        ) {
+          setThreads((prev) =>
+            prev.some((t) => t.id === payload.thread.id)
+              ? prev
+              : [payload.thread, ...prev]
+          );
+        }
+      } else if (payload.type === 'chat:thread_updated') {
+        const stillMember = payload.thread.memberIds.includes(
+          profileRef.current.uid
+        );
+        setThreads((prev) => {
+          if (!stillMember) {
+            return prev.filter((t) => t.id !== payload.thread.id);
+          }
+          const exists = prev.some((t) => t.id === payload.thread.id);
+          const next = exists
+            ? prev.map((t) =>
+                t.id === payload.thread.id ? payload.thread : t
+              )
+            : [payload.thread, ...prev];
+          return [...next].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        });
       } else if (payload.type === 'chat:message') {
         setMessagesByChat((prev) => {
           const existing = prev[payload.threadId] || [];
@@ -386,18 +514,33 @@ export function useSocialStore() {
             [payload.threadId]: [...existing, payload.message],
           };
         });
-        setThreads((prev) =>
-          prev.map((t) =>
-            t.id === payload.threadId
-              ? {
-                  ...t,
-                  lastMessageText: payload.message.text,
-                  lastMessageSenderId: payload.message.senderId,
-                  updatedAtMs: payload.message.createdAtMs,
-                }
-              : t
-          )
+        const matchedThread = threadsRef.current.find(
+          (t) => t.id === payload.threadId
         );
+        setThreads((prev) =>
+          prev
+            .map((t) =>
+              t.id === payload.threadId
+                ? {
+                    ...t,
+                    lastMessageText: payload.message.text,
+                    lastMessageSenderId: payload.message.senderId,
+                    updatedAtMs: payload.message.createdAtMs,
+                  }
+                : t
+            )
+            .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+        );
+        if (matchedThread) {
+          notifyIncomingChatMessage({
+            thread: matchedThread,
+            senderId: payload.message.senderId,
+            senderName: payload.message.senderName,
+            senderAvatar: payload.message.senderAvatar,
+            text: payload.message.text,
+            dedupeKey: `msg:${payload.message.id}`,
+          });
+        }
       } else if (payload.type === 'notif:new') {
         setNotifications((prev) =>
           prev.some((n) => n.id === payload.notification.id)
@@ -411,7 +554,7 @@ export function useSocialStore() {
       channel.close();
       broadcastRef.current = null;
     };
-  }, [showToast]);
+  }, [notifyIncomingChatMessage, showToast]);
 
   // Startup Firestore connectivity verification
   useEffect(() => {
@@ -441,7 +584,7 @@ export function useSocialStore() {
                 ? user.displayName.trim().slice(0, 60)
                 : d.displayName;
             const resolvedAvatar = normalizeAssetUrl(
-              d.avatarUrl || user.photoURL || SEED_CREATORS[0].avatarUrl
+              d.avatarUrl || user.photoURL || ''
             );
             hydratedProfile = {
               uid: d.uid,
@@ -476,7 +619,7 @@ export function useSocialStore() {
               displayName: (user.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member',
               handle: defaultHandle,
               bio: 'Sharing daylight notes, design studies, and field dispatches.',
-              avatarUrl: normalizeAssetUrl(user.photoURL || SEED_CREATORS[0].avatarUrl),
+              avatarUrl: normalizeAssetUrl(user.photoURL || ''),
               location: 'Earth',
               interests: ['Architecture', 'Photography'],
               followersCount: 0,
@@ -600,7 +743,10 @@ export function useSocialStore() {
             updatedAtMs: timestampToMs(d.updatedAt),
           };
         });
-        setRemotePosts(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
+        const filtered = mapped.filter(
+          (p) => !isDemoPostId(p.id) && !isDemoUserId(p.authorId)
+        );
+        setRemotePosts(filtered.sort((a, b) => b.createdAtMs - a.createdAtMs));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'posts')
     );
@@ -609,27 +755,67 @@ export function useSocialStore() {
       collection(db, 'chats'),
       where('memberIds', 'array-contains', firebaseUser.uid)
     );
+    initialChatsSyncedRef.current = false;
     const unsubChats = onSnapshot(
       chatsQuery,
       (snapshot) => {
         const mapped: ChatThread[] = snapshot.docs.map((docSnap) => {
           const d = docSnap.data();
+          const memberIds = Array.isArray(d.memberIds) ? d.memberIds : [];
+          const isGroup = Boolean(d.isGroup);
+          const partnerUid =
+            memberIds.find((id: string) => id !== firebaseUser.uid) || memberIds[0];
+          const partnerProfile = communityUsersRef.current.find(
+            (u) => u.uid === partnerUid
+          );
           return {
             id: d.id || docSnap.id,
             title: d.title,
-            isGroup: Boolean(d.isGroup),
-            memberIds: Array.isArray(d.memberIds) ? d.memberIds : [],
-            partnerAvatar: SEED_CREATORS[0].avatarUrl,
-            partnerHandle: d.isGroup ? `${d.memberIds?.length || 2} members` : 'direct',
+            isGroup,
+            memberIds,
+            partnerAvatar: partnerProfile?.avatarUrl || '',
+            partnerHandle: isGroup
+              ? `${memberIds.length} members`
+              : partnerProfile?.handle || 'direct',
             lastMessageText: d.lastMessageText || '',
             lastMessageSenderId: d.lastMessageSenderId || '',
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
           };
         });
-        if (mapped.length > 0) {
-          setThreads(mapped.sort((a, b) => b.updatedAtMs - a.updatedAtMs));
+
+        if (initialChatsSyncedRef.current) {
+          for (const change of snapshot.docChanges()) {
+            if (change.type === 'added' || change.type === 'modified') {
+              const d = change.doc.data();
+              const senderId = String(d.lastMessageSenderId || '');
+              const text = String(d.lastMessageText || '');
+              const updatedAtMs = timestampToMs(d.updatedAt);
+              if (senderId && senderId !== firebaseUser.uid && text) {
+                const senderProfile = communityUsersRef.current.find(
+                  (u) => u.uid === senderId
+                );
+                notifyIncomingChatMessage({
+                  thread: {
+                    id: d.id || change.doc.id,
+                    title: d.title || 'Looma Chat',
+                    isGroup: Boolean(d.isGroup),
+                  },
+                  senderId,
+                  senderName: senderProfile?.displayName || 'Community Member',
+                  senderAvatar: senderProfile?.avatarUrl || '',
+                  text,
+                  dedupeKey: `thread:${d.id || change.doc.id}:${senderId}:${text}:${updatedAtMs}`,
+                });
+              }
+            }
+          }
         }
+        initialChatsSyncedRef.current = true;
+
+        setThreads(
+          stripDemoThreads(mapped).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+        );
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'chats')
     );
@@ -702,7 +888,7 @@ export function useSocialStore() {
               displayName: d.displayName || 'Looma Member',
               handle: d.handle || 'looma_member',
               bio: d.bio || '',
-              avatarUrl: normalizeAssetUrl(d.avatarUrl || SEED_CREATORS[0].avatarUrl),
+              avatarUrl: normalizeAssetUrl(d.avatarUrl || ''),
               location: d.location || '',
               interests: Array.isArray(d.interests) ? d.interests : [],
               followersCount: Number(d.followersCount || 0),
@@ -713,11 +899,9 @@ export function useSocialStore() {
             };
           })
           .filter(
-            (u) =>
-              u.uid !== firebaseUser.uid &&
-              !SEED_COMMUNITY_MEMBERS.some((seed) => seed.uid === u.uid)
+            (u) => u.uid !== firebaseUser.uid && !isDemoUserId(u.uid)
           );
-        setCommunityUsers([...SEED_COMMUNITY_MEMBERS, ...remoteMembers]);
+        setCommunityUsers(remoteMembers);
       })
       .catch((err) => handleFirestoreError(err, OperationType.LIST, 'users'));
 
@@ -742,7 +926,8 @@ export function useSocialStore() {
             expiresAtMs: Number(d.expiresAtMs || 0),
           };
         });
-        setRemoteStories(mapped.sort((a, b) => a.createdAtMs - b.createdAtMs));
+        const filtered = stripDemoStories(mapped);
+        setRemoteStories(filtered.sort((a, b) => a.createdAtMs - b.createdAtMs));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'stories')
     );
@@ -907,24 +1092,9 @@ export function useSocialStore() {
     };
   }, [authReady, firebaseUser, remotePosts]);
 
-  // Combined feed posts: remote Firestore posts + curated seed posts (deduplicated)
-  const posts: Post[] = firebaseUser
-    ? [
-        ...remotePosts,
-        ...seedPosts.filter(
-          (sp) => !remotePosts.some((rp) => rp.id === sp.id)
-        ),
-      ]
-    : localPosts;
+  const posts: Post[] = firebaseUser ? remotePosts : localPosts;
 
-  const stories: StoryItem[] = firebaseUser
-    ? [
-        ...remoteStories,
-        ...localStories.filter(
-          (ls) => !remoteStories.some((rs) => rs.id === ls.id)
-        ),
-      ]
-    : localStories;
+  const stories: StoryItem[] = firebaseUser ? remoteStories : localStories;
 
   const isAuthorized = isAuthorizedSession(
     Boolean(firebaseUser),
@@ -1460,6 +1630,7 @@ export function useSocialStore() {
         collection(db, 'chats', chatId, 'messages'),
         where('memberIds', 'array-contains', firebaseUser.uid)
       );
+      let initialLoad = true;
       return onSnapshot(
         q,
         (snap) => {
@@ -1476,6 +1647,26 @@ export function useSocialStore() {
               createdAtMs: timestampToMs(d.createdAt),
             };
           });
+          if (!initialLoad) {
+            const activeThread = threadsRef.current.find((t) => t.id === chatId);
+            for (const change of snap.docChanges()) {
+              if (change.type === 'added') {
+                const d = change.doc.data();
+                const msgId = d.id || change.doc.id;
+                if (activeThread && d.senderId && d.senderId !== firebaseUser.uid) {
+                  notifyIncomingChatMessage({
+                    thread: activeThread,
+                    senderId: d.senderId,
+                    senderName: d.senderName || 'Community Member',
+                    senderAvatar: d.senderAvatar || '',
+                    text: d.text || '',
+                    dedupeKey: `msg:${msgId}`,
+                  });
+                }
+              }
+            }
+          }
+          initialLoad = false;
           if (mapped.length > 0) {
             setMessagesByChat((prev) => ({
               ...prev,
@@ -1488,7 +1679,7 @@ export function useSocialStore() {
         }
       );
     },
-    [firebaseUser]
+    [firebaseUser, notifyIncomingChatMessage]
   );
 
   const sendChatMessage = useCallback(
@@ -1543,6 +1734,7 @@ export function useSocialStore() {
           const threadRef = doc(db, 'chats', thread.id);
           const threadSnap = await getDoc(threadRef);
           const batch = writeBatch(db);
+          let syncedMemberIds = memberIds;
           if (!threadSnap.exists()) {
             batch.set(threadRef, {
               id: thread.id,
@@ -1555,6 +1747,10 @@ export function useSocialStore() {
               updatedAt: serverTimestamp(),
             });
           } else {
+            const remoteData = threadSnap.data();
+            if (Array.isArray(remoteData.memberIds) && remoteData.memberIds.length > 0) {
+              syncedMemberIds = remoteData.memberIds;
+            }
             batch.update(threadRef, {
               lastMessageText: trimmed,
               lastMessageSenderId: firebaseUser.uid,
@@ -1568,7 +1764,7 @@ export function useSocialStore() {
             senderName: profile.displayName,
             senderAvatar: profile.avatarUrl,
             text: trimmed,
-            memberIds,
+            memberIds: syncedMemberIds,
             createdAt: serverTimestamp(),
           });
           await batch.commit();
@@ -1581,7 +1777,7 @@ export function useSocialStore() {
         }
       }
     },
-    [firebaseUser, profile]
+    [firebaseUser, profile, requireAuthorized]
   );
 
   const startDirectThread = useCallback(
@@ -1607,6 +1803,10 @@ export function useSocialStore() {
         updatedAtMs: now,
       };
       setThreads((prev) => [newThread, ...prev]);
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_created',
+        thread: newThread,
+      });
 
       if (firebaseUser) {
         try {
@@ -1626,8 +1826,281 @@ export function useSocialStore() {
       }
       return newThread;
     },
-    [firebaseUser, profile.uid, threads]
+    [firebaseUser, profile.uid, requireAuthorized, threads]
   );
+
+  const createGroupThread = useCallback(
+    async (title: string, participantIds: string[]): Promise<ChatThread> => {
+      requireAuthorized();
+      const validation = validateGroupChatInput(title, participantIds, profile.uid);
+      if (!validation.valid || !validation.title || !validation.memberIds) {
+        throw new Error(validation.error || 'Invalid group chat details.');
+      }
+
+      const pool = [...communityUsers];
+      const participants = validation.memberIds
+        .filter((uid) => uid !== profile.uid)
+        .map(
+          (uid) =>
+            pool.find((u) => u.uid === uid) || {
+              uid,
+              displayName: uid,
+              handle: sanitizeHandle(uid),
+              bio: '',
+              avatarUrl: '',
+              location: 'Looma',
+              interests: [],
+              followersCount: 0,
+              followingCount: 0,
+              onboardingCompleted: true,
+              createdAtMs: Date.now(),
+              updatedAtMs: Date.now(),
+            }
+        );
+
+      const chatId = makeSafeId('group');
+      const now = Date.now();
+      const newThread = createGroupThreadRecord({
+        id: chatId,
+        title: validation.title,
+        creator: profile,
+        participants,
+        nowMs: now,
+      });
+
+      setThreads((prev) => [newThread, ...prev]);
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_created',
+        thread: newThread,
+      });
+
+      if (firebaseUser) {
+        try {
+          await setDoc(doc(db, 'chats', chatId), {
+            id: chatId,
+            title: newThread.title,
+            isGroup: true,
+            memberIds: newThread.memberIds,
+            lastMessageText: newThread.lastMessageText,
+            lastMessageSenderId: firebaseUser.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, `chats/${chatId}`);
+        }
+      }
+
+      await triggerNotification({
+        actorId: profile.uid,
+        actorName: profile.displayName,
+        actorAvatar: profile.avatarUrl,
+        type: 'message',
+        title: `Group "${newThread.title}" created`,
+        body: `${newThread.memberIds.length} participants ready for real-time messaging.`,
+        targetPostId: '',
+      });
+
+      return newThread;
+    },
+    [communityUsers, firebaseUser, profile, requireAuthorized, triggerNotification]
+  );
+
+  const persistGroupThreadUpdate = useCallback(
+    async (updatedThread: ChatThread) => {
+      if (!firebaseUser) return;
+      const threadRef = doc(db, 'chats', updatedThread.id);
+      try {
+        const snap = await getDoc(threadRef);
+        if (!snap.exists()) {
+          await setDoc(threadRef, {
+            id: updatedThread.id,
+            title: updatedThread.title,
+            isGroup: true,
+            memberIds: updatedThread.memberIds,
+            lastMessageText: updatedThread.lastMessageText,
+            lastMessageSenderId: firebaseUser.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(threadRef, {
+            title: updatedThread.title,
+            memberIds: updatedThread.memberIds,
+            lastMessageText: updatedThread.lastMessageText,
+            lastMessageSenderId: firebaseUser.uid,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        handleFirestoreError(
+          err,
+          OperationType.UPDATE,
+          `chats/${updatedThread.id}`
+        );
+      }
+    },
+    [firebaseUser]
+  );
+
+  const addGroupParticipants = useCallback(
+    async (chatId: string, participantIds: string[]): Promise<ChatThread | null> => {
+      requireAuthorized();
+      const target = threads.find((t) => t.id === chatId);
+      if (!target || !target.isGroup) return null;
+
+      const pool = [...communityUsers];
+      const usersToAdd = participantIds
+        .map((uid) => pool.find((u) => u.uid === uid))
+        .filter((u): u is UserProfile => Boolean(u));
+
+      const result = addGroupParticipantsState(
+        target,
+        usersToAdd,
+        profile.displayName
+      );
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      if (result.addedUsers.length === 0) {
+        return target;
+      }
+
+      setThreads((prev) =>
+        prev
+          .map((t) => (t.id === chatId ? result.thread : t))
+          .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      );
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_updated',
+        thread: result.thread,
+      });
+
+      await persistGroupThreadUpdate(result.thread);
+
+      await triggerNotification({
+        actorId: profile.uid,
+        actorName: profile.displayName,
+        actorAvatar: profile.avatarUrl,
+        type: 'message',
+        title: `${result.thread.title}`,
+        body: result.thread.lastMessageText,
+        targetPostId: '',
+      });
+
+      return result.thread;
+    },
+    [
+      communityUsers,
+      persistGroupThreadUpdate,
+      profile,
+      requireAuthorized,
+      threads,
+      triggerNotification,
+    ]
+  );
+
+  const removeGroupParticipant = useCallback(
+    async (chatId: string, targetUid: string): Promise<ChatThread | null> => {
+      requireAuthorized();
+      const target = threads.find((t) => t.id === chatId);
+      if (!target || !target.isGroup) return null;
+
+      const pool = [profile, ...communityUsers];
+      const member = pool.find((u) => u.uid === targetUid);
+      const targetName =
+        targetUid === profile.uid
+          ? profile.displayName
+          : member?.displayName || targetUid;
+
+      const result = removeGroupParticipantState(
+        target,
+        targetUid,
+        targetName,
+        profile.uid
+      );
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      // Persist before removing self from Firestore memberIds so rules allow existing member update
+      await persistGroupThreadUpdate(result.thread);
+
+      if (result.removedSelf) {
+        leftChatIdsRef.current.add(chatId);
+        setThreads((prev) => prev.filter((t) => t.id !== chatId));
+      } else {
+        setThreads((prev) =>
+          prev
+            .map((t) => (t.id === chatId ? result.thread : t))
+            .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+        );
+      }
+
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_updated',
+        thread: result.thread,
+      });
+
+      await triggerNotification({
+        actorId: profile.uid,
+        actorName: profile.displayName,
+        actorAvatar: profile.avatarUrl,
+        type: 'message',
+        title: `${result.thread.title}`,
+        body: result.thread.lastMessageText,
+        targetPostId: '',
+      });
+
+      return result.thread;
+    },
+    [
+      communityUsers,
+      persistGroupThreadUpdate,
+      profile,
+      requireAuthorized,
+      threads,
+      triggerNotification,
+    ]
+  );
+
+  const renameGroupThread = useCallback(
+    async (chatId: string, nextTitle: string): Promise<ChatThread | null> => {
+      requireAuthorized();
+      const target = threads.find((t) => t.id === chatId);
+      const cleanTitle = nextTitle.trim().slice(0, 80);
+      if (!target || !target.isGroup || !cleanTitle) return null;
+
+      const updated: ChatThread = {
+        ...target,
+        title: cleanTitle,
+        lastMessageText: `${profile.displayName} renamed the group to "${cleanTitle}"`,
+        lastMessageSenderId: profile.uid,
+        updatedAtMs: Date.now(),
+      };
+
+      setThreads((prev) =>
+        prev
+          .map((t) => (t.id === chatId ? updated : t))
+          .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      );
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_updated',
+        thread: updated,
+      });
+      await persistGroupThreadUpdate(updated);
+      return updated;
+    },
+    [persistGroupThreadUpdate, profile, requireAuthorized, threads]
+  );
+
+  const toggleMuteChat = useCallback((chatId: string) => {
+    setMutedChatIds((prev) =>
+      prev.includes(chatId)
+        ? prev.filter((id) => id !== chatId)
+        : [...prev, chatId]
+    );
+  }, []);
 
   const markNotificationRead = useCallback(
     async (notificationId: string) => {
@@ -1739,7 +2212,7 @@ export function useSocialStore() {
         communityUsers,
         followedUserIds,
         followerUserIds,
-        SEED_FOLLOW_GRAPH,
+        {},
         remoteFollowersIds,
         remoteFollowingIds
       );
@@ -1939,9 +2412,15 @@ export function useSocialStore() {
     addComment,
     threads,
     messagesByChat,
+    mutedChatIds,
     subscribeChatMessages,
     sendChatMessage,
     startDirectThread,
+    createGroupThread,
+    addGroupParticipants,
+    removeGroupParticipant,
+    renameGroupThread,
+    toggleMuteChat,
     notifications,
     activeToast,
     dismissToast: () => setActiveToast(null),

@@ -902,5 +902,193 @@ export function filterHashtags(
     .slice(0, 6);
 }
 
+export const MAX_GROUP_MEMBERS = 10;
+
+export function validateGroupChatInput(
+  title: string,
+  participantIds: string[],
+  creatorUid: string
+): { valid: boolean; error?: string; memberIds?: string[]; title?: string } {
+  const cleanTitle = title.trim();
+  if (cleanTitle.length < 1 || cleanTitle.length > 80) {
+    return {
+      valid: false,
+      error: 'Group name must be between 1 and 80 characters.',
+    };
+  }
+  const uniqueMembers = Array.from(
+    new Set([creatorUid, ...participantIds].filter(Boolean))
+  );
+  if (uniqueMembers.length < 2) {
+    return {
+      valid: false,
+      error: 'Select at least 1 other participant to create a group chat.',
+    };
+  }
+  if (uniqueMembers.length > MAX_GROUP_MEMBERS) {
+    return {
+      valid: false,
+      error: `Group chats support up to ${MAX_GROUP_MEMBERS} participants.`,
+    };
+  }
+  return { valid: true, memberIds: uniqueMembers, title: cleanTitle };
+}
+
+export function createGroupThreadRecord(params: {
+  id: string;
+  title: string;
+  creator: UserProfile;
+  participants: UserProfile[];
+  nowMs?: number;
+}): ChatThread {
+  const now = params.nowMs ?? Date.now();
+  const cleanTitle = params.title.trim().slice(0, 80);
+  const memberIds = Array.from(
+    new Set([params.creator.uid, ...params.participants.map((p) => p.uid)])
+  ).slice(0, MAX_GROUP_MEMBERS);
+  const leadPartner = params.participants[0] || params.creator;
+
+  return {
+    id: params.id,
+    title: cleanTitle,
+    isGroup: true,
+    memberIds,
+    partnerAvatar: leadPartner.avatarUrl,
+    partnerHandle: `${memberIds.length} members`,
+    lastMessageText: `${params.creator.displayName} created "${cleanTitle}"`,
+    lastMessageSenderId: params.creator.uid,
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+export function addGroupParticipantsState(
+  thread: ChatThread,
+  usersToAdd: UserProfile[],
+  actorName: string,
+  nowMs: number = Date.now()
+): { thread: ChatThread; addedUsers: UserProfile[]; error?: string } {
+  if (!thread.isGroup) {
+    return {
+      thread,
+      addedUsers: [],
+      error: 'Participants can only be added to group chats.',
+    };
+  }
+  const existingSet = new Set(thread.memberIds);
+  const newUsers = usersToAdd.filter((u) => u.uid && !existingSet.has(u.uid));
+  if (newUsers.length === 0) {
+    return { thread, addedUsers: [] };
+  }
+  const availableSlots = Math.max(0, MAX_GROUP_MEMBERS - thread.memberIds.length);
+  if (availableSlots === 0) {
+    return {
+      thread,
+      addedUsers: [],
+      error: `Group limit reached (${MAX_GROUP_MEMBERS} participants max).`,
+    };
+  }
+  const accepted = newUsers.slice(0, availableSlots);
+  const nextMemberIds = [...thread.memberIds, ...accepted.map((u) => u.uid)];
+  const namesSummary =
+    accepted.length === 1
+      ? accepted[0].displayName
+      : `${accepted[0].displayName} +${accepted.length - 1}`;
+
+  return {
+    addedUsers: accepted,
+    thread: {
+      ...thread,
+      memberIds: nextMemberIds,
+      partnerHandle: `${nextMemberIds.length} members`,
+      lastMessageText: `${actorName} added ${namesSummary}`,
+      updatedAtMs: nowMs,
+    },
+  };
+}
+
+export function removeGroupParticipantState(
+  thread: ChatThread,
+  targetUid: string,
+  targetName: string,
+  actorUid: string,
+  nowMs: number = Date.now()
+): { thread: ChatThread; removedSelf: boolean; error?: string } {
+  if (!thread.isGroup) {
+    return {
+      thread,
+      removedSelf: false,
+      error: 'Participants can only be removed from group chats.',
+    };
+  }
+  if (!thread.memberIds.includes(targetUid)) {
+    return {
+      thread,
+      removedSelf: false,
+      error: 'Participant is not in this group.',
+    };
+  }
+  if (thread.memberIds.length <= 1) {
+    return {
+      thread,
+      removedSelf: false,
+      error: 'Cannot remove the last remaining member.',
+    };
+  }
+  const nextMemberIds = thread.memberIds.filter((id) => id !== targetUid);
+  const removedSelf = targetUid === actorUid;
+
+  return {
+    removedSelf,
+    thread: {
+      ...thread,
+      memberIds: nextMemberIds,
+      partnerHandle: `${nextMemberIds.length} members`,
+      lastMessageText: removedSelf
+        ? `${targetName} left the group`
+        : `${targetName} was removed from the group`,
+      updatedAtMs: nowMs,
+    },
+  };
+}
+
+export function formatChatPushPayload(
+  thread: Pick<ChatThread, 'title' | 'isGroup'>,
+  senderName: string,
+  text: string
+): { title: string; body: string } {
+  const cleanText = text.trim();
+  if (thread.isGroup) {
+    return {
+      title: thread.title,
+      body: `${senderName}: ${cleanText}`.slice(0, 240),
+    };
+  }
+  return {
+    title: `Message from ${senderName}`,
+    body: cleanText.slice(0, 240),
+  };
+}
+
+export function shouldDispatchChatPushNotification(params: {
+  senderId: string;
+  currentUid: string;
+  chatId: string;
+  mutedChatIds: string[];
+  notifyMessages: boolean;
+}): boolean {
+  if (!params.senderId || params.senderId === params.currentUid) {
+    return false;
+  }
+  if (!params.notifyMessages) {
+    return false;
+  }
+  if (params.mutedChatIds.includes(params.chatId)) {
+    return false;
+  }
+  return true;
+}
+
+
 
 

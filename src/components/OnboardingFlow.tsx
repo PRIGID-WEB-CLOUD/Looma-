@@ -551,62 +551,69 @@ export function OnboardingFlow({
                   </span>
                 </div>
 
-                <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                  {suggestedCreators.map((creator) => {
-                    const isFollowing = followedUserIds.includes(creator.uid);
-                    return (
-                      <div
-                        key={creator.uid}
-                        className="p-3.5 sm:p-4 flex items-center justify-between gap-3 bg-white dark:bg-slate-900"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Avatar
-                            src={creator.avatarUrl}
-                            name={creator.displayName}
-                            size="md"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                              {creator.displayName}
-                            </p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                              @{creator.handle} · {creator.location}
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          aria-pressed={isFollowing}
-                          onClick={() => onToggleFollow(creator.uid)}
-                          className={`min-h-[40px] px-3.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
-                            isFollowing
-                              ? 'border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
-                              : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white'
-                          }`}
+                {suggestedCreators.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+                    Other members will appear here once they join Looma.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                    {suggestedCreators.map((creator) => {
+                      const isFollowing = followedUserIds.includes(creator.uid);
+                      return (
+                        <div
+                          key={creator.uid}
+                          className="p-3.5 sm:p-4 flex items-center justify-between gap-3 bg-white dark:bg-slate-900"
                         >
-                          {isFollowing ? (
-                            <>
-                              <UserCheck
-                                className="w-3.5 h-3.5"
-                                aria-hidden="true"
-                              />
-                              <span>Following</span>
-                            </>
-                          ) : (
-                            <>
-                              <UserPlus
-                                className="w-3.5 h-3.5"
-                                aria-hidden="true"
-                              />
-                              <span>Follow</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar
+                              src={creator.avatarUrl}
+                              name={creator.displayName}
+                              size="md"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                                {creator.displayName}
+                              </p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                @{creator.handle}
+                                {creator.location ? ` · ${creator.location}` : ''}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            aria-pressed={isFollowing}
+                            onClick={() => onToggleFollow(creator.uid)}
+                            className={`min-h-[40px] px-3.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                              isFollowing
+                                ? 'border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
+                                : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white'
+                            }`}
+                          >
+                            {isFollowing ? (
+                              <>
+                                <UserCheck
+                                  className="w-3.5 h-3.5"
+                                  aria-hidden="true"
+                                />
+                                <span>Following</span>
+                              </>
+                            ) : (
+                              <>
+                                <UserPlus
+                                  className="w-3.5 h-3.5"
+                                  aria-hidden="true"
+                                />
+                                <span>Follow</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-3 pt-2">

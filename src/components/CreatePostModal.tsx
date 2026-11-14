@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import type { PostCategory, UserProfile } from '../types/social';
 import {
-  POPULAR_HASHTAGS,
   extractFirstUrl,
   filterCreatorsForMention,
   filterHashtags,
@@ -21,7 +20,6 @@ import {
   parseRichUrl,
   validatePostInput,
 } from '../utils/socialLogic';
-import { SEED_CREATORS } from '../services/seedData';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
@@ -74,9 +72,6 @@ export function CreatePostModal({
 
   const allCandidateCreators = useMemo(() => {
     const map = new Map<string, UserProfile>();
-    for (const c of SEED_CREATORS) {
-      if (c.uid !== profile.uid) map.set(c.handle.toLowerCase(), c);
-    }
     for (const c of communityUsers) {
       if (c.uid !== profile.uid) map.set(c.handle.toLowerCase(), c);
     }
@@ -85,10 +80,6 @@ export function CreatePostModal({
 
   const activeMentionQuery = useMemo(
     () => getMentionQueryAtCursor(caption, cursorPos),
-    [caption, cursorPos]
-  );
-  const activeHashtagQuery = useMemo(
-    () => getHashtagQueryAtCursor(caption, cursorPos),
     [caption, cursorPos]
   );
 
@@ -100,11 +91,14 @@ export function CreatePostModal({
     [activeMentionQuery, allCandidateCreators]
   );
 
+  const activeHashtagQuery = useMemo(
+    () => getHashtagQueryAtCursor(caption, cursorPos),
+    [caption, cursorPos]
+  );
+
   const hashtagSuggestions = useMemo(
     () =>
-      activeHashtagQuery
-        ? filterHashtags(activeHashtagQuery.query)
-        : [],
+      activeHashtagQuery ? filterHashtags(activeHashtagQuery.query) : [],
     [activeHashtagQuery]
   );
 
@@ -125,22 +119,7 @@ export function CreatePostModal({
   };
 
   const insertHashtag = (tag: string) => {
-    if (!activeHashtagQuery) {
-      const before = caption.slice(0, cursorPos);
-      const after = caption.slice(cursorPos);
-      const space = before.length > 0 && !before.endsWith(' ') ? ' ' : '';
-      const next = `${before}${space}#${tag} ${after}`;
-      setCaption(next);
-      const nextPos = before.length + space.length + tag.length + 2;
-      setCursorPos(nextPos);
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          textareaRef.current.setSelectionRange(nextPos, nextPos);
-        }
-      }, 0);
-      return;
-    }
+    if (!activeHashtagQuery) return;
     const before = caption.slice(0, activeHashtagQuery.startIndex);
     const after = caption.slice(cursorPos);
     const next = `${before}#${tag} ${after}`;
@@ -400,7 +379,7 @@ export function CreatePostModal({
                 onClick={(e) => setCursorPos(e.currentTarget.selectionStart || 0)}
                 onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart || 0)}
                 onSelect={(e) => setCursorPos(e.currentTarget.selectionStart || 0)}
-                placeholder="Write thoughts, tag creators with @handle, or topics with #hashtag..."
+                placeholder="Write thoughts, add #hashtags, @mention creators, or paste a link..."
                 maxLength={1200}
                 className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
               />
@@ -409,7 +388,7 @@ export function CreatePostModal({
               {activeMentionQuery && mentionSuggestions.length > 0 && (
                 <div
                   data-testid="composer-mention-suggestions"
-                  className="absolute left-0 right-0 top-full mt-1.5 z-30 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1.5 space-y-0.5"
+                  className="mt-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-1.5 space-y-0.5 max-h-48 overflow-y-auto"
                 >
                   <p className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                     <AtSign className="w-3 h-3 text-blue-600 dark:text-blue-400" /> Mention Creator
@@ -418,10 +397,8 @@ export function CreatePostModal({
                     <button
                       key={creator.uid}
                       type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        insertMention(creator.handle);
-                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertMention(creator.handle)}
                       className="w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     >
                       <Avatar src={creator.avatarUrl} name={creator.displayName} size="sm" />
@@ -438,36 +415,34 @@ export function CreatePostModal({
                 </div>
               )}
 
-              {/* Hashtag Autocomplete Dropdown */}
+              {/* Hashtag Autocomplete Dropdown (only when typing #) */}
               {activeHashtagQuery && hashtagSuggestions.length > 0 && (
                 <div
                   data-testid="composer-hashtag-suggestions"
-                  className="absolute left-0 right-0 top-full mt-1.5 z-30 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1.5 space-y-0.5"
+                  className="mt-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-1.5 space-y-0.5 max-h-48 overflow-y-auto"
                 >
                   <p className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" /> Trending Hashtags
+                    <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" /> Add Hashtag
                   </p>
                   {hashtagSuggestions.map((tag) => (
                     <button
                       key={tag}
                       type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        insertHashtag(tag);
-                      }}
-                      className="w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-xs font-medium text-slate-800 dark:text-slate-200"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertHashtag(tag)}
+                      className="w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     >
-                      <span className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                        #
+                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                        #{tag}
                       </span>
-                      <span>#{tag}</span>
+                      <span className="text-[11px] text-slate-400">Insert</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Quick Tag and Mention Helper Strip */}
+            {/* Quick Mention & Tag Helper Strip */}
             <div className="flex items-center justify-between gap-2 pt-1 text-xs">
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                 <button
@@ -490,7 +465,6 @@ export function CreatePostModal({
                   <AtSign className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                   <span>Mention</span>
                 </button>
-
                 <button
                   type="button"
                   onClick={() => {
@@ -511,17 +485,6 @@ export function CreatePostModal({
                   <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                   <span>Tag</span>
                 </button>
-
-                {POPULAR_HASHTAGS.slice(0, 5).map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => insertHashtag(tag)}
-                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] font-medium shrink-0 cursor-pointer"
-                  >
-                    #{tag}
-                  </button>
-                ))}
               </div>
 
               <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
