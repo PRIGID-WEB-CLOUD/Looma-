@@ -14,6 +14,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   buildStorageObjectKey,
+  classifyR2BackendError,
   classifyUploadMime,
   decodeJwtPayload,
   isOwnedStorageKey,
@@ -65,6 +66,8 @@ function getR2ClientAndConfig(): {
   const client = new S3Client({
     region: 'auto',
     endpoint: parsed.config.endpoint,
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: {
       accessKeyId: parsed.config.accessKeyId,
       secretAccessKey: parsed.config.secretAccessKey,
@@ -275,12 +278,11 @@ async function startServer(): Promise<void> {
           size: rawBody.length,
         });
       } catch (err) {
-        console.error('Cloudflare R2 upload error:', err);
-        res.status(502).json({
-          error:
-            err instanceof Error
-              ? `Cloudflare R2 upload failed: ${err.message}`
-              : 'Cloudflare R2 upload failed.',
+        const info = classifyR2BackendError(err);
+        console.warn(`[storage/upload] ${info.code}: ${info.message}`);
+        res.status(info.status).json({
+          code: info.code,
+          error: info.message,
         });
       }
     };
@@ -378,12 +380,11 @@ async function startServer(): Promise<void> {
           expiresIn: 300,
         });
       } catch (err) {
-        console.error('Cloudflare R2 presign error:', err);
-        res.status(502).json({
-          error:
-            err instanceof Error
-              ? `Failed to generate Cloudflare R2 upload URL: ${err.message}`
-              : 'Failed to generate Cloudflare R2 upload URL.',
+        const info = classifyR2BackendError(err);
+        console.warn(`[storage/presign] ${info.code}: ${info.message}`);
+        res.status(info.status).json({
+          code: info.code,
+          error: info.message,
         });
       }
     }
@@ -463,8 +464,9 @@ async function startServer(): Promise<void> {
         res.status(404).json({ error: 'Media object not found.' });
         return;
       }
-      console.error('Cloudflare R2 get error:', err);
-      res.status(502).json({ error: 'Failed to retrieve media from Cloudflare R2.' });
+      const info = classifyR2BackendError(err);
+      console.warn(`[storage/get] ${info.code}: ${info.message}`);
+      res.status(info.status).json({ code: info.code, error: info.message });
     }
   };
 
@@ -512,8 +514,9 @@ async function startServer(): Promise<void> {
           items,
         });
       } catch (err) {
-        console.error('Cloudflare R2 list error:', err);
-        res.status(502).json({ error: 'Failed to list Cloudflare R2 objects.' });
+        const info = classifyR2BackendError(err);
+        console.warn(`[storage/list] ${info.code}: ${info.message}`);
+        res.status(info.status).json({ code: info.code, error: info.message });
       }
     }
   );
@@ -566,8 +569,9 @@ async function startServer(): Promise<void> {
         );
         res.json({ ok: true, deletedKey: key });
       } catch (err) {
-        console.error('Cloudflare R2 delete error:', err);
-        res.status(502).json({ error: 'Failed to delete Cloudflare R2 object.' });
+        const info = classifyR2BackendError(err);
+        console.warn(`[storage/delete] ${info.code}: ${info.message}`);
+        res.status(info.status).json({ code: info.code, error: info.message });
       }
     }
   );

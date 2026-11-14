@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildStorageObjectKey,
+  classifyR2BackendError,
   classifyUploadMime,
   decodeJwtPayload,
   extractStorageKeyFromUrl,
-  getInlineMediaByteLimit,
+  inspectUploadHttpResponse,
   isOwnedStorageKey,
   isRetryableUploadHttpError,
   isValidStorageObjectKey,
@@ -43,6 +44,22 @@ test('parseR2Config detects missing vars and builds Cloudflare R2 S3 endpoint wh
   assert.equal(ready.config?.endpoint, 'https://acct_12345.r2.cloudflarestorage.com');
   assert.equal(ready.config?.publicUrl, 'https://cdn.looma.example.com');
   assert.equal(ready.publicUrlConfigured, true);
+
+  const cloudflareAliases = parseR2Config({
+    CLOUDFLARE_ACCOUNT_ID: ' "cf_acct_999" ',
+    CLOUDFLARE_ACCESS_KEY_ID: " 'cf_key_123' ",
+    CLOUDFLARE_SECRET_ACCESS_KEY: ' cf_secret_456 ',
+    CLOUDFLARE_R2_BUCKET_NAME: ' "looma" ',
+    CLOUDFLARE_R2_PUBLIC_DOMAIN: ' "https://pub-example.r2.dev/" ',
+  });
+  assert.equal(cloudflareAliases.configured, true);
+  assert.deepEqual(cloudflareAliases.missing, []);
+  assert.equal(cloudflareAliases.config?.accountId, 'cf_acct_999');
+  assert.equal(cloudflareAliases.config?.accessKeyId, 'cf_key_123');
+  assert.equal(cloudflareAliases.config?.bucketName, 'looma');
+  assert.equal(cloudflareAliases.config?.endpoint, 'https://cf_acct_999.r2.cloudflarestorage.com');
+  assert.equal(cloudflareAliases.config?.publicUrl, 'https://pub-example.r2.dev');
+  assert.equal(cloudflareAliases.publicUrlConfigured, true);
 });
 
 test('classifyUploadMime validates allowed media types and rejects SVG/executables', () => {
@@ -153,16 +170,52 @@ test('decodeJwtPayload and validateDecodedFirebaseTokenClaims enforce project, e
   );
 });
 
-test('isRetryableUploadHttpError detects 405/404/501 and getInlineMediaByteLimit respects Firestore bounds', () => {
+test('isRetryableUploadHttpError and inspectUploadHttpResponse strictly enforce real R2 responses with no inline fallback', () => {
   assert.equal(isRetryableUploadHttpError(405), true);
   assert.equal(isRetryableUploadHttpError(404), true);
   assert.equal(isRetryableUploadHttpError(501), true);
+  assert.equal(isRetryableUploadHttpError(200, false), true);
+  assert.equal(isRetryableUploadHttpError(200, true), false);
   assert.equal(isRetryableUploadHttpError(401), false);
   assert.equal(isRetryableUploadHttpError(413), false);
 
-  assert.equal(getInlineMediaByteLimit('avatars', 'image') <= 250_000, true);
-  assert.equal(getInlineMediaByteLimit('posts', 'image') <= 600_000, true);
-  assert.equal(getInlineMediaByteLimit('stories', 'image') <= 600_000, true);
-  assert.equal(getInlineMediaByteLimit('posts', 'video') <= 750_000, true);
+  const htmlProxy = inspectUploadHttpResponse(
+    200,
+    '<!doctype html><html><body>Looma</body></html>'
+  );
+  assert.equal(htmlProxy.ok, false);
+  assert.equal(htmlProxy.shouldRetryPresign, true);
+
+  const validUpload = inspectUploadHttpResponse(
+    201,
+    JSON.stringify({
+      ok: true,
+      url: 'https://pub-example.r2.dev/uploads/u1/posts/1.png',
+      key: 'uploads/u1/posts/1.png',
+    })
+  );
+  assert.equal(validUpload.ok, true);
+  assert.equal(validUpload.shouldRetryPresign, false);
+
+  const backendUnauthorized = inspectUploadHttpResponse(
+    502,
+    JSON.stringify({
+      code: 'R2_UNAUTHORIZED',
+      error: 'Cloudflare R2 rejected the configured API credentials (Unauthorized).',
+    })
+  );
+  assert.equal(backendUnauthorized.ok, false);
+  assert.equal(backendUnauthorized.shouldRetryPresign, false);
+  assert.equal(
+    backendUnauthorized.errorMessage,
+    'Cloudflare R2 rejected the configured API credentials (Unauthorized).'
+  );
+
+  const authInfo = classifyR2BackendError({ Code: 'Unauthorized', $metadata: { httpStatusCode: 401 } });
+  assert.equal(authInfo.code, 'R2_UNAUTHORIZED');
+  assert.equal(authInfo.isAuthError, true);
+
+  const bucketInfo = classifyR2BackendError({ Code: 'NoSuchBucket', message: 'The specified bucket does not exist.' });
+  assert.equal(bucketInfo.code, 'R2_BUCKET_NOT_FOUND');
 });
 

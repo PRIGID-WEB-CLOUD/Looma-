@@ -1,5 +1,6 @@
 import { Moon, Sun } from 'lucide-react';
 import type { TabId, ThemeMode } from '../types/social';
+import { LoomaLogo } from './LoomaLogo';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface TopBarProps {
@@ -31,15 +32,10 @@ export function TopBar({
   ];
 
   return (
-    <header className="sticky top-0 z-30 h-13 md:h-16 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+    <header className="sticky top-0 z-30 h-13 md:h-16 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shrink-0">
       <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-8">
-        {/* Zone 1: Static Logo brand with icon */}
-        <div className="flex items-center gap-2 font-display text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 select-none">
-          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
-            <img src="/icon.svg" alt="" className="w-4 h-4 object-contain filter brightness-200" />
-          </div>
-          <span>Looma</span>
-        </div>
+        {/* Zone 1: Static theme-reactive Logo brand */}
+        <LoomaLogo />
 
         {/* Zone 2: 4 single-line navigation links */}
         <nav
@@ -80,7 +76,9 @@ export function TopBar({
             aria-label={
               theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
             }
-            className="md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className={`${
+              activeTab === 'messages' ? 'flex' : 'md:hidden flex'
+            } min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer`}
           >
             {theme === 'dark' ? (
               <Sun className="w-5 h-5" aria-hidden="true" />

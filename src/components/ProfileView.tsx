@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { MapPin, Settings, Users } from 'lucide-react';
 import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
+import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { MediaGalleryGrid } from './MediaGalleryGrid';
+import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
 import { RichText } from './RichText';
 
@@ -44,10 +47,15 @@ export function ProfileView({
   onSelectHashtag,
   onMentionClick,
 }: ProfileViewProps) {
-  const [subTab, setSubTab] = useState<'posts' | 'saved'>('posts');
+  const [subTab, setSubTab] = useState<'posts' | 'media' | 'saved'>('posts');
+  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
 
   const myPosts = posts.filter((p) => p.authorId === profile.uid);
+  const myMediaEntries = useMemo(() => filterMediaPosts(myPosts), [myPosts]);
   const savedPosts = posts.filter((p) => bookmarkedPostIds.includes(p.id));
+  const savedMediaEntries = useMemo(() => filterMediaPosts(savedPosts), [savedPosts]);
+  const activeGalleryEntries =
+    subTab === 'saved' ? savedMediaEntries : myMediaEntries;
   const displayedPosts = subTab === 'posts' ? myPosts : savedPosts;
   const displayedFollowers =
     typeof followersCount === 'number' ? followersCount : profile.followersCount;
@@ -165,7 +173,7 @@ export function ProfileView({
         </div>
       </div>
 
-      {/* Posts / Saved Segmented Tabs */}
+      {/* Posts / Media / Saved Segmented Tabs */}
       <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-fit">
         <button
           type="button"
@@ -180,6 +188,17 @@ export function ProfileView({
         </button>
         <button
           type="button"
+          onClick={() => setSubTab('media')}
+          className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer tabular-nums ${
+            subTab === 'media'
+              ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400'
+          }`}
+        >
+          Media ({myMediaEntries.length})
+        </button>
+        <button
+          type="button"
           onClick={() => setSubTab('saved')}
           className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer tabular-nums ${
             subTab === 'saved'
@@ -191,7 +210,13 @@ export function ProfileView({
         </button>
       </div>
 
-      {displayedPosts.length === 0 ? (
+      {subTab === 'media' ? (
+        <MediaGalleryGrid
+          entries={myMediaEntries}
+          emptyMessage="No posted photos, videos, or audio tracks yet."
+          onSelectEntry={(postId) => setActiveMediaPostId(postId)}
+        />
+      ) : displayedPosts.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center text-sm text-slate-500 dark:text-slate-400">
           {subTab === 'posts'
             ? 'You have not published any posts yet. Share a note or photo from your Feed.'
@@ -214,10 +239,28 @@ export function ProfileView({
               onAuthorClick={onAuthorClick}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}
+              onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
             />
           ))}
         </div>
       )}
+
+      <MediaViewerModal
+        open={Boolean(activeMediaPostId)}
+        entries={activeGalleryEntries}
+        activePostId={activeMediaPostId}
+        currentUserId={profile.uid}
+        likedPostIds={likedPostIds}
+        bookmarkedPostIds={bookmarkedPostIds}
+        onClose={() => setActiveMediaPostId(null)}
+        onSelectPostId={(postId) => setActiveMediaPostId(postId)}
+        onToggleLike={onToggleLike}
+        onToggleBookmark={onToggleBookmark}
+        onShareToStory={onShareToStory}
+        onAuthorClick={onAuthorClick}
+        onSelectHashtag={onSelectHashtag}
+        onMentionClick={onMentionClick}
+      />
     </section>
   );
 }

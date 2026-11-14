@@ -12,6 +12,12 @@ export interface R2EnvInput {
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET_NAME?: string;
   R2_PUBLIC_URL?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_ACCESS_KEY_ID?: string;
+  CLOUDFLARE_SECRET_ACCESS_KEY?: string;
+  CLOUDFLARE_R2_BUCKET_NAME?: string;
+  CLOUDFLARE_R2_PUBLIC_DOMAIN?: string;
+  CLOUDFLARE_R2_PUBLIC_URL?: string;
 }
 
 export interface R2Config {
@@ -31,9 +37,20 @@ export interface R2ConfigParseResult {
   config: R2Config | null;
 }
 
+function cleanEnvValue(val: string | undefined): string {
+  if (!val) return '';
+  let cleaned = val.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned;
+}
+
 function isPlaceholderSecret(val: string | undefined): boolean {
-  if (!val) return true;
-  const trimmed = val.trim();
+  const trimmed = cleanEnvValue(val);
   if (!trimmed) return true;
   return (
     trimmed.startsWith('MY_') ||
@@ -43,8 +60,7 @@ function isPlaceholderSecret(val: string | undefined): boolean {
 }
 
 export function normalizePublicBaseUrl(rawUrl: string | undefined): string {
-  if (!rawUrl) return '';
-  const trimmed = rawUrl.trim();
+  const trimmed = cleanEnvValue(rawUrl);
   if (!trimmed) return '';
   try {
     const parsed = new URL(trimmed);
@@ -57,25 +73,52 @@ export function normalizePublicBaseUrl(rawUrl: string | undefined): string {
   }
 }
 
+function firstConfiguredValue(
+  ...candidates: Array<string | undefined>
+): string {
+  for (const candidate of candidates) {
+    if (!isPlaceholderSecret(candidate)) {
+      return cleanEnvValue(candidate);
+    }
+  }
+  return '';
+}
+
 export function parseR2Config(env: R2EnvInput): R2ConfigParseResult {
   const missing: string[] = [];
-  const accountId = env.R2_ACCOUNT_ID?.trim() || '';
-  const accessKeyId = env.R2_ACCESS_KEY_ID?.trim() || '';
-  const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim() || '';
-  const bucketName = env.R2_BUCKET_NAME?.trim() || '';
+  const accountId = firstConfiguredValue(
+    env.R2_ACCOUNT_ID,
+    env.CLOUDFLARE_ACCOUNT_ID
+  );
+  const accessKeyId = firstConfiguredValue(
+    env.R2_ACCESS_KEY_ID,
+    env.CLOUDFLARE_ACCESS_KEY_ID
+  );
+  const secretAccessKey = firstConfiguredValue(
+    env.R2_SECRET_ACCESS_KEY,
+    env.CLOUDFLARE_SECRET_ACCESS_KEY
+  );
+  const bucketName = firstConfiguredValue(
+    env.R2_BUCKET_NAME,
+    env.CLOUDFLARE_R2_BUCKET_NAME
+  );
 
-  if (isPlaceholderSecret(accountId)) missing.push('R2_ACCOUNT_ID');
-  if (isPlaceholderSecret(accessKeyId)) missing.push('R2_ACCESS_KEY_ID');
-  if (isPlaceholderSecret(secretAccessKey)) missing.push('R2_SECRET_ACCESS_KEY');
-  if (isPlaceholderSecret(bucketName)) missing.push('R2_BUCKET_NAME');
+  if (!accountId) missing.push('R2_ACCOUNT_ID');
+  if (!accessKeyId) missing.push('R2_ACCESS_KEY_ID');
+  if (!secretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
+  if (!bucketName) missing.push('R2_BUCKET_NAME');
 
-  const publicUrl = normalizePublicBaseUrl(env.R2_PUBLIC_URL);
+  const publicUrl = normalizePublicBaseUrl(
+    env.R2_PUBLIC_URL ||
+      env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
+      env.CLOUDFLARE_R2_PUBLIC_URL
+  );
 
   if (missing.length > 0) {
     return {
       configured: false,
       missing,
-      bucketName: isPlaceholderSecret(bucketName) ? null : bucketName,
+      bucketName: bucketName || null,
       publicUrlConfigured: Boolean(publicUrl),
       config: null,
     };
@@ -364,20 +407,129 @@ export function validateDecodedFirebaseTokenClaims(
   return { valid: true };
 }
 
-export function isRetryableUploadHttpError(status: number): boolean {
+export interface R2BackendErrorInfo {
+  code: 'R2_UNAUTHORIZED' | 'R2_BUCKET_NOT_FOUND' | 'R2_BACKEND_ERROR';
+  status: number;
+  message: string;
+  isAuthError: boolean;
+}
+
+export function classifyR2BackendError(err: unknown): R2BackendErrorInfo {
+  const obj = (err && typeof err === 'object' ? err : {}) as {
+    Code?: string;
+    code?: string;
+    name?: string;
+    message?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  const errCode = String(obj.Code || obj.code || obj.name || '').trim();
+  const rawMessage = String(obj.message || '').trim();
+  const httpStatus = obj.$metadata?.httpStatusCode;
+  const combined = `${errCode} ${rawMessage}`.toLowerCase();
+
+  if (
+    httpStatus === 401 ||
+    httpStatus === 403 ||
+    combined.includes('unauthorized') ||
+    combined.includes('invalidaccesskeyid') ||
+    combined.includes('signaturedoesnotmatch') ||
+    combined.includes('accessdenied')
+  ) {
+    return {
+      code: 'R2_UNAUTHORIZED',
+      status: 502,
+      isAuthError: true,
+      message:
+        'Cloudflare R2 rejected the configured API credentials (Unauthorized). Verify your R2 API Token has Object Read & Write permissions and matches your Account ID in Secrets.',
+    };
+  }
+
+  if (combined.includes('nosuchbucket')) {
+    return {
+      code: 'R2_BUCKET_NOT_FOUND',
+      status: 502,
+      isAuthError: false,
+      message:
+        'Configured Cloudflare R2 bucket was not found. Verify R2_BUCKET_NAME / CLOUDFLARE_R2_BUCKET_NAME in Secrets.',
+    };
+  }
+
+  return {
+    code: 'R2_BACKEND_ERROR',
+    status: 502,
+    isAuthError: false,
+    message: rawMessage
+      ? `Cloudflare R2 upload failed: ${rawMessage}`
+      : 'Cloudflare R2 storage request failed.',
+  };
+}
+
+export interface UploadHttpInspection {
+  ok: boolean;
+  shouldRetryPresign: boolean;
+  parsed: ({ code?: string; error?: string; url?: unknown; key?: unknown } & Record<string, unknown>) | null;
+  errorMessage: string | null;
+}
+
+export function isRetryableUploadHttpError(
+  status: number,
+  hasValidJsonPayload: boolean = false
+): boolean {
+  if (status >= 200 && status < 300 && !hasValidJsonPayload) {
+    return true;
+  }
   return status === 404 || status === 405 || status === 501;
 }
 
-export function getInlineMediaByteLimit(
-  folder: StorageFolder,
-  kind: UploadMediaKind
-): number {
-  if (folder === 'avatars') {
-    return 200_000;
+export function inspectUploadHttpResponse(
+  status: number,
+  responseText: string
+): UploadHttpInspection {
+  let parsed: ({ code?: string; error?: string; url?: unknown; key?: unknown } & Record<string, unknown>) | null = null;
+  const trimmed = (responseText || '').trim();
+  if (trimmed) {
+    try {
+      const candidate = JSON.parse(trimmed) as unknown;
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        parsed = candidate as { code?: string; error?: string; url?: unknown; key?: unknown } & Record<string, unknown>;
+      }
+    } catch {
+      parsed = null;
+    }
   }
-  if (kind === 'image') {
-    return 500_000;
+
+  const hasValidPayload = Boolean(
+    parsed &&
+      typeof parsed.url === 'string' &&
+      parsed.url.trim() &&
+      typeof parsed.key === 'string' &&
+      parsed.key.trim()
+  );
+
+  if (status >= 200 && status < 300 && hasValidPayload) {
+    return {
+      ok: true,
+      shouldRetryPresign: false,
+      parsed,
+      errorMessage: null,
+    };
   }
-  return 680_000;
+
+  const explicitError =
+    parsed && typeof parsed.error === 'string' && parsed.error.trim()
+      ? parsed.error.trim()
+      : null;
+
+  const shouldRetryPresign = explicitError
+    ? status === 404 || status === 405 || status === 501
+    : isRetryableUploadHttpError(status, hasValidPayload);
+
+  return {
+    ok: false,
+    shouldRetryPresign,
+    parsed,
+    errorMessage:
+      explicitError || `Cloudflare R2 upload failed (HTTP ${status}).`,
+  };
 }
 

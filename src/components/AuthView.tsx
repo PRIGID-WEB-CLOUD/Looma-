@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { ArrowRight, Check, Lock, LogOut, Moon, Sun } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { ThemeMode, UserProfile } from '../types/social';
-import { ASSET_POST_ALPINE, ASSET_POST_ARCH } from '../services/seedData';
 import { Avatar } from './Avatar';
+import { LoomaLogo, LoomaLogoMark } from './LoomaLogo';
 
 export type AuthMode = 'signin' | 'signup';
 
@@ -66,7 +66,6 @@ export function AuthView({
   };
 
   const isSignIn = mode === 'signin';
-  const heroImage = isSignIn ? ASSET_POST_ARCH : ASSET_POST_ALPINE;
   const displayError = authError;
 
   return (
@@ -74,14 +73,7 @@ export function AuthView({
       {/* Responsive Top Header */}
       <header className="sticky top-0 z-30 h-14 md:h-16 px-4 md:px-8 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
         <div className="max-w-6xl mx-auto h-full flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
-              <img src="/icon.svg" alt="Looma logo" className="w-4 h-4 object-contain filter brightness-200" />
-            </div>
-            <span className="font-display text-lg md:text-xl font-bold tracking-tight whitespace-nowrap shrink-0">
-              Looma
-            </span>
-          </div>
+          <LoomaLogo />
 
           <button
             type="button"
@@ -107,25 +99,20 @@ export function AuthView({
           aria-label="Looma community highlights"
           className="lg:col-span-5 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col"
         >
-          <div className="relative h-36 sm:h-48 lg:h-72 overflow-hidden bg-slate-200 dark:bg-slate-800">
-            <img
-              src={heroImage}
-              alt={
-                isSignIn
-                  ? 'Architectural pavilion bathed in afternoon light'
-                  : 'Alpine ridge trail above morning valley mist'
-              }
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
-            <div className="absolute bottom-4 left-5 right-5 text-white">
-              <p className="text-xs text-slate-200">
+          <div
+            data-testid="auth-hero-logo-panel"
+            className="relative px-6 py-7 sm:py-9 lg:py-10 bg-slate-100/80 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex flex-col items-start justify-between gap-5 overflow-hidden"
+          >
+            <div className="w-full flex items-center justify-center py-2 sm:py-4">
+              <LoomaLogoMark size="hero" />
+            </div>
+            <div className="w-full">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {isSignIn
                   ? 'Real-time community · Direct messaging'
                   : 'Join creators · Share visual stories'}
               </p>
-              <h2 className="font-display text-lg sm:text-xl font-bold mt-1 text-balance">
+              <h2 className="font-display text-lg sm:text-xl font-bold mt-1 text-slate-900 dark:text-white text-balance">
                 {isSignIn
                   ? 'Pick up right where your conversations left off.'
                   : 'Publish notes, connect in chat, and follow studios.'}

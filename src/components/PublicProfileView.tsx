@@ -1,6 +1,10 @@
+import { useMemo, useState } from 'react';
 import { ArrowLeft, MapPin, MessageSquare, UserCheck, UserPlus, Users } from 'lucide-react';
 import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
+import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { MediaGalleryGrid } from './MediaGalleryGrid';
+import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
 import { RichText } from './RichText';
 
@@ -49,7 +53,10 @@ export function PublicProfileView({
   onSelectHashtag,
   onMentionClick,
 }: PublicProfileViewProps) {
+  const [subTab, setSubTab] = useState<'posts' | 'media'>('posts');
+  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const creatorPosts = posts.filter((p) => p.authorId === creator.uid);
+  const creatorMediaEntries = useMemo(() => filterMediaPosts(creatorPosts), [creatorPosts]);
   const displayedFollowers =
     typeof followersCount === 'number'
       ? followersCount
@@ -215,11 +222,40 @@ export function PublicProfileView({
       </div>
 
       <div className="space-y-4">
-        <h2 className="font-display text-sm font-bold text-slate-700 dark:text-slate-300 px-1">
-          Posts by {creator.displayName}
-        </h2>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-fit">
+            <button
+              type="button"
+              onClick={() => setSubTab('posts')}
+              className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer tabular-nums ${
+                subTab === 'posts'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              Posts ({creatorPosts.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab('media')}
+              className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer tabular-nums ${
+                subTab === 'media'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              Media ({creatorMediaEntries.length})
+            </button>
+          </div>
+        </div>
 
-        {creatorPosts.length === 0 ? (
+        {subTab === 'media' ? (
+          <MediaGalleryGrid
+            entries={creatorMediaEntries}
+            emptyMessage={`${creator.displayName} has not shared any photos, videos, or audio yet.`}
+            onSelectEntry={(postId) => setActiveMediaPostId(postId)}
+          />
+        ) : creatorPosts.length === 0 ? (
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center text-sm text-slate-500 dark:text-slate-400">
             No public posts shared yet.
           </div>
@@ -236,10 +272,25 @@ export function PublicProfileView({
               onAddComment={onAddComment}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}
+              onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
             />
           ))
         )}
       </div>
+
+      <MediaViewerModal
+        open={Boolean(activeMediaPostId)}
+        entries={creatorMediaEntries}
+        activePostId={activeMediaPostId}
+        likedPostIds={likedPostIds}
+        bookmarkedPostIds={bookmarkedPostIds}
+        onClose={() => setActiveMediaPostId(null)}
+        onSelectPostId={(postId) => setActiveMediaPostId(postId)}
+        onToggleLike={onToggleLike}
+        onToggleBookmark={onToggleBookmark}
+        onSelectHashtag={onSelectHashtag}
+        onMentionClick={onMentionClick}
+      />
     </section>
   );
 }

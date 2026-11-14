@@ -1,26 +1,34 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Bookmark,
   Check,
+  Download,
   ExternalLink,
   Globe,
   Heart,
   ImageOff,
+  Maximize2,
   MessageCircle,
   Music,
+  PictureInPicture2,
   PlusCircle,
+  RotateCcw,
   Send,
   Share2,
 } from 'lucide-react';
 import type { Post, PostComment } from '../types/social';
 import {
   canSharePostToStory,
+  cyclePlaybackSpeed,
+  deriveMediaDownloadName,
   extractFirstUrl,
   formatRelativeTime,
   parseRichUrl,
+  resolvePostMediaDescriptor,
   validateCommentInput,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { MediaViewerModal } from './MediaViewerModal';
 import { RichText } from './RichText';
 
 interface PostCardProps {
@@ -36,6 +44,7 @@ interface PostCardProps {
   onAuthorClick?: (post: Post) => void;
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
+  onOpenMedia?: (post: Post) => void;
 }
 
 export function PostCard({
@@ -51,15 +60,33 @@ export function PostCard({
   onAuthorClick,
   onSelectHashtag,
   onMentionClick,
+  onOpenMedia,
 }: PostCardProps) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [commentError, setCommentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [audioFailed, setAudioFailed] = useState(false);
+  const [mediaRetryNonce, setMediaRetryNonce] = useState(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [localViewerOpen, setLocalViewerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sharingToStory, setSharingToStory] = useState(false);
   const [sharedToStory, setSharedToStory] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackSpeed;
+    }
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
 
   const isOwnPost = canSharePostToStory(post.authorId, currentUserId);
 
@@ -150,6 +177,33 @@ export function PostCard({
   const resolvedImageUrl =
     post.imageUrl || (parsedLink?.kind === 'image' ? parsedLink.url : '');
 
+  const localMediaDescriptor = useMemo(
+    () => resolvePostMediaDescriptor(post),
+    [post]
+  );
+
+  const openMediaViewer = () => {
+    if (onOpenMedia) {
+      onOpenMedia(post);
+    } else if (localMediaDescriptor) {
+      setLocalViewerOpen(true);
+    }
+  };
+
+  const handleVideoPiP = async () => {
+    const el = videoRef.current;
+    if (!el) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (typeof el.requestPictureInPicture === 'function') {
+        await el.requestPictureInPicture();
+      }
+    } catch {
+      // Ignore if PiP blocked by browser
+    }
+  };
+
   return (
     <article
       data-testid="post-card"
@@ -208,27 +262,57 @@ export function PostCard({
         </div>
       )}
 
-      {/* Media Frame with zero-broken-image fallback */}
+      {/* Interactive Media Frame: Click to open full-screen viewer */}
       {resolvedImageUrl && (
-        <div className="mt-3.5 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-800">
+        <div className="relative group mt-3.5 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-800">
           {imgFailed ? (
-            <div className="h-56 flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500 bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900">
+            <div className="h-56 flex flex-col items-center justify-center gap-2.5 text-slate-500 dark:text-slate-400 bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900">
               <ImageOff className="w-6 h-6" aria-hidden="true" />
-              <span className="text-xs">{post.category} photo unavailable</span>
+              <span className="text-xs">Photo unavailable right now</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setImgFailed(false);
+                  setMediaRetryNonce((n) => n + 1);
+                }}
+                className="min-h-[34px] px-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Retry</span>
+              </button>
             </div>
           ) : (
-            <img
-              src={resolvedImageUrl}
-              alt={`${post.category} post by ${post.authorName}`}
-              referrerPolicy="no-referrer"
-              onError={() => setImgFailed(true)}
-              className="w-full max-h-[440px] object-cover block"
-            />
+            <>
+              <button
+                type="button"
+                onClick={openMediaViewer}
+                aria-label={`View full photo posted by ${post.authorName}`}
+                className="w-full block text-left cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                <img
+                  key={`${resolvedImageUrl}-${mediaRetryNonce}`}
+                  src={resolvedImageUrl}
+                  alt={post.mediaTitle || `Photo post by ${post.authorName}`}
+                  referrerPolicy="no-referrer"
+                  onError={() => setImgFailed(true)}
+                  className="w-full max-h-[440px] object-cover block"
+                />
+              </button>
+              <button
+                type="button"
+                onClick={openMediaViewer}
+                aria-label={`Expand photo by ${post.authorName}`}
+                className="absolute top-2.5 right-2.5 min-h-[36px] px-2.5 rounded-lg bg-black/60 hover:bg-black/80 text-white text-xs font-semibold inline-flex items-center gap-1.5 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+              >
+                <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>View</span>
+              </button>
+            </>
           )}
         </div>
       )}
 
-      {/* Video Player (YouTube / Vimeo Iframe Embed or Direct HTML5 Video) */}
+      {/* Video Player (YouTube / Vimeo Iframe Embed or Direct HTML5 Video with speed, PiP, download, theater mode) */}
       {parsedVideo && (
         <div
           data-testid="post-video-embed"
@@ -245,31 +329,109 @@ export function PostCard({
                 className="w-full h-full border-0"
               />
             </div>
+          ) : videoFailed ? (
+            <div className="h-56 flex flex-col items-center justify-center gap-2.5 text-slate-300 bg-slate-950 p-4 text-center">
+              <p className="text-xs">Unable to load inline video stream.</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVideoFailed(false);
+                    setMediaRetryNonce((n) => n + 1);
+                  }}
+                  className="min-h-[34px] px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Retry</span>
+                </button>
+                <a
+                  href={parsedVideo.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[34px] px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Open</span>
+                </a>
+              </div>
+            </div>
           ) : (
             <video
+              key={`${parsedVideo.url}-${mediaRetryNonce}`}
+              ref={videoRef}
               src={parsedVideo.url}
               controls
               playsInline
               preload="metadata"
+              onError={() => setVideoFailed(true)}
               className="w-full max-h-[440px] object-contain bg-black block"
             />
           )}
-          {!parsedVideo.url.startsWith('data:') && (
-            <a
-              href={parsedVideo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
-            >
-              <span className="font-semibold text-slate-900 dark:text-white truncate">
-                {parsedVideo.displayTitle}
-              </span>
-              <span className="text-slate-500 dark:text-slate-400 inline-flex items-center gap-1 shrink-0">
-                <span>{parsedVideo.hostname}</span>
-                <ExternalLink className="w-3 h-3" aria-hidden="true" />
-              </span>
-            </a>
-          )}
+          <div className="px-3.5 py-2 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+            <span className="font-semibold text-slate-900 dark:text-white truncate">
+              {parsedVideo.displayTitle}
+            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              {parsedVideo.kind === 'video' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setPlaybackSpeed((s) => cyclePlaybackSpeed(s))}
+                    aria-label={`Cycle video speed (current ${playbackSpeed}x)`}
+                    className="min-h-[32px] px-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 font-semibold tabular-nums cursor-pointer"
+                  >
+                    {playbackSpeed}x
+                  </button>
+                  {typeof document !== 'undefined' &&
+                    document.pictureInPictureEnabled && (
+                      <button
+                        type="button"
+                        onClick={handleVideoPiP}
+                        aria-label="Picture in picture"
+                        className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center cursor-pointer"
+                      >
+                        <PictureInPicture2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    )}
+                  <a
+                    href={parsedVideo.url}
+                    download={deriveMediaDownloadName(
+                      {
+                        kind: 'video',
+                        title: parsedVideo.displayTitle,
+                        url: parsedVideo.url,
+                      },
+                      post.id
+                    )}
+                    aria-label="Download video"
+                    className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center"
+                  >
+                    <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                  </a>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={openMediaViewer}
+                aria-label="Open video in theater viewer"
+                className="min-h-[32px] px-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 inline-flex items-center gap-1 font-medium cursor-pointer"
+              >
+                <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Theater</span>
+              </button>
+              {!parsedVideo.url.startsWith('data:') && (
+                <a
+                  href={parsedVideo.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open video source"
+                  className="min-h-[32px] min-w-[32px] rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 inline-flex items-center justify-center"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                </a>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -279,20 +441,79 @@ export function PostCard({
           data-testid="post-audio-player"
           className="mt-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 space-y-2.5"
         >
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-              <Music className="w-4 h-4" aria-hidden="true" />
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Music className="w-4 h-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                  {parsedAudio.displayTitle}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {parsedAudio.subtitle}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                {parsedAudio.displayTitle}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                {parsedAudio.subtitle}
-              </p>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setPlaybackSpeed((s) => cyclePlaybackSpeed(s))}
+                aria-label={`Cycle audio speed (current ${playbackSpeed}x)`}
+                className="min-h-[32px] px-2 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 tabular-nums cursor-pointer"
+              >
+                {playbackSpeed}x
+              </button>
+              <a
+                href={parsedAudio.url}
+                download={deriveMediaDownloadName(
+                  {
+                    kind: 'audio',
+                    title: parsedAudio.displayTitle,
+                    url: parsedAudio.url,
+                  },
+                  post.id
+                )}
+                aria-label="Download audio track"
+                className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center"
+              >
+                <Download className="w-3.5 h-3.5" aria-hidden="true" />
+              </a>
+              <button
+                type="button"
+                onClick={openMediaViewer}
+                aria-label="Expand audio player"
+                className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center cursor-pointer"
+              >
+                <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
             </div>
           </div>
-          <audio src={parsedAudio.url} controls className="w-full" />
+          {audioFailed ? (
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 pt-1">
+              <span>Unable to load audio stream.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAudioFailed(false);
+                  setMediaRetryNonce((n) => n + 1);
+                }}
+                className="px-3 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 font-semibold cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <audio
+              key={`${parsedAudio.url}-${mediaRetryNonce}`}
+              ref={audioRef}
+              src={parsedAudio.url}
+              controls
+              preload="metadata"
+              onError={() => setAudioFailed(true)}
+              className="w-full"
+            />
+          )}
         </div>
       )}
 
@@ -462,6 +683,25 @@ export function PostCard({
             </p>
           )}
         </div>
+      )}
+
+      {!onOpenMedia && localMediaDescriptor && (
+        <MediaViewerModal
+          open={localViewerOpen}
+          entries={[{ post, media: localMediaDescriptor }]}
+          activePostId={post.id}
+          currentUserId={currentUserId}
+          likedPostIds={isLiked ? [post.id] : []}
+          bookmarkedPostIds={isBookmarked ? [post.id] : []}
+          onClose={() => setLocalViewerOpen(false)}
+          onSelectPostId={() => {}}
+          onToggleLike={onToggleLike}
+          onToggleBookmark={onToggleBookmark}
+          onShareToStory={onShareToStory}
+          onAuthorClick={onAuthorClick}
+          onSelectHashtag={onSelectHashtag}
+          onMentionClick={onMentionClick}
+        />
       )}
     </article>
   );

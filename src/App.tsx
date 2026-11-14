@@ -296,8 +296,16 @@ export default function App() {
     );
   }
 
+  const isMessagesFullScreen = activeTab === 'messages';
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors">
+    <div
+      className={
+        isMessagesFullScreen
+          ? 'h-[100dvh] overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors'
+          : 'min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors'
+      }
+    >
       <TopBar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -312,12 +320,19 @@ export default function App() {
         onOpenNotifications={() => setActiveTab('notifications')}
       />
 
-      <main className="max-w-7xl mx-auto px-4 md:px-6 pt-5 md:pt-7 flex items-start gap-6">
+      <main
+        className={
+          isMessagesFullScreen
+            ? 'flex-1 min-h-0 w-full flex flex-col overflow-hidden'
+            : 'max-w-7xl mx-auto px-4 md:px-6 pt-5 md:pt-7 flex items-start gap-6'
+        }
+      >
         {/* Left Navigation & Account Rail (Desktop) */}
-        <aside
-          aria-label="Account and appearance controls"
-          className="hidden lg:flex lg:w-64 shrink-0 flex-col gap-4 sticky top-23"
-        >
+        {!isMessagesFullScreen && (
+          <aside
+            aria-label="Account and appearance controls"
+            className="hidden lg:flex lg:w-64 shrink-0 flex-col gap-4 sticky top-23"
+          >
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4">
             <button
               type="button"
@@ -443,12 +458,15 @@ export default function App() {
             </button>
           </div>
         </aside>
+        )}
 
         {/* Center Main Content */}
         <div
-          className={`flex-1 min-w-0 ${
-            activeTab === 'messages' ? 'max-w-5xl' : 'max-w-2xl mx-auto lg:mx-0'
-          }`}
+          className={
+            isMessagesFullScreen
+              ? 'w-full flex-1 min-h-0 flex flex-col pb-14 md:pb-0'
+              : 'flex-1 min-w-0 max-w-2xl mx-auto lg:mx-0'
+          }
         >
           {activeTab === 'feed' && (
             <FeedView

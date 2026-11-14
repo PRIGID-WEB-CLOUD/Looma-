@@ -168,11 +168,12 @@ export function ChatView({
   return (
     <section
       aria-label="Real-time messaging"
-      className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-[560px] md:h-[calc(100vh-140px)]"
+      data-testid="chat-fullscreen-container"
+      className="w-full h-full flex-1 min-h-0 bg-white dark:bg-slate-900 grid grid-cols-1 md:grid-cols-12 overflow-hidden"
     >
       {/* Conversation List */}
       <div
-        className={`md:col-span-4 border-r border-slate-200 dark:border-slate-800 flex flex-col ${
+        className={`md:col-span-4 lg:col-span-3 min-h-0 h-full border-r border-slate-200 dark:border-slate-800 flex-col overflow-hidden ${
           mobileShowThread ? 'hidden md:flex' : 'flex'
         }`}
       >
@@ -520,7 +521,7 @@ export function ChatView({
 
       {/* Active Message Thread */}
       <div
-        className={`md:col-span-8 flex flex-col ${
+        className={`md:col-span-8 lg:col-span-9 min-h-0 h-full flex-col overflow-hidden ${
           mobileShowThread ? 'flex' : 'hidden md:flex'
         }`}
       >

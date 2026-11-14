@@ -41,6 +41,12 @@ import {
   removeGroupParticipantState,
   formatChatPushPayload,
   shouldDispatchChatPushNotification,
+  resolvePostMediaDescriptor,
+  filterMediaPosts,
+  cyclePlaybackSpeed,
+  cycleZoomLevel,
+  stepMediaIndex,
+  deriveMediaDownloadName,
 } from './socialLogic';
 import type {
   AppNotification,
@@ -782,6 +788,77 @@ test('group chat creation, participant management, and push notification rules w
     }),
     false
   );
+});
+
+test('resolvePostMediaDescriptor, filterMediaPosts, playback speed, zoom, and index stepping handle all posted media kinds', () => {
+  const imagePost: Post = {
+    ...makePost(1),
+    id: 'p_img',
+    imageUrl: 'https://cdn.example.com/uploads/u1/posts/photo.webp',
+    mediaTitle: 'Studio View',
+  };
+  const videoPost: Post = {
+    ...makePost(2),
+    id: 'p_vid',
+    videoUrl: '/api/storage/file/uploads/u1/posts/clip.mp4',
+    mediaTitle: 'Timelapse',
+  };
+  const audioPost: Post = {
+    ...makePost(3),
+    id: 'p_aud',
+    audioUrl: 'https://cdn.example.com/uploads/u1/posts/mix.mp3',
+    mediaTitle: 'Demo Mix',
+  };
+  const ytPost: Post = {
+    ...makePost(4),
+    id: 'p_yt',
+    caption: 'Watch this https://youtu.be/dQw4w9WgXcQ',
+  };
+  const textPost: Post = {
+    ...makePost(5),
+    id: 'p_txt',
+    caption: 'Just thoughts with no attachments.',
+    imageUrl: '',
+  };
+
+  const resolvedImg = resolvePostMediaDescriptor(imagePost);
+  assert.equal(resolvedImg?.kind, 'image');
+  assert.equal(resolvedImg?.title, 'Studio View');
+
+  const resolvedVid = resolvePostMediaDescriptor(videoPost);
+  assert.equal(resolvedVid?.kind, 'video');
+  assert.equal(resolvedVid?.url, '/api/storage/file/uploads/u1/posts/clip.mp4');
+
+  const resolvedAud = resolvePostMediaDescriptor(audioPost);
+  assert.equal(resolvedAud?.kind, 'audio');
+  assert.equal(resolvedAud?.title, 'Demo Mix');
+
+  const resolvedYt = resolvePostMediaDescriptor(ytPost);
+  assert.equal(resolvedYt?.kind, 'youtube');
+  assert.equal(
+    resolvedYt?.embedUrl,
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ'
+  );
+
+  assert.equal(resolvePostMediaDescriptor(textPost), null);
+
+  const gallery = filterMediaPosts([imagePost, textPost, videoPost, audioPost, ytPost]);
+  assert.deepEqual(
+    gallery.map((g) => g.post.id),
+    ['p_img', 'p_vid', 'p_aud', 'p_yt']
+  );
+
+  assert.equal(cyclePlaybackSpeed(1), 1.25);
+  assert.equal(cyclePlaybackSpeed(2), 0.75);
+  assert.equal(cycleZoomLevel(1), 1.5);
+  assert.equal(cycleZoomLevel(2.25), 1);
+
+  assert.equal(stepMediaIndex(0, -1, 4), 0);
+  assert.equal(stepMediaIndex(0, 1, 4), 1);
+  assert.equal(stepMediaIndex(3, 1, 4), 3);
+
+  assert.equal(deriveMediaDownloadName(resolvedVid!, 'p_vid'), 'clip.mp4');
+  assert.equal(deriveMediaDownloadName(resolvedImg!, 'p_img'), 'photo.webp');
 });
 
 

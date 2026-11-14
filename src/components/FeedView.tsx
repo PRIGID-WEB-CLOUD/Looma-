@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Search, X } from 'lucide-react';
 import type { Post, PostComment, StoryGroup, UserProfile } from '../types/social';
-import { paginateFeed } from '../utils/socialLogic';
+import { filterMediaPosts, paginateFeed } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
 import { StoriesStrip } from './StoriesStrip';
 
@@ -57,6 +58,7 @@ export function FeedView({
   };
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const { items, filteredTotal, hasMore } = paginateFeed(
@@ -66,6 +68,8 @@ export function FeedView({
     'All',
     searchQuery
   );
+
+  const mediaEntries = useMemo(() => filterMediaPosts(posts), [posts]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
@@ -190,6 +194,7 @@ export function FeedView({
                 onSelectHashtag?.(tag);
               }}
               onMentionClick={onMentionClick}
+              onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
             />
           ))}
         </div>
@@ -215,6 +220,26 @@ export function FeedView({
           )
         )}
       </div>
+
+      <MediaViewerModal
+        open={Boolean(activeMediaPostId)}
+        entries={mediaEntries}
+        activePostId={activeMediaPostId}
+        currentUserId={profile.uid}
+        likedPostIds={likedPostIds}
+        bookmarkedPostIds={bookmarkedPostIds}
+        onClose={() => setActiveMediaPostId(null)}
+        onSelectPostId={(postId) => setActiveMediaPostId(postId)}
+        onToggleLike={onToggleLike}
+        onToggleBookmark={onToggleBookmark}
+        onShareToStory={onShareToStory}
+        onAuthorClick={onAuthorClick}
+        onSelectHashtag={(tag) => {
+          setSearchQuery(`#${tag}`);
+          onSelectHashtag?.(tag);
+        }}
+        onMentionClick={onMentionClick}
+      />
     </section>
   );
 }

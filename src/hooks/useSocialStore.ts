@@ -5,6 +5,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromCache,
   getDocs,
   increment,
   onSnapshot,
@@ -15,6 +16,9 @@ import {
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
+  type DocumentSnapshot,
 } from 'firebase/firestore';
 import {
   auth,
@@ -25,6 +29,11 @@ import {
   signOutAccount,
   testFirestoreConnection,
 } from '../services/firebase';
+import {
+  buildFallbackPrivateSettings,
+  buildFallbackUserProfile,
+  isTransientFirestoreError,
+} from '../utils/firebaseResilience';
 import {
   createInitialMemberProfile,
   isDemoPostId,
@@ -132,6 +141,23 @@ function timestampToMs(val: unknown): number {
 function makeSafeId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${rand}`;
+}
+
+async function readDocResilient(
+  ref: DocumentReference<DocumentData>
+): Promise<DocumentSnapshot<DocumentData> | null> {
+  try {
+    return await getDoc(ref);
+  } catch (err) {
+    if (!isTransientFirestoreError(err)) {
+      throw err;
+    }
+    try {
+      return await getDocFromCache(ref);
+    } catch {
+      return null;
+    }
+  }
 }
 
 export function useSocialStore() {
@@ -573,26 +599,49 @@ export function useSocialStore() {
           setAuthReady(true);
           return;
         }
+        const cachedProfile = readStorage<UserProfile | null>(
+          STORAGE_KEYS.PROFILE,
+          null
+        );
+        const cachedSettings = readStorage<UserPrivateSettings | null>(
+          STORAGE_KEYS.SETTINGS,
+          null
+        );
+        const fallbackProfile = buildFallbackUserProfile(
+          user,
+          cachedProfile,
+          autostart
+        );
+        const fallbackSettings = buildFallbackPrivateSettings(
+          user,
+          cachedSettings,
+          pushEnabledRef.current,
+          themeRef.current
+        );
+
         try {
           const userRef = doc(db, 'users', user.uid);
-          const snap = await getDoc(userRef);
-          let hydratedProfile: UserProfile;
-          if (snap.exists()) {
+          const snap = await readDocResilient(userRef);
+          let hydratedProfile: UserProfile = fallbackProfile;
+          let hydratedSettings: UserPrivateSettings = fallbackSettings;
+
+          if (snap && snap.exists()) {
             const d = snap.data();
             const resolvedDisplayName =
-              (!d.displayName || d.displayName === 'Looma Member') && user.displayName
+              (!d.displayName || d.displayName === 'Looma Member') &&
+              user.displayName
                 ? user.displayName.trim().slice(0, 60)
                 : d.displayName;
             const resolvedAvatar = normalizeAssetUrl(
               d.avatarUrl || user.photoURL || ''
             );
             hydratedProfile = {
-              uid: d.uid,
+              uid: d.uid || user.uid,
               displayName: resolvedDisplayName,
-              handle: d.handle,
-              bio: d.bio,
+              handle: d.handle || fallbackProfile.handle,
+              bio: d.bio ?? '',
               avatarUrl: resolvedAvatar,
-              location: d.location,
+              location: d.location ?? '',
               interests: Array.isArray(d.interests) ? d.interests : [],
               followersCount: Number(d.followersCount || 0),
               followingCount: Number(d.followingCount || 0),
@@ -610,25 +659,14 @@ export function useSocialStore() {
                 updatedAt: serverTimestamp(),
               }).catch(() => {});
             }
-          } else {
-            const defaultHandle = sanitizeHandle(
-              user.email?.split('@')[0] || user.displayName || 'looma_user'
-            );
+          } else if (snap && !snap.exists()) {
             const newProfile: UserProfile = {
-              uid: user.uid,
-              displayName: (user.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member',
-              handle: defaultHandle,
-              bio: 'Sharing daylight notes, design studies, and field dispatches.',
-              avatarUrl: normalizeAssetUrl(user.photoURL || ''),
-              location: 'Earth',
-              interests: ['Architecture', 'Photography'],
-              followersCount: 0,
-              followingCount: 0,
-              onboardingCompleted: autostart,
+              ...fallbackProfile,
               createdAtMs: Date.now(),
               updatedAtMs: Date.now(),
             };
-            await setDoc(userRef, {
+            hydratedProfile = newProfile;
+            setDoc(userRef, {
               uid: newProfile.uid,
               displayName: newProfile.displayName,
               handle: newProfile.handle,
@@ -641,8 +679,8 @@ export function useSocialStore() {
               onboardingCompleted: newProfile.onboardingCompleted,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
-            });
-            await setDoc(doc(db, 'users', user.uid, 'private', 'settings'), {
+            }).catch(() => {});
+            setDoc(doc(db, 'users', user.uid, 'private', 'settings'), {
               uid: user.uid,
               email: user.email || '',
               pushEnabled: pushEnabledRef.current,
@@ -653,49 +691,52 @@ export function useSocialStore() {
               profileVisibility: 'public',
               messagePrivacy: 'everyone',
               updatedAt: serverTimestamp(),
-            });
-            hydratedProfile = newProfile;
-            setPrivateSettings({
-              uid: user.uid,
-              email: user.email || '',
-              pushEnabled: pushEnabledRef.current,
-              themePreference: themeRef.current,
-              notifyLikes: true,
-              notifyComments: true,
-              notifyMessages: true,
-              profileVisibility: 'public',
-              messagePrivacy: 'everyone',
-            });
+            }).catch(() => {});
           }
-          const settingsSnap = await getDoc(
-            doc(db, 'users', user.uid, 'private', 'settings')
-          );
-          if (settingsSnap.exists()) {
-            const s = settingsSnap.data();
-            setPrivateSettings({
-              uid: s.uid || user.uid,
-              email: s.email || user.email || '',
-              pushEnabled: Boolean(s.pushEnabled ?? true),
-              themePreference: s.themePreference === 'dark' ? 'dark' : 'light',
-              notifyLikes: Boolean(s.notifyLikes ?? true),
-              notifyComments: Boolean(s.notifyComments ?? true),
-              notifyMessages: Boolean(s.notifyMessages ?? true),
-              profileVisibility:
-                s.profileVisibility === 'followers' ? 'followers' : 'public',
-              messagePrivacy:
-                s.messagePrivacy === 'following' ? 'following' : 'everyone',
-            });
+
+          try {
+            const settingsSnap = await readDocResilient(
+              doc(db, 'users', user.uid, 'private', 'settings')
+            );
+            if (settingsSnap && settingsSnap.exists()) {
+              const s = settingsSnap.data();
+              hydratedSettings = {
+                uid: s.uid || user.uid,
+                email: s.email || user.email || '',
+                pushEnabled: Boolean(s.pushEnabled ?? true),
+                themePreference:
+                  s.themePreference === 'dark' ? 'dark' : 'light',
+                notifyLikes: Boolean(s.notifyLikes ?? true),
+                notifyComments: Boolean(s.notifyComments ?? true),
+                notifyMessages: Boolean(s.notifyMessages ?? true),
+                profileVisibility:
+                  s.profileVisibility === 'followers' ? 'followers' : 'public',
+                messagePrivacy:
+                  s.messagePrivacy === 'following' ? 'following' : 'everyone',
+              };
+            }
+          } catch {
+            // Keep fallback private settings if transient failure occurs
           }
+
           setAuthError(null);
           setFirebaseUser(user);
           setProfile(hydratedProfile);
+          setPrivateSettings(hydratedSettings);
           setIsAuthenticated(true);
           writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
           writeStorage(STORAGE_KEYS.PROFILE, hydratedProfile);
         } catch (err) {
-          console.error('Failed to load user profile', err);
+          if (!isTransientFirestoreError(err)) {
+            console.error('Failed to load user profile', err);
+          }
+          setAuthError(null);
           setFirebaseUser(user);
+          setProfile(fallbackProfile);
+          setPrivateSettings(fallbackSettings);
           setIsAuthenticated(true);
+          writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
+          writeStorage(STORAGE_KEYS.PROFILE, fallbackProfile);
         } finally {
           setAuthReady(true);
         }
@@ -714,6 +755,59 @@ export function useSocialStore() {
   // Firestore real-time listeners when authenticated
   useEffect(() => {
     if (!authReady || !firebaseUser || !firebaseUser.emailVerified) return;
+
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const unsubOwnProfile = onSnapshot(
+      userDocRef,
+      (snap) => {
+        if (snap.metadata.fromCache) return;
+        if (snap.exists()) {
+          const d = snap.data();
+          const synced: UserProfile = {
+            uid: d.uid || firebaseUser.uid,
+            displayName: d.displayName || profileRef.current.displayName,
+            handle: d.handle || profileRef.current.handle,
+            bio: d.bio ?? '',
+            avatarUrl: normalizeAssetUrl(
+              d.avatarUrl || firebaseUser.photoURL || ''
+            ),
+            location: d.location ?? '',
+            interests: Array.isArray(d.interests) ? d.interests : [],
+            followersCount: Number(d.followersCount || 0),
+            followingCount: Number(d.followingCount || 0),
+            onboardingCompleted: Boolean(d.onboardingCompleted),
+            createdAtMs: timestampToMs(d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          };
+          setProfile(synced);
+          writeStorage(STORAGE_KEYS.PROFILE, synced);
+        } else {
+          const seed = profileRef.current;
+          setDoc(userDocRef, {
+            uid: firebaseUser.uid,
+            displayName: seed.displayName,
+            handle: seed.handle,
+            bio: seed.bio,
+            avatarUrl: seed.avatarUrl,
+            location: seed.location,
+            interests: seed.interests.slice(0, 8),
+            followersCount: 0,
+            followingCount: 0,
+            onboardingCompleted: seed.onboardingCompleted,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      },
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(
+          err,
+          OperationType.GET,
+          `users/${firebaseUser.uid}`
+        );
+      }
+    );
 
     const postsQuery = query(
       collection(db, 'posts'),
@@ -748,7 +842,10 @@ export function useSocialStore() {
         );
         setRemotePosts(filtered.sort((a, b) => b.createdAtMs - a.createdAtMs));
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'posts')
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(err, OperationType.LIST, 'posts');
+      }
     );
 
     const chatsQuery = query(
@@ -817,7 +914,10 @@ export function useSocialStore() {
           stripDemoThreads(mapped).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
         );
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'chats')
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(err, OperationType.LIST, 'chats');
+      }
     );
 
     const notifsQuery = query(
@@ -847,12 +947,14 @@ export function useSocialStore() {
           setNotifications(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
         }
       },
-      (err) =>
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
         handleFirestoreError(
           err,
           OperationType.LIST,
           `users/${firebaseUser.uid}/notifications`
-        )
+        );
+      }
     );
 
     const bookmarksRef = collection(
@@ -866,12 +968,14 @@ export function useSocialStore() {
       (snapshot) => {
         setBookmarkedPostIds(snapshot.docs.map((d) => d.id));
       },
-      (err) =>
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
         handleFirestoreError(
           err,
           OperationType.LIST,
           `users/${firebaseUser.uid}/bookmarks`
-        )
+        );
+      }
     );
 
     let cancelled = false;
@@ -903,7 +1007,10 @@ export function useSocialStore() {
           );
         setCommunityUsers(remoteMembers);
       })
-      .catch((err) => handleFirestoreError(err, OperationType.LIST, 'users'));
+      .catch((err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(err, OperationType.LIST, 'users');
+      });
 
     const storiesQuery = query(
       collection(db, 'stories'),
@@ -929,7 +1036,10 @@ export function useSocialStore() {
         const filtered = stripDemoStories(mapped);
         setRemoteStories(filtered.sort((a, b) => a.createdAtMs - b.createdAtMs));
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'stories')
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(err, OperationType.LIST, 'stories');
+      }
     );
 
     const followingRef = query(
@@ -949,12 +1059,14 @@ export function useSocialStore() {
           writeStorage(STORAGE_KEYS.FOLLOWED_IDS, []);
         }
       },
-      (err) =>
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
         handleFirestoreError(
           err,
           OperationType.LIST,
           `users/${firebaseUser.uid}/following`
-        )
+        );
+      }
     );
 
     const followersRef = query(
@@ -973,12 +1085,14 @@ export function useSocialStore() {
           });
         }
       },
-      (err) =>
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
         handleFirestoreError(
           err,
           OperationType.LIST,
           `users/${firebaseUser.uid}/followers`
-        )
+        );
+      }
     );
 
     const presenceQuery = query(
@@ -1000,7 +1114,10 @@ export function useSocialStore() {
           .filter(Boolean);
         setRemoteOnlineIds(activeIds);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'presence')
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(err, OperationType.LIST, 'presence');
+      }
     );
 
     const syncOwnPresence = () => {
@@ -1017,6 +1134,7 @@ export function useSocialStore() {
     return () => {
       cancelled = true;
       window.clearInterval(presenceInterval);
+      unsubOwnProfile();
       unsubPosts();
       unsubChats();
       unsubNotifs();
@@ -1732,10 +1850,10 @@ export function useSocialStore() {
       if (firebaseUser) {
         try {
           const threadRef = doc(db, 'chats', thread.id);
-          const threadSnap = await getDoc(threadRef);
+          const threadSnap = await readDocResilient(threadRef);
           const batch = writeBatch(db);
           let syncedMemberIds = memberIds;
-          if (!threadSnap.exists()) {
+          if (!threadSnap || !threadSnap.exists()) {
             batch.set(threadRef, {
               id: thread.id,
               title: thread.title,
@@ -1911,8 +2029,8 @@ export function useSocialStore() {
       if (!firebaseUser) return;
       const threadRef = doc(db, 'chats', updatedThread.id);
       try {
-        const snap = await getDoc(threadRef);
-        if (!snap.exists()) {
+        const snap = await readDocResilient(threadRef);
+        if (!snap || !snap.exists()) {
           await setDoc(threadRef, {
             id: updatedThread.id,
             title: updatedThread.title,
@@ -2156,13 +2274,14 @@ export function useSocialStore() {
               createdAt: serverTimestamp(),
             })
           : deleteDoc(followRef);
-        syncOp.catch((err) =>
+        syncOp.catch((err) => {
+          if (isTransientFirestoreError(err)) return;
           handleFirestoreError(
             err,
             OperationType.WRITE,
             `users/${firebaseUser.uid}/following/${targetUid}`
-          )
-        );
+          );
+        });
         const mirrorOp = result.isFollowing
           ? setDoc(followerMirrorRef, {
               followerId: firebaseUser.uid,
@@ -2235,8 +2354,8 @@ export function useSocialStore() {
       ) {
         const path = `users/${targetUid}`;
         try {
-          const snap = await getDoc(doc(db, 'users', targetUid));
-          if (snap.exists()) {
+          const snap = await readDocResilient(doc(db, 'users', targetUid));
+          if (snap && snap.exists()) {
             const d = snap.data();
             return {
               uid: d.uid,
@@ -2254,7 +2373,9 @@ export function useSocialStore() {
             };
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.GET, path);
+          if (!isTransientFirestoreError(err)) {
+            handleFirestoreError(err, OperationType.GET, path);
+          }
         }
       }
       return localMatch;

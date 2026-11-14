@@ -25,6 +25,7 @@ import {
 } from '../services/storage';
 import { INTEREST_OPTIONS, sanitizeHandle, validateProfileInput } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { LoomaLogo } from './LoomaLogo';
 
 interface OnboardingFlowProps {
   profile: UserProfile;
@@ -211,12 +212,7 @@ export function OnboardingFlow({
       <header className="sticky top-0 z-30 h-14 md:h-16 px-4 md:px-8 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
         <div className="max-w-5xl mx-auto h-full flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
-              <img src="/icon.svg" alt="Looma logo" className="w-4 h-4 object-contain filter brightness-200" />
-            </div>
-            <span className="font-display text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0">
-              Looma
-            </span>
+            <LoomaLogo />
             <span className="hidden sm:inline text-xs text-slate-400 dark:text-slate-500">
               · Creator Studio Setup
             </span>

@@ -1089,6 +1089,177 @@ export function shouldDispatchChatPushNotification(params: {
   return true;
 }
 
+export interface PostMediaDescriptor {
+  postId: string;
+  kind: 'image' | 'video' | 'youtube' | 'vimeo' | 'audio';
+  url: string;
+  embedUrl?: string;
+  thumbnailUrl?: string;
+  title: string;
+  subtitle: string;
+  hostname: string;
+}
+
+export function resolvePostMediaDescriptor(
+  post: Post
+): PostMediaDescriptor | null {
+  const captionUrl = extractFirstUrl(post.caption || '');
+  const titleHint = post.mediaTitle?.trim() || undefined;
+
+  if (post.videoUrl) {
+    const parsed = parseRichUrl(post.videoUrl, titleHint);
+    if (
+      parsed &&
+      (parsed.kind === 'video' ||
+        parsed.kind === 'youtube' ||
+        parsed.kind === 'vimeo')
+    ) {
+      return {
+        postId: post.id,
+        kind: parsed.kind,
+        url: parsed.url,
+        embedUrl: parsed.embedUrl,
+        thumbnailUrl: parsed.thumbnailUrl,
+        title: parsed.displayTitle,
+        subtitle: parsed.subtitle,
+        hostname: parsed.hostname,
+      };
+    }
+  }
+
+  if (post.audioUrl) {
+    const parsed = parseRichUrl(post.audioUrl, titleHint);
+    if (parsed && parsed.kind === 'audio') {
+      return {
+        postId: post.id,
+        kind: 'audio',
+        url: parsed.url,
+        title: parsed.displayTitle,
+        subtitle: parsed.subtitle,
+        hostname: parsed.hostname,
+      };
+    }
+  }
+
+  const linkCandidate = post.linkUrl || captionUrl || '';
+  if (linkCandidate) {
+    const parsed = parseRichUrl(linkCandidate, titleHint);
+    if (
+      parsed &&
+      (parsed.kind === 'youtube' ||
+        parsed.kind === 'vimeo' ||
+        parsed.kind === 'video' ||
+        parsed.kind === 'audio')
+    ) {
+      return {
+        postId: post.id,
+        kind: parsed.kind,
+        url: parsed.url,
+        embedUrl: parsed.embedUrl,
+        thumbnailUrl: parsed.thumbnailUrl,
+        title: parsed.displayTitle,
+        subtitle: parsed.subtitle,
+        hostname: parsed.hostname,
+      };
+    }
+    if (!post.imageUrl && parsed && parsed.kind === 'image') {
+      return {
+        postId: post.id,
+        kind: 'image',
+        url: parsed.url,
+        title: parsed.displayTitle || `${post.authorName}'s photo`,
+        subtitle: parsed.subtitle,
+        hostname: parsed.hostname,
+      };
+    }
+  }
+
+  if (post.imageUrl && post.imageUrl.trim()) {
+    const parsedImg = parseRichUrl(post.imageUrl, titleHint);
+    return {
+      postId: post.id,
+      kind: 'image',
+      url: post.imageUrl.trim(),
+      title: titleHint || parsedImg?.displayTitle || `${post.authorName}'s photo`,
+      subtitle: parsedImg?.subtitle || `${post.category} photo`,
+      hostname: parsedImg?.hostname || 'media',
+    };
+  }
+
+  return null;
+}
+
+export function filterMediaPosts(
+  posts: Post[]
+): Array<{ post: Post; media: PostMediaDescriptor }> {
+  const results: Array<{ post: Post; media: PostMediaDescriptor }> = [];
+  for (const post of posts) {
+    const media = resolvePostMediaDescriptor(post);
+    if (media) {
+      results.push({ post, media });
+    }
+  }
+  return results;
+}
+
+export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
+
+export function cyclePlaybackSpeed(current: number): number {
+  const idx = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
+  if (idx === -1) return 1.25;
+  return PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length];
+}
+
+export const IMAGE_ZOOM_LEVELS = [1, 1.5, 2.25] as const;
+
+export function cycleZoomLevel(current: number): number {
+  const idx = IMAGE_ZOOM_LEVELS.indexOf(current as (typeof IMAGE_ZOOM_LEVELS)[number]);
+  if (idx === -1) return 1;
+  return IMAGE_ZOOM_LEVELS[(idx + 1) % IMAGE_ZOOM_LEVELS.length];
+}
+
+export function stepMediaIndex(
+  currentIndex: number,
+  delta: -1 | 1,
+  total: number
+): number {
+  if (total <= 0) return 0;
+  const clamped = Math.max(0, Math.min(total - 1, currentIndex));
+  return Math.max(0, Math.min(total - 1, clamped + delta));
+}
+
+export function deriveMediaDownloadName(
+  media: Pick<PostMediaDescriptor, 'title' | 'kind' | 'url'>,
+  postId: string
+): string {
+  const fallbackExt =
+    media.kind === 'video'
+      ? 'mp4'
+      : media.kind === 'audio'
+        ? 'mp3'
+        : 'jpg';
+  try {
+    const pathname = media.url.startsWith('/')
+      ? media.url
+      : new URL(media.url).pathname;
+    const lastSeg = pathname.split('/').filter(Boolean).pop() || '';
+    if (/\.[a-z0-9]{2,5}$/i.test(lastSeg)) {
+      return lastSeg.replace(/[^a-zA-Z0-9._-]/g, '_');
+    }
+  } catch {
+    // ignore URL parse error
+  }
+  const safeBase =
+    media.title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || `looma-${postId}`;
+  return `${safeBase}.${fallbackExt}`;
+}
+
+
 
 
 

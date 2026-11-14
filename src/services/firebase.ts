@@ -6,11 +6,54 @@ import {
   signOut,
   type User,
 } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  enableNetwork,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import {
+  isFirebaseConfigurationError,
+  isTransientFirestoreError,
+} from '../utils/firebaseResilience';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+function createFirestoreInstance(): Firestore {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalForceLongPolling: true,
+          localCache: memoryLocalCache(),
+        },
+        firebaseConfig.firestoreDatabaseId
+      );
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
+  }
+}
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -68,18 +111,42 @@ export function handleFirestoreError(
 }
 
 export async function testFirestoreConnection(): Promise<boolean> {
-  try {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return false;
+  }
+
+  const probe = async () => {
     await getDocFromServer(doc(db, 'test', 'connection'));
+  };
+
+  try {
+    await probe();
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('the client is offline')
-    ) {
-      console.error('Please check your Firebase configuration.');
+    if (isFirebaseConfigurationError(error)) {
+      console.error('Please check your Firebase configuration.', error);
       return false;
     }
-    return true;
+    if (!isTransientFirestoreError(error)) {
+      return true;
+    }
+
+    // Retry once after ensuring Firestore network is active
+    try {
+      await enableNetwork(db).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await probe();
+      return true;
+    } catch (retryError) {
+      if (isFirebaseConfigurationError(retryError)) {
+        console.error('Please check your Firebase configuration.', retryError);
+        return false;
+      }
+      if (!isTransientFirestoreError(retryError)) {
+        return true;
+      }
+      return false;
+    }
   }
 }
 
