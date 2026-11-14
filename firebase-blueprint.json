@@ -601,6 +601,153 @@
         }
       },
       "required": ["uid", "online", "lastSeenAtMs", "updatedAt"]
+    },
+    "CallRoom": {
+      "title": "CallRoom",
+      "description": "Real-time Cloudflare Calls WebRTC signaling room metadata.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "callerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "callerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "callerAvatar": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "isAudioOnly": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ringing", "active", "ended"]
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs (max 10)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "chatId",
+        "title",
+        "callerId",
+        "callerName",
+        "callerAvatar",
+        "isAudioOnly",
+        "status",
+        "memberIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CallPeerSession": {
+      "title": "CallPeerSession",
+      "description": "Per-participant Cloudflare Calls SFU session and track state inside a call room.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 250000
+        },
+        "cfSessionId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "audioTrackName": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "videoTrackName": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "isMuted": {
+          "type": "boolean"
+        },
+        "isVideoOff": {
+          "type": "boolean"
+        },
+        "isScreenSharing": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string",
+          "enum": ["joined", "declined", "left"]
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs matching parent call"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "callId",
+        "uid",
+        "displayName",
+        "avatarUrl",
+        "cfSessionId",
+        "audioTrackName",
+        "videoTrackName",
+        "isMuted",
+        "isVideoOff",
+        "isScreenSharing",
+        "state",
+        "memberIds",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -655,6 +802,14 @@
     "/chats/{chatId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/ChatMessage" },
       "description": "Messages inside a chat thread."
+    },
+    "/calls/{callId}": {
+      "schema": { "$ref": "#/entities/CallRoom" },
+      "description": "Real-time audio/video call rooms scoped to memberIds."
+    },
+    "/calls/{callId}/peers/{peerUid}": {
+      "schema": { "$ref": "#/entities/CallPeerSession" },
+      "description": "Participant Cloudflare Calls SFU session & track names within a call."
     }
   }
 }

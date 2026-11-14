@@ -109,19 +109,41 @@ export interface CallParticipant {
   avatar: string;
   isMuted: boolean;
   isVideoOff: boolean;
+  isScreenSharing?: boolean;
   isSpeaking?: boolean;
+  connectionState?: 'invited' | 'joined' | 'declined' | 'left';
+  cfSessionId?: string;
+  audioTrackName?: string;
+  videoTrackName?: string;
 }
 
 export interface CallSession {
+  callId?: string;
   chatId: string;
   title: string;
+  callerId?: string;
+  callerName?: string;
+  callerAvatar?: string;
   isAudioOnly: boolean;
   active: boolean;
+  status?: 'ringing' | 'active' | 'ended';
   isMuted: boolean;
   isVideoOff: boolean;
   isScreenSharing: boolean;
   participants: CallParticipant[];
   startedAtMs: number;
+}
+
+export interface IncomingCallInvite {
+  callId: string;
+  chatId: string;
+  title: string;
+  callerId: string;
+  callerName: string;
+  callerAvatar: string;
+  isAudioOnly: boolean;
+  memberIds: string[];
+  createdAtMs: number;
 }
 
 export type NotificationType =

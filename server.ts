@@ -29,6 +29,7 @@ import {
   parseCallsConfig,
   buildCloudflareCallsUrl,
   formatCallsHeaders,
+  extractCallsErrorMessage,
 } from './src/utils/callsLogic.ts';
 
 interface FirebaseAppletConfig {
@@ -584,12 +585,32 @@ async function startServer(): Promise<void> {
   );
 
   // Cloudflare Calls / RealtimeKit WebRTC Endpoints
+  const readUpstreamJson = async (cfRes: globalThis.Response): Promise<Record<string, unknown>> => {
+    const rawText = await cfRes.text();
+    if (!rawText.trim()) return {};
+    try {
+      const parsed = JSON.parse(rawText) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return { raw: parsed };
+    } catch {
+      return { error: rawText.slice(0, 300) };
+    }
+  };
+
   app.get(['/api/calls/status', '/api/calls/status/'], (_req: Request, res: Response) => {
     const parsed = parseCallsConfig(process.env);
     res.json({
       provider: 'cloudflare-calls',
       configured: parsed.configured,
       appId: parsed.appId,
+      missing: parsed.configured
+        ? []
+        : [
+            !process.env.CLOUDFLARE_CALLS_APP_ID ? 'CLOUDFLARE_CALLS_APP_ID' : null,
+            !process.env.CLOUDFLARE_CALLS_APP_TOKEN ? 'CLOUDFLARE_CALLS_APP_TOKEN' : null,
+          ].filter(Boolean),
     });
   });
 
@@ -612,9 +633,11 @@ async function startServer(): Promise<void> {
           headers: formatCallsHeaders(parsed.config.appToken),
         });
 
-        const data = await cfRes.json();
+        const data = await readUpstreamJson(cfRes);
         if (!cfRes.ok) {
-          res.status(cfRes.status).json(data);
+          const message = extractCallsErrorMessage(data, cfRes.status);
+          console.warn(`[calls/sessions/new] HTTP ${cfRes.status}: ${message}`);
+          res.status(cfRes.status).json({ ...data, error: message });
           return;
         }
 
@@ -626,9 +649,48 @@ async function startServer(): Promise<void> {
     }
   );
 
+  app.get(
+    ['/api/calls/sessions/:sessionId', '/api/calls/sessions/:sessionId/'],
+    async (req: Request, res: Response) => {
+      const parsed = parseCallsConfig(process.env);
+      if (!parsed.configured || !parsed.config) {
+        res.status(503).json({ error: 'Cloudflare Calls is not configured.' });
+        return;
+      }
+
+      const sessionId = (req.params.sessionId || '').trim();
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing sessionId.' });
+        return;
+      }
+
+      try {
+        const cfUrl = buildCloudflareCallsUrl(
+          parsed.config.appId,
+          `sessions/${encodeURIComponent(sessionId)}`
+        );
+        const cfRes = await fetch(cfUrl, {
+          method: 'GET',
+          headers: formatCallsHeaders(parsed.config.appToken),
+        });
+
+        const data = await readUpstreamJson(cfRes);
+        if (!cfRes.ok) {
+          const message = extractCallsErrorMessage(data, cfRes.status);
+          res.status(cfRes.status).json({ ...data, error: message });
+          return;
+        }
+        res.status(cfRes.status).json(data);
+      } catch (err) {
+        console.error('Failed to query Cloudflare Calls session:', err);
+        res.status(502).json({ error: 'Failed to query Cloudflare Calls session.' });
+      }
+    }
+  );
+
   app.post(
     ['/api/calls/sessions/:sessionId/tracks/new', '/api/calls/sessions/:sessionId/tracks/new/'],
-    express.json({ limit: '128kb' }),
+    express.json({ limit: '256kb' }),
     async (req: Request, res: Response) => {
       const parsed = parseCallsConfig(process.env);
       if (!parsed.configured || !parsed.config) {
@@ -638,7 +700,12 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      const sessionId = req.params.sessionId;
+      const sessionId = (req.params.sessionId || '').trim();
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing sessionId.' });
+        return;
+      }
+
       try {
         const cfUrl = buildCloudflareCallsUrl(
           parsed.config.appId,
@@ -647,14 +714,64 @@ async function startServer(): Promise<void> {
         const cfRes = await fetch(cfUrl, {
           method: 'POST',
           headers: formatCallsHeaders(parsed.config.appToken),
-          body: JSON.stringify(req.body),
+          body: JSON.stringify(req.body || {}),
         });
 
-        const data = await cfRes.json();
+        const data = await readUpstreamJson(cfRes);
+        if (!cfRes.ok) {
+          const message = extractCallsErrorMessage(data, cfRes.status);
+          console.warn(`[calls/tracks/new] HTTP ${cfRes.status}: ${message}`);
+          res.status(cfRes.status).json({ ...data, error: message });
+          return;
+        }
         res.status(cfRes.status).json(data);
       } catch (err) {
-        console.error('Failed to publish tracks to Cloudflare Calls:', err);
-        res.status(502).json({ error: 'Failed to publish tracks to Cloudflare Calls.' });
+        console.error('Failed to publish/subscribe tracks on Cloudflare Calls:', err);
+        res.status(502).json({ error: 'Failed to negotiate tracks with Cloudflare Calls.' });
+      }
+    }
+  );
+
+  app.put(
+    ['/api/calls/sessions/:sessionId/renegotiate', '/api/calls/sessions/:sessionId/renegotiate/'],
+    express.json({ limit: '256kb' }),
+    async (req: Request, res: Response) => {
+      const parsed = parseCallsConfig(process.env);
+      if (!parsed.configured || !parsed.config) {
+        res.status(503).json({
+          error: 'Cloudflare Calls is not configured.',
+        });
+        return;
+      }
+
+      const sessionId = (req.params.sessionId || '').trim();
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing sessionId.' });
+        return;
+      }
+
+      try {
+        const cfUrl = buildCloudflareCallsUrl(
+          parsed.config.appId,
+          `sessions/${encodeURIComponent(sessionId)}/renegotiate`
+        );
+        const cfRes = await fetch(cfUrl, {
+          method: 'PUT',
+          headers: formatCallsHeaders(parsed.config.appToken),
+          body: JSON.stringify(req.body || {}),
+        });
+
+        const data = await readUpstreamJson(cfRes);
+        if (!cfRes.ok) {
+          const message = extractCallsErrorMessage(data, cfRes.status);
+          console.warn(`[calls/renegotiate] HTTP ${cfRes.status}: ${message}`);
+          res.status(cfRes.status).json({ ...data, error: message });
+          return;
+        }
+        res.status(cfRes.status).json(data);
+      } catch (err) {
+        console.error('Failed to renegotiate Cloudflare Calls session:', err);
+        res.status(502).json({ error: 'Failed to renegotiate Cloudflare Calls session.' });
       }
     }
   );
@@ -671,7 +788,12 @@ async function startServer(): Promise<void> {
         return;
       }
 
-      const sessionId = req.params.sessionId;
+      const sessionId = (req.params.sessionId || '').trim();
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing sessionId.' });
+        return;
+      }
+
       try {
         const cfUrl = buildCloudflareCallsUrl(
           parsed.config.appId,
@@ -680,10 +802,16 @@ async function startServer(): Promise<void> {
         const cfRes = await fetch(cfUrl, {
           method: 'PUT',
           headers: formatCallsHeaders(parsed.config.appToken),
-          body: JSON.stringify(req.body),
+          body: JSON.stringify(req.body || {}),
         });
 
-        const data = await cfRes.json();
+        const data = await readUpstreamJson(cfRes);
+        if (!cfRes.ok) {
+          const message = extractCallsErrorMessage(data, cfRes.status);
+          console.warn(`[calls/tracks/close] HTTP ${cfRes.status}: ${message}`);
+          res.status(cfRes.status).json({ ...data, error: message });
+          return;
+        }
         res.status(cfRes.status).json(data);
       } catch (err) {
         console.error('Failed to close tracks on Cloudflare Calls:', err);

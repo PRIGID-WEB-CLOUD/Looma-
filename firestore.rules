@@ -254,6 +254,56 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidCallRoom(data) {
+      return data.keys().hasAll([
+          'id', 'chatId', 'title', 'callerId', 'callerName', 'callerAvatar',
+          'isAudioOnly', 'status', 'memberIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'chatId', 'title', 'callerId', 'callerName', 'callerAvatar',
+          'isAudioOnly', 'status', 'memberIds', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.chatId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+        && isValidId(data.callerId)
+        && data.callerName is string && data.callerName.size() >= 1 && data.callerName.size() <= 60
+        && data.callerAvatar is string && data.callerAvatar.size() <= 250000
+        && data.isAudioOnly is bool
+        && data.status in ['ringing', 'active', 'ended']
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && isValidId(data.memberIds[0])
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCallPeer(data, callId, peerUid) {
+      return data.keys().hasAll([
+          'callId', 'uid', 'displayName', 'avatarUrl', 'cfSessionId',
+          'audioTrackName', 'videoTrackName', 'isMuted', 'isVideoOff',
+          'isScreenSharing', 'state', 'memberIds', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'callId', 'uid', 'displayName', 'avatarUrl', 'cfSessionId',
+          'audioTrackName', 'videoTrackName', 'isMuted', 'isVideoOff',
+          'isScreenSharing', 'state', 'memberIds', 'updatedAt'
+        ])
+        && isValidId(data.callId) && data.callId == callId
+        && isValidId(data.uid) && data.uid == peerUid && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
+        && data.avatarUrl is string && data.avatarUrl.size() <= 250000
+        && data.cfSessionId is string && data.cfSessionId.size() <= 128
+        && data.audioTrackName is string && data.audioTrackName.size() <= 64
+        && data.videoTrackName is string && data.videoTrackName.size() <= 64
+        && data.isMuted is bool
+        && data.isVideoOff is bool
+        && data.isScreenSharing is bool
+        && data.state in ['joined', 'declined', 'left']
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && isValidId(data.memberIds[0])
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
@@ -536,6 +586,66 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['online', 'lastSeenAtMs', 'updatedAt']);
       allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
+    }
+
+    match /calls/{callId} {
+      allow get: if isVerifiedUser() && isValidId(callId) && request.auth.uid in existing().memberIds;
+      allow list: if isVerifiedUser() && request.auth.uid in resource.data.memberIds;
+      allow create: if isVerifiedUser()
+        && isValidId(callId)
+        && isValidCallRoom(incoming())
+        && incoming().id == callId
+        && incoming().callerId == request.auth.uid
+        && request.auth.uid in incoming().memberIds
+        && incoming().status == 'ringing'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(callId)
+        && isValidCallRoom(incoming())
+        && request.auth.uid in existing().memberIds
+        && existing().status != 'ended'
+        && incoming().id == existing().id
+        && incoming().chatId == existing().chatId
+        && incoming().callerId == existing().callerId
+        && incoming().memberIds == existing().memberIds
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if false;
+
+      match /peers/{peerUid} {
+        allow get: if isVerifiedUser()
+          && isValidId(callId)
+          && isValidId(peerUid)
+          && request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.memberIds;
+        allow list: if isVerifiedUser()
+          && request.auth.uid in resource.data.memberIds;
+        allow create: if isVerifiedUser()
+          && isOwner(peerUid)
+          && isValidId(callId)
+          && isValidId(peerUid)
+          && isValidCallPeer(incoming(), callId, peerUid)
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/calls/$(callId))
+          && request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.memberIds
+          && incoming().memberIds == get(/databases/$(database)/documents/calls/$(callId)).data.memberIds;
+        allow update: if isVerifiedUser()
+          && isOwner(peerUid)
+          && isValidId(callId)
+          && isValidId(peerUid)
+          && isValidCallPeer(incoming(), callId, peerUid)
+          && incoming().callId == existing().callId
+          && incoming().uid == existing().uid
+          && incoming().memberIds == existing().memberIds
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'avatarUrl', 'cfSessionId',
+            'audioTrackName', 'videoTrackName', 'isMuted', 'isVideoOff',
+            'isScreenSharing', 'state', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
     }
   }
 }
