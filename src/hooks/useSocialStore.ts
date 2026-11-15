@@ -102,6 +102,13 @@ import {
   validateGroupChatInput,
 } from '../utils/socialLogic';
 import { extractStorageKeyFromUrl } from '../utils/storageLogic';
+import {
+  createTermsConsentRecord,
+  TERMS_VERSION,
+  validateAccountCreationConsent,
+  type AccountConsentState,
+  type TermsConsentRecord,
+} from '../utils/legalLogic';
 
 const STORAGE_KEYS = {
   SESSION_ACTIVE: 'looma_session_active_v1',
@@ -122,6 +129,7 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'looma_notifications_v1',
   THEME: 'looma_theme_v1',
   PUSH_ENABLED: 'looma_push_enabled_v1',
+  TERMS_CONSENT: 'looma_terms_consent_v1',
 };
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -479,6 +487,11 @@ export function useSocialStore() {
   const profileRef = useRef<UserProfile>(profile);
   const privateSettingsRef = useRef<UserPrivateSettings>(privateSettings);
   const mutedChatIdsRef = useRef<string[]>(mutedChatIds);
+  const pendingConsentRef = useRef<TermsConsentRecord | null>(
+    typeof window !== 'undefined'
+      ? readStorage<TermsConsentRecord | null>(STORAGE_KEYS.TERMS_CONSENT, null)
+      : null
+  );
   const allKnownChatUsers = useMemo(() => {
     const byUid = new Map<string, UserProfile>();
     for (const u of Object.values(fetchedChatUsers)) {
@@ -894,6 +907,7 @@ export function useSocialStore() {
           const settingsSnap = await readDocResilient(
             doc(db, 'users', user.uid, 'private', 'settings')
           );
+          const localConsent = pendingConsentRef.current;
           if (settingsSnap && settingsSnap.exists()) {
             const s = settingsSnap.data();
             hydratedSettings = {
@@ -909,6 +923,18 @@ export function useSocialStore() {
                 s.profileVisibility === 'followers' ? 'followers' : 'public',
               messagePrivacy:
                 s.messagePrivacy === 'following' ? 'following' : 'everyone',
+              ...(localConsent
+                ? {
+                    termsAcceptedVersion: localConsent.version,
+                    termsAcceptedAtMs: localConsent.acceptedAtMs,
+                  }
+                : {}),
+            };
+          } else if (localConsent) {
+            hydratedSettings = {
+              ...hydratedSettings,
+              termsAcceptedVersion: localConsent.version,
+              termsAcceptedAtMs: localConsent.acceptedAtMs,
             };
           }
         } catch {
@@ -1569,37 +1595,89 @@ export function useSocialStore() {
     }
   }, [isAuthorized]);
 
-  const loginWithGoogle = useCallback(async () => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await signInWithGoogle();
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Google sign-in popup was closed or blocked.';
-      setAuthError(msg);
-    } finally {
-      setAuthLoading(false);
-    }
-  }, []);
+  const recordLegalConsent = useCallback(
+    (authMethod: 'email' | 'google' | 'apple') => {
+      const record = createTermsConsentRecord(authMethod, Date.now(), TERMS_VERSION);
+      pendingConsentRef.current = record;
+      writeStorage(STORAGE_KEYS.TERMS_CONSENT, record);
+      setPrivateSettings((prev) => ({
+        ...prev,
+        termsAcceptedVersion: record.version,
+        termsAcceptedAtMs: record.acceptedAtMs,
+      }));
+    },
+    []
+  );
 
-  const loginWithApple = useCallback(async () => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await signInWithApple();
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Apple sign-in popup was closed or blocked.';
-      setAuthError(msg);
-    } finally {
-      setAuthLoading(false);
-    }
-  }, []);
+  const loginWithGoogle = useCallback(
+    async (options?: { isSignup?: boolean; consent?: AccountConsentState }) => {
+      if (options?.isSignup) {
+        const check = validateAccountCreationConsent({
+          mode: 'signup',
+          authMethod: 'google',
+          consent: options.consent || { termsAccepted: false, privacyAccepted: false },
+        });
+        if (!check.allowed) {
+          const errMsg = check.error || 'Please accept the Terms & Conditions before creating your account.';
+          setAuthError(errMsg);
+          throw new Error(errMsg);
+        }
+        recordLegalConsent('google');
+      } else if (options?.consent?.termsAccepted && options?.consent?.privacyAccepted) {
+        recordLegalConsent('google');
+      }
+
+      setAuthError(null);
+      setAuthLoading(true);
+      try {
+        await signInWithGoogle();
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'Google sign-in popup was closed or blocked.';
+        setAuthError(msg);
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [recordLegalConsent]
+  );
+
+  const loginWithApple = useCallback(
+    async (options?: { isSignup?: boolean; consent?: AccountConsentState }) => {
+      if (options?.isSignup) {
+        const check = validateAccountCreationConsent({
+          mode: 'signup',
+          authMethod: 'apple',
+          consent: options.consent || { termsAccepted: false, privacyAccepted: false },
+        });
+        if (!check.allowed) {
+          const errMsg = check.error || 'Please accept the Terms & Conditions before creating your account.';
+          setAuthError(errMsg);
+          throw new Error(errMsg);
+        }
+        recordLegalConsent('apple');
+      } else if (options?.consent?.termsAccepted && options?.consent?.privacyAccepted) {
+        recordLegalConsent('apple');
+      }
+
+      setAuthError(null);
+      setAuthLoading(true);
+      try {
+        await signInWithApple();
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'Apple sign-in popup was closed or blocked.';
+        setAuthError(msg);
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [recordLegalConsent]
+  );
 
   const loginWithEmail = useCallback(async (email: string, pass: string) => {
     setAuthError(null);
@@ -1616,7 +1694,26 @@ export function useSocialStore() {
   }, []);
 
   const signupWithEmail = useCallback(
-    async (email: string, pass: string, name: string) => {
+    async (
+      email: string,
+      pass: string,
+      name: string,
+      consent?: AccountConsentState
+    ) => {
+      const check = validateAccountCreationConsent({
+        mode: 'signup',
+        authMethod: 'email',
+        consent: consent || { termsAccepted: false, privacyAccepted: false },
+      });
+      if (!check.allowed) {
+        const errMsg =
+          check.error ||
+          'Please accept the Terms & Conditions and Privacy Policy before creating your account.';
+        setAuthError(errMsg);
+        throw new Error(errMsg);
+      }
+      recordLegalConsent('email');
+
       setAuthError(null);
       setAuthLoading(true);
       try {
@@ -1629,7 +1726,7 @@ export function useSocialStore() {
         setAuthLoading(false);
       }
     },
-    []
+    [recordLegalConsent]
   );
 
   const resendEmailVerificationLink = useCallback(async () => {

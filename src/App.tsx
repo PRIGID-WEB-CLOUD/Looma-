@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
@@ -17,6 +17,13 @@ import {
   resolveAppStage,
   resolvePublicProfile,
 } from './utils/socialLogic';
+import {
+  getLegalRoutePath,
+  hasRequiredAccountConsent,
+  parseLegalRoute,
+  type AccountConsentState,
+  type LegalDocId,
+} from './utils/legalLogic';
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
@@ -26,6 +33,7 @@ import { ConnectionsView } from './components/ConnectionsView';
 import { CreatePostModal } from './components/CreatePostModal';
 import { FeedView } from './components/FeedView';
 import { IncomingCallModal } from './components/IncomingCallModal';
+import { LegalDocumentView } from './components/LegalDocumentView';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationsView } from './components/NotificationsView';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -57,6 +65,16 @@ export default function App() {
   const [connectionsTab, setConnectionsTab] =
     useState<ConnectionsTab>('followers');
   const [authMode, setAuthMode] = useState<AuthMode>(initialAuthMode);
+  const [signupConsent, setSignupConsent] = useState<AccountConsentState>({
+    termsAccepted: false,
+    privacyAccepted: false,
+  });
+  const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocId | null>(() =>
+    typeof window !== 'undefined'
+      ? parseLegalRoute(window.location.pathname, window.location.search)
+      : null
+  );
+  const legalReturnPathRef = useRef<string>('/');
   const [previewOnboarding, setPreviewOnboarding] =
     useState<boolean>(onboardingParam);
   const [publicProfileReturnTab, setPublicProfileReturnTab] = useState<
@@ -88,6 +106,46 @@ export default function App() {
     store.profile.onboardingCompleted,
     store.authReady
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onPopState = () => {
+      setActiveLegalDoc(
+        parseLegalRoute(window.location.pathname, window.location.search)
+      );
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const openLegalDocument = (docId: LegalDocId) => {
+    if (typeof window !== 'undefined') {
+      const currentLegal = parseLegalRoute(
+        window.location.pathname,
+        window.location.search
+      );
+      if (!currentLegal) {
+        legalReturnPathRef.current =
+          `${window.location.pathname}${window.location.search}` || '/';
+      }
+      window.history.pushState({}, '', getLegalRoutePath(docId));
+    }
+    setActiveLegalDoc(docId);
+  };
+
+  const closeLegalDocument = () => {
+    if (typeof window !== 'undefined') {
+      const currentLegal = parseLegalRoute(
+        window.location.pathname,
+        window.location.search
+      );
+      if (currentLegal) {
+        const target = legalReturnPathRef.current || '/';
+        window.history.pushState({}, '', target);
+      }
+    }
+    setActiveLegalDoc(null);
+  };
 
   const handleLogout = async () => {
     await store.logout();
@@ -231,6 +289,27 @@ export default function App() {
     await store.sendChatMessage(thread, `Story reply: ${text}`);
   };
 
+  if (activeLegalDoc) {
+    return (
+      <>
+        <LegalDocumentView
+          activeDocId={activeLegalDoc}
+          theme={store.theme}
+          fromAuthSignup={!store.isAuthorized && authMode === 'signup'}
+          consentAlreadyAccepted={hasRequiredAccountConsent(signupConsent)}
+          onSelectDoc={openLegalDocument}
+          onSetTheme={store.setThemeExplicit}
+          onBack={closeLegalDocument}
+          onAcceptAndReturn={() => {
+            setSignupConsent({ termsAccepted: true, privacyAccepted: true });
+            closeLegalDocument();
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
   if (appStage === 'loading') {
     return (
       <>
@@ -248,26 +327,31 @@ export default function App() {
       <div className="looma-stage-enter">
         <AuthView
           initialMode={authMode}
+          mode={authMode}
+          onModeChange={setAuthMode}
+          consent={signupConsent}
+          onConsentChange={setSignupConsent}
+          onOpenLegal={openLegalDocument}
           profile={store.profile}
           firebaseUser={store.firebaseUser}
           authLoading={store.authLoading}
           authError={store.authError}
           theme={store.theme}
           onSetTheme={store.setThemeExplicit}
-          onLoginGoogle={async () => {
-            await store.loginWithGoogle();
+          onLoginGoogle={async (options) => {
+            await store.loginWithGoogle(options);
             setActiveTab('feed');
           }}
-          onLoginApple={async () => {
-            await store.loginWithApple();
+          onLoginApple={async (options) => {
+            await store.loginWithApple(options);
             setActiveTab('feed');
           }}
           onLoginEmail={async (email, pass) => {
             await store.loginWithEmail(email, pass);
             setActiveTab('feed');
           }}
-          onSignupEmail={async (email, pass, name) => {
-            await store.signupWithEmail(email, pass, name);
+          onSignupEmail={async (email, pass, name, consent) => {
+            await store.signupWithEmail(email, pass, name, consent);
             setActiveTab('feed');
           }}
           onResendVerification={store.resendEmailVerificationLink}
@@ -677,6 +761,7 @@ export default function App() {
               onSetTheme={store.setThemeExplicit}
               onEnablePush={store.enablePushNotifications}
               onLogout={handleLogout}
+              onOpenLegal={openLegalDocument}
               onDeleteAccount={async () => {
                 await store.deleteAccount();
                 setPreviewOnboarding(false);

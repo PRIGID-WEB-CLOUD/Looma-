@@ -25,6 +25,7 @@ import {
 } from '../services/storage';
 import { INTEREST_OPTIONS, validateProfileInput } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import type { LegalDocId } from '../utils/legalLogic';
 
 interface ProfileSettingsViewProps {
   profile: UserProfile;
@@ -36,6 +37,7 @@ interface ProfileSettingsViewProps {
   onEnablePush: () => Promise<PushPermissionState>;
   onLogout: () => Promise<void>;
   onDeleteAccount?: () => Promise<void>;
+  onOpenLegal?: (docId: LegalDocId) => void;
   onUpdateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   onUpdatePrivateSettings: (
     updates: Partial<UserPrivateSettings>
@@ -103,6 +105,7 @@ export function ProfileSettingsView({
   onEnablePush,
   onLogout,
   onDeleteAccount,
+  onOpenLegal,
   onUpdateProfile,
   onUpdatePrivateSettings,
   onBack,
@@ -687,6 +690,44 @@ export function ProfileSettingsView({
               <span>Log Out</span>
             </button>
           </div>
+
+          {onOpenLegal && (
+            <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  Legal &amp; Policies
+                </span>
+                {privateSettings.termsAcceptedVersion && (
+                  <span className="ml-2 tabular-nums">
+                    · Accepted v{privateSettings.termsAcceptedVersion}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('terms')}
+                  className="min-h-[36px] hover:underline cursor-pointer"
+                >
+                  Terms &amp; Conditions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('privacy')}
+                  className="min-h-[36px] hover:underline cursor-pointer"
+                >
+                  Privacy Policy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('guidelines')}
+                  className="min-h-[36px] hover:underline cursor-pointer"
+                >
+                  Community Guidelines
+                </button>
+              </div>
+            </div>
+          )}
 
           {onDeleteAccount && (
             <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">

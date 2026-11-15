@@ -47,6 +47,8 @@ export interface UserPrivateSettings {
   notifyMessages: boolean;
   profileVisibility: ProfileVisibility;
   messagePrivacy: MessagePrivacy;
+  termsAcceptedVersion?: string;
+  termsAcceptedAtMs?: number;
 }
 
 export interface PostComment {
