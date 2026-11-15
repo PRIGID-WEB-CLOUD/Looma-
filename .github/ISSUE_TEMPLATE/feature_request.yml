@@ -1,0 +1,26 @@
+name: Feature Request
+description: Propose an improvement or new capability for Looma
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or User Need
+      description: Describe the workflow or user experience gap this feature addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the expected behavior, UI impact, and any backend/Firestore requirements.
+    validations:
+      required: true
+  - type: checkboxes
+    id: governance
+    attributes:
+      label: Governance Acknowledgment
+      options:
+        - label: I acknowledge that Looma is proprietary software owned by Kpormegbe Gideon / PRIGID-WEB-CLOUD (NOT FOR SALE).
+          required: true

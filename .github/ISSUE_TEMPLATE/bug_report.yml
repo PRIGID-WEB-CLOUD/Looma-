@@ -1,0 +1,46 @@
+name: Bug Report
+description: Report a reproducible defect in Looma (UI, Workers API, R2 storage, Realtime SFU calls, or Firestore)
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue. For security vulnerabilities, **do not open a public issue** — follow `SECURITY.md` instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem Description
+      description: Clear description of what went wrong and what you expected.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      options:
+        - Social Feed / Stories
+        - Messaging / Group Chats
+        - Audio & Video Calls (Cloudflare Realtime SFU)
+        - Media Storage (Cloudflare R2)
+        - Authentication / Firestore Rules
+        - Cloudflare Workers Build / Deployment
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Navigate to ...
+        2. Click ...
+        3. Observe error ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, OS, mobile/desktop viewport, and deployment URL or local dev.
+    validations:
+      required: false

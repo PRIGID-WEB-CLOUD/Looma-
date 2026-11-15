@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "Looma is proprietary software owned by Kpormegbe Gideon (PRIGID-WEB-CLOUD). Reference metadata below."
+title: "Looma"
+abstract: "Cross-platform social media application with real-time feeds, 24-hour stories, instant & group messaging, WebRTC audio/video calling on Cloudflare Realtime Serverless SFU, Cloudflare R2 media storage, and Firebase Authentication & Cloud Firestore."
+authors:
+  - family-names: "Kpormegbe"
+    given-names: "Gideon"
+    alias: "Kpormegbe Gideon"
+version: 1.0.0
+date-released: 2026-11-15
+url: "https://looma.prigidcollection.workers.dev/"
+repository-code: "https://github.com/PRIGID-WEB-CLOUD/Looma-"
+keywords:
+  - looma
+  - social-media
+  - cloudflare-workers
+  - cloudflare-r2
+  - cloudflare-realtime
+  - webrtc
+  - firebase
+  - react
+  - typescript

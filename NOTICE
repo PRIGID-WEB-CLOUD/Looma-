@@ -1,0 +1,37 @@
+# Legal & Third-Party Notices
+
+## Project Ownership Notice
+**Looma**
+Copyright (c) 2026 **Kpormegbe Gideon** / **PRIGID-WEB-CLOUD**.
+All Rights Reserved. **NOT FOR SALE.**
+
+Official Repository: https://github.com/PRIGID-WEB-CLOUD/Looma-
+Official Deployment: https://looma.prigidcollection.workers.dev/
+
+---
+
+## Third-Party Assets & Dependencies Declaration
+
+Looma incorporates or interacts with the following third-party open-source packages
+and platform services, each governed by its respective license terms:
+
+| Component / Package | License | Purpose |
+| :--- | :--- | :--- |
+| React & React DOM | MIT | UI rendering library |
+| Vite | MIT | Frontend build tool & bundler |
+| TypeScript | Apache-2.0 | Static type checking |
+| Tailwind CSS | MIT | Utility-first CSS framework |
+| Hono & `@hono/node-server` | MIT | Edge HTTP framework for Cloudflare Workers & Node dev |
+| Firebase JS SDK | Apache-2.0 | Authentication & Cloud Firestore client |
+| `@aws-sdk/client-s3` & `s3-request-presigner` | Apache-2.0 | R2 S3-compatible local dev / presigned URL client |
+| `@google/genai` | Apache-2.0 | Server-side Gemini API integration |
+| Lucide React (`lucide-react`) | ISC | Vector UI iconography |
+| Motion (`motion`) | MIT | Declarative UI animations |
+| `vite-plugin-pwa` & Workbox | MIT | PWA manifest & service worker tooling |
+| `@cloudflare/workers-types` | MIT / Apache-2.0 | Cloudflare Workers runtime TypeScript bindings |
+| Cloudflare Workers, R2, and Realtime SFU | Commercial Service Terms | Edge execution, object storage, and WebRTC SFU |
+
+All proprietary Looma source files, UI layouts, custom SVG brand marks
+(`/public/icon.svg`, `/public/logo-transparent.svg`, `/public/logo-black-white.svg`),
+and documentation remain the exclusive property of **Kpormegbe Gideon** and
+**PRIGID-WEB-CLOUD**.

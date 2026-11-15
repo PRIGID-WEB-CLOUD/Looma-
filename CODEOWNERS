@@ -1,0 +1,10 @@
+# Code Ownership Rules — Looma
+# All pull requests affecting any path require review and approval by Kpormegbe Gideon.
+
+* @PRIGID-WEB-CLOUD
+/src/worker.ts @PRIGID-WEB-CLOUD
+/firestore.rules @PRIGID-WEB-CLOUD
+/wrangler.jsonc @PRIGID-WEB-CLOUD
+/security_spec.md @PRIGID-WEB-CLOUD
+/LICENSE @PRIGID-WEB-CLOUD
+/SECURITY.md @PRIGID-WEB-CLOUD
