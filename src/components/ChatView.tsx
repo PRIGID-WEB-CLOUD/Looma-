@@ -240,32 +240,10 @@ export function ChatView({
           className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3"
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Avatar
-                src={profile.avatarUrl}
-                name={profile.displayName}
-                size="md"
-                online={selfOnline}
-              />
-              <div className="min-w-0">
-                <h1 className="font-display text-base font-bold truncate">
-                  Messages
-                </h1>
-                <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 truncate">
-                  {selfOnline ? 'Online' : 'Offline'} · @{profile.handle}
-                </p>
-              </div>
-            </div>
+            <h1 className="font-display text-base font-bold truncate">
+              Messages
+            </h1>
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => onStartInstantCall('Studio Live Call', false)}
-                aria-label="Start instant call room"
-                className="min-h-[38px] px-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer"
-              >
-                <Video className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Call</span>
-              </button>
               <button
                 type="button"
                 onClick={() => openFullUserDirectory('group')}
@@ -274,15 +252,6 @@ export function ChatView({
               >
                 <Users className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Group</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => openFullUserDirectory('direct')}
-                aria-label="Start new chat"
-                className="min-h-[38px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <MessageSquarePlus className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>New</span>
               </button>
             </div>
           </div>
@@ -442,91 +411,79 @@ export function ChatView({
           <>
             <div
               data-testid="active-thread-header"
-              className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3"
+              className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900 shadow-sm"
             >
-              <button
-                type="button"
-                onClick={() => setMobileShowThread(false)}
-                aria-label="Back to conversations"
-                className="md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <ArrowLeft className="w-5 h-5" aria-hidden="true" />
-              </button>
-              <Avatar
-                src={activeThread.partnerAvatar}
-                name={activeThread.title}
-                size="md"
-                online={Boolean(activeStatus?.isOnline)}
-              />
-              <div className="min-w-0">
-                <h2 className="font-display text-sm font-bold truncate flex items-center gap-1.5">
-                  <span className="truncate">{activeThread.title}</span>
-                  {activeThreadMuted && (
-                    <BellOff
-                      className="w-3.5 h-3.5 text-amber-500 shrink-0"
-                      aria-label="Notifications muted"
-                    />
-                  )}
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <span>
-                    {activeThread.isGroup
-                      ? `${activeThread.memberIds.length} participants`
-                      : `@${activeThread.partnerHandle}`}
-                  </span>
-                  {activeStatus && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span
-                        className={
-                          activeStatus.isOnline
-                            ? 'font-medium text-emerald-600 dark:text-emerald-400'
-                            : 'text-slate-500 dark:text-slate-400'
-                        }
-                      >
-                        {activeStatus.statusLabel}
-                      </span>
-                    </>
-                  )}
-                </p>
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setMobileShowThread(false)}
+                  aria-label="Back to conversations"
+                  className="md:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+                </button>
+                <div className="relative shrink-0">
+                  <Avatar
+                    src={activeThread.partnerAvatar}
+                    name={activeThread.title}
+                    size="md"
+                    online={Boolean(activeStatus?.isOnline)}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-display text-sm font-semibold truncate flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                    <span className="truncate">{activeThread.title}</span>
+                    {activeThreadMuted && (
+                      <BellOff
+                        className="w-3.5 h-3.5 text-slate-400 shrink-0"
+                        aria-label="Notifications muted"
+                      />
+                    )}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {activeStatus?.isOnline ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active now</span>
+                    ) : (
+                      <span>{activeStatus?.statusLabel || (activeThread.isGroup ? `${activeThread.memberIds.length} members` : `@${activeThread.partnerHandle}`)}</span>
+                    )}
+                  </p>
+                </div>
               </div>
-              <div className="ml-auto flex items-center gap-1.5">
+
+              <div className="flex items-center gap-1 shrink-0">
                 {activeThread.isGroup && (
                   <button
                     type="button"
                     onClick={() => setShowChatInfo(true)}
                     aria-label="Manage group participants"
-                    className="min-h-[40px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
                   >
-                    <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span className="hidden sm:inline">Members</span>
+                    <UserPlus className="w-4 h-4" aria-hidden="true" />
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => onStartCall(activeThread, true)}
                   aria-label="Start audio call"
-                  className="min-h-[40px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-                  <span className="hidden sm:inline">Audio</span>
+                  <Phone className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
                   onClick={() => onStartCall(activeThread, false)}
                   aria-label="Start video call"
-                  className="min-h-[40px] px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <Video className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span className="hidden sm:inline">Video</span>
+                  <Video className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowChatInfo(true)}
                   aria-label="Chat information"
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
                 >
-                  <Info className="w-5 h-5" aria-hidden="true" />
+                  <Info className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -550,50 +507,49 @@ export function ChatView({
               onOpenPublicProfile={onOpenPublicProfile}
             />
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-slate-950/30">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white dark:bg-slate-900">
               {activeMessages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">
-                  Send a message to start this real-time thread.
+                <div className="h-full flex items-center justify-center text-sm text-slate-400">
+                  Send a message or greet {activeThread.title}!
                 </div>
               ) : (
-                activeMessages.map((msg) => {
+                activeMessages.map((msg, idx) => {
                   const mine = msg.senderId === profile.uid;
+                  const nextMsg = activeMessages[idx + 1];
+                  const isLastInGroup = !nextMsg || nextMsg.senderId !== msg.senderId;
                   return (
                     <div
                       key={msg.id}
                       className={`flex items-end gap-2 ${
                         mine ? 'justify-end' : 'justify-start'
-                      }`}
+                      } ${isLastInGroup ? 'mb-3' : 'mb-1'}`}
                     >
                       {!mine && (
-                        <Avatar
-                          src={msg.senderAvatar}
-                          name={msg.senderName}
-                          size="sm"
-                        />
+                        <div className="w-7 shrink-0">
+                          {isLastInGroup ? (
+                            <Avatar
+                              src={msg.senderAvatar}
+                              name={msg.senderName}
+                              size="sm"
+                            />
+                          ) : (
+                            <div className="w-7" />
+                          )}
+                        </div>
                       )}
                       <div
-                        className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm ${
+                        className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm shadow-2xs ${
                           mine
-                            ? 'bg-blue-600 text-white dark:bg-blue-500'
-                            : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100'
+                            ? 'bg-blue-600 text-white rounded-br-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-xs'
                         }`}
                       >
-                        {!mine && activeThread.isGroup && (
+                        {!mine && activeThread.isGroup && isLastInGroup && (
                           <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5">
                             {msg.senderName}
                           </p>
                         )}
-                        <p className="leading-relaxed">{msg.text}</p>
-                        <p
-                          className={`text-[10px] mt-1 tabular-nums ${
-                            mine
-                              ? 'text-blue-100'
-                              : 'text-slate-400 dark:text-slate-500'
-                          }`}
-                        >
-                          {formatRelativeTime(msg.createdAtMs)}
-                        </p>
+                        <p className="leading-relaxed break-words">{msg.text}</p>
                       </div>
                     </div>
                   );
