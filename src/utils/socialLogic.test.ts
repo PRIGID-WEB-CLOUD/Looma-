@@ -22,6 +22,9 @@ import {
   resolveAppStage,
   resolvePublicProfile,
   sanitizeHandle,
+  isOpaqueMediaIdentifier,
+  sanitizeMediaTitle,
+  sanitizeUploadedFilenameTitle,
   toggleFollowState,
   togglePostLikeState,
   validateAuthForm,
@@ -922,4 +925,70 @@ test('isGroupAdmin and promoteGroupAdminState enforce admin-only promotions and 
   assert.deepEqual(validPromote.thread.adminIds, ['u_creator', 'u_member']);
   assert.equal(isGroupAdmin(validPromote.thread, 'u_member'), true);
 });
+
+test('opaque hash/UUID/R2-key identifiers are stripped from media titles and URL path fallbacks', () => {
+  assert.equal(isOpaqueMediaIdentifier('bcb87d1a01e84917a844599485d63c6c'), true);
+  assert.equal(
+    isOpaqueMediaIdentifier('550e8400-e29b-41d4-a716-446655440000'),
+    true
+  );
+  assert.equal(isOpaqueMediaIdentifier('1794518947315-a1b2c3d4e5f6a7b8'), true);
+  assert.equal(isOpaqueMediaIdentifier('Studio Walkthrough'), false);
+  assert.equal(isOpaqueMediaIdentifier('Daylight Timber Study'), false);
+
+  assert.equal(
+    sanitizeUploadedFilenameTitle('bcb87d1a01e84917a844599485d63c6c.mp4'),
+    ''
+  );
+  assert.equal(
+    sanitizeUploadedFilenameTitle('550e8400-e29b-41d4-a716-446655440000.jpg'),
+    ''
+  );
+  assert.equal(
+    sanitizeUploadedFilenameTitle('Kyoto Morning Walk.mp4'),
+    'Kyoto Morning Walk'
+  );
+
+  // Even when a legacy post already stored a 32-hex mediaTitle, readers suppress it
+  assert.equal(sanitizeMediaTitle('bcb87d1a01e84917a844599485d63c6c'), '');
+  assert.equal(sanitizeMediaTitle('Studio View'), 'Studio View');
+
+  const hashVideo = parseRichUrl(
+    '/api/storage/file/uploads/u1/posts/1794518947315-a1b2c3d4e5f6a7b8.mp4',
+    'bcb87d1a01e84917a844599485d63c6c'
+  );
+  assert.equal(hashVideo?.kind, 'video');
+  assert.equal(hashVideo?.displayTitle, 'Video Clip');
+
+  const hashAudio = parseRichUrl(
+    'https://cdn.example.com/audio/bcb87d1a01e84917a844599485d63c6c.mp3'
+  );
+  assert.equal(hashAudio?.kind, 'audio');
+  assert.equal(hashAudio?.displayTitle, 'Audio Track');
+
+  const hashLink = parseRichUrl(
+    'https://cdn.example.com/items/bcb87d1a01e84917a844599485d63c6c'
+  );
+  assert.equal(hashLink?.kind, 'link');
+  assert.equal(hashLink?.displayTitle, 'cdn.example.com');
+
+  const legacyHashPost: Post = {
+    ...makePost(9),
+    id: 'p_hash',
+    caption: '',
+    videoUrl: '/api/storage/file/uploads/u1/posts/1794518947315-a1b2c3d4e5f6a7b8.mp4',
+    mediaTitle: 'bcb87d1a01e84917a844599485d63c6c',
+  };
+  assert.equal(resolvePostMediaDescriptor(legacyHashPost)?.title, 'Video Clip');
+
+  const legacyHashPhoto: Post = {
+    ...makePost(10),
+    id: 'p_hash_img',
+    caption: '',
+    imageUrl: '/api/storage/file/uploads/u1/posts/1794518947315-a1b2c3d4e5f6a7b8.jpg',
+    mediaTitle: 'bcb87d1a01e84917a844599485d63c6c',
+  };
+  assert.equal(buildStoryFromPost(legacyHashPhoto).caption, 'Shared a post');
+});
+
 

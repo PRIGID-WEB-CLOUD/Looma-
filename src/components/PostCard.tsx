@@ -26,6 +26,7 @@ import {
   formatRelativeTime,
   parseRichUrl,
   resolvePostMediaDescriptor,
+  sanitizeMediaTitle,
   validateCommentInput,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
@@ -369,7 +370,10 @@ export function PostCard({
                 <img
                   key={`${resolvedImageUrl}-${mediaRetryNonce}`}
                   src={resolvedImageUrl}
-                  alt={post.mediaTitle || `Photo post by ${post.authorName}`}
+                  alt={
+                    sanitizeMediaTitle(post.mediaTitle) ||
+                    `Photo post by ${post.authorName}`
+                  }
                   referrerPolicy="no-referrer"
                   onError={() => setImgFailed(true)}
                   className="w-full max-h-[440px] object-cover block"

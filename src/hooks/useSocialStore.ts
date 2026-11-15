@@ -91,6 +91,7 @@ import {
   removeGroupParticipantState,
   resolvePublicProfile,
   sanitizeHandle,
+  sanitizeMediaTitle,
   shouldDispatchChatPushNotification,
   toggleFollowState,
   validateGroupChatInput,
@@ -852,7 +853,9 @@ export function useSocialStore() {
             videoUrl: d.videoUrl || '',
             audioUrl: d.audioUrl || '',
             linkUrl: d.linkUrl || '',
-            mediaTitle: d.mediaTitle || '',
+            mediaTitle: sanitizeMediaTitle(
+              typeof d.mediaTitle === 'string' ? d.mediaTitle : ''
+            ),
             category: d.category,
             likesCount: Number(d.likesCount || 0),
             commentsCount: Number(d.commentsCount || 0),
@@ -1723,7 +1726,7 @@ export function useSocialStore() {
       const videoUrl = extra?.videoUrl || '';
       const audioUrl = extra?.audioUrl || '';
       const linkUrl = extra?.linkUrl || '';
-      const mediaTitle = extra?.mediaTitle || '';
+      const mediaTitle = sanitizeMediaTitle(extra?.mediaTitle);
 
       const newPost: Post = {
         id: postId,

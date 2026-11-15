@@ -574,16 +574,66 @@ export function extractVimeoVideoId(url: string): string | null {
   return null;
 }
 
+export function isOpaqueMediaIdentifier(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+  const compact = trimmed.replace(/[\s_-]+/g, '');
+  if (/^[a-f0-9]{12,}$/i.test(compact)) {
+    return true;
+  }
+  if (
+    /^[a-f0-9]{8,11}$/i.test(compact) &&
+    /[0-9]/.test(compact) &&
+    /[a-f]/i.test(compact)
+  ) {
+    return true;
+  }
+  if (
+    /^[a-f0-9]{8}[-_ ]?[a-f0-9]{4}[-_ ]?[a-f0-9]{4}[-_ ]?[a-f0-9]{4}[-_ ]?[a-f0-9]{12}$/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+  if (/^\d{10,15}(?:[-_ ]+[a-z0-9]{3,})?$/i.test(trimmed)) {
+    return true;
+  }
+  if (/^\d{8,}$/.test(compact)) {
+    return true;
+  }
+  return false;
+}
+
+export function sanitizeMediaTitle(rawTitle?: string): string {
+  const trimmed = (rawTitle || '').trim();
+  if (!trimmed) return '';
+  if (isOpaqueMediaIdentifier(trimmed)) return '';
+  return trimmed.slice(0, 120);
+}
+
+export function sanitizeUploadedFilenameTitle(filename: string): string {
+  const withoutExt = filename.trim().replace(/\.[a-z0-9]{1,8}$/i, '').trim();
+  if (!withoutExt || isOpaqueMediaIdentifier(withoutExt)) {
+    return '';
+  }
+  const normalized = withoutExt.replace(/\s+/g, ' ').trim();
+  if (!normalized || isOpaqueMediaIdentifier(normalized)) {
+    return '';
+  }
+  return normalized.slice(0, 120);
+}
+
 export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUrl | null {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
+  const safeCustomTitle = sanitizeMediaTitle(customTitle);
 
   if (trimmed.startsWith('data:video/')) {
     return {
       url: trimmed,
       kind: 'video',
       hostname: 'uploaded-video',
-      displayTitle: customTitle || 'Uploaded Video',
+      displayTitle: safeCustomTitle || 'Uploaded Video',
       subtitle: 'Embedded video clip',
     };
   }
@@ -592,7 +642,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       url: trimmed,
       kind: 'audio',
       hostname: 'uploaded-audio',
-      displayTitle: customTitle || 'Uploaded Audio',
+      displayTitle: safeCustomTitle || 'Uploaded Audio',
       subtitle: 'Embedded audio track',
     };
   }
@@ -601,7 +651,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       url: trimmed,
       kind: 'image',
       hostname: 'uploaded-image',
-      displayTitle: customTitle || 'Uploaded Image',
+      displayTitle: safeCustomTitle || 'Uploaded Image',
       subtitle: 'Image attachment',
     };
   }
@@ -629,7 +679,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       hostname,
       embedUrl: `https://www.youtube-nocookie.com/embed/${ytId}`,
       thumbnailUrl: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`,
-      displayTitle: customTitle || 'YouTube Video',
+      displayTitle: safeCustomTitle || 'YouTube Video',
       subtitle: `${hostname} · Interactive video embed`,
     };
   }
@@ -641,7 +691,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       kind: 'vimeo',
       hostname,
       embedUrl: `https://player.vimeo.com/video/${vimeoId}`,
-      displayTitle: customTitle || 'Vimeo Video',
+      displayTitle: safeCustomTitle || 'Vimeo Video',
       subtitle: `${hostname} · Interactive video embed`,
     };
   }
@@ -651,7 +701,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       url: trimmed,
       kind: 'video',
       hostname,
-      displayTitle: customTitle || deriveTitleFromPath(parsed) || 'Video Clip',
+      displayTitle: safeCustomTitle || deriveTitleFromPath(parsed) || 'Video Clip',
       subtitle: `${hostname} · Direct video playback`,
     };
   }
@@ -661,7 +711,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       url: trimmed,
       kind: 'audio',
       hostname,
-      displayTitle: customTitle || deriveTitleFromPath(parsed) || 'Audio Track',
+      displayTitle: safeCustomTitle || deriveTitleFromPath(parsed) || 'Audio Track',
       subtitle: `${hostname} · Direct audio playback`,
     };
   }
@@ -671,7 +721,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
       url: trimmed,
       kind: 'image',
       hostname,
-      displayTitle: customTitle || deriveTitleFromPath(parsed) || 'Image Link',
+      displayTitle: safeCustomTitle || deriveTitleFromPath(parsed) || 'Image Link',
       subtitle: `${hostname} · Image preview`,
     };
   }
@@ -681,7 +731,7 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
     url: trimmed,
     kind: 'link',
     hostname,
-    displayTitle: customTitle || derived || hostname,
+    displayTitle: safeCustomTitle || derived || hostname,
     subtitle: parsed.pathname && parsed.pathname !== '/' ? `${hostname}${parsed.pathname}` : trimmed,
   };
 }
@@ -689,11 +739,16 @@ export function parseRichUrl(rawUrl: string, customTitle?: string): ParsedRichUr
 function deriveTitleFromPath(parsed: URL): string {
   const segments = parsed.pathname.split('/').filter(Boolean);
   if (segments.length === 0) return parsed.hostname.replace(/^www\./, '');
-  const last = decodeURIComponent(segments[segments.length - 1])
+  const rawLast = decodeURIComponent(segments[segments.length - 1])
     .replace(/\.[a-z0-9]{2,5}$/i, '')
-    .replace(/[-_]+/g, ' ')
     .trim();
-  if (!last || last.length < 2) return parsed.hostname.replace(/^www\./, '');
+  if (!rawLast || rawLast.length < 2 || isOpaqueMediaIdentifier(rawLast)) {
+    return '';
+  }
+  const last = rawLast.replace(/[-_]+/g, ' ').trim();
+  if (!last || last.length < 2 || isOpaqueMediaIdentifier(last)) {
+    return '';
+  }
   return last.replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 80);
 }
 
@@ -724,7 +779,7 @@ export function buildStoryFromPost(post: Post): {
 
   const rawText =
     post.caption.trim() ||
-    post.mediaTitle?.trim() ||
+    sanitizeMediaTitle(post.mediaTitle) ||
     post.linkUrl?.trim() ||
     'Shared a post';
 
@@ -1159,7 +1214,7 @@ export function resolvePostMediaDescriptor(
   post: Post
 ): PostMediaDescriptor | null {
   const captionUrl = extractFirstUrl(post.caption || '');
-  const titleHint = post.mediaTitle?.trim() || undefined;
+  const titleHint = sanitizeMediaTitle(post.mediaTitle) || undefined;
 
   if (post.videoUrl) {
     const parsed = parseRichUrl(post.videoUrl, titleHint);

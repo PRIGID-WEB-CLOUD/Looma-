@@ -20,6 +20,8 @@ import {
   getMentionQueryAtCursor,
   parseRichUrl,
   POST_CATEGORIES,
+  sanitizeMediaTitle,
+  sanitizeUploadedFilenameTitle,
   validatePostInput,
 } from '../utils/socialLogic';
 import {
@@ -158,7 +160,10 @@ export function CreatePostModal({
   const parsedPreview = useMemo(
     () =>
       effectivePreviewUrl
-        ? parseRichUrl(effectivePreviewUrl, mediaTitle.trim() || undefined)
+        ? parseRichUrl(
+            effectivePreviewUrl,
+            sanitizeMediaTitle(mediaTitle) || undefined
+          )
         : null,
     [effectivePreviewUrl, mediaTitle]
   );
@@ -211,7 +216,7 @@ export function CreatePostModal({
         (pct) => setUploadProgress(pct)
       );
       cleanupStagedUrls(previousUrls);
-      const cleanTitle = file.name.replace(/\.[a-z0-9]+$/i, '');
+      const cleanTitle = sanitizeUploadedFilenameTitle(file.name);
       setMediaTitle(cleanTitle);
 
       if (uploaded.kind === 'image') {
@@ -257,7 +262,7 @@ export function CreatePostModal({
     let finalVideoUrl = videoUrl.trim();
     let finalAudioUrl = audioUrl.trim();
     let finalLinkUrl = '';
-    let finalMediaTitle = mediaTitle.trim();
+    let finalMediaTitle = sanitizeMediaTitle(mediaTitle);
 
     if (
       !finalImageUrl &&
@@ -282,7 +287,7 @@ export function CreatePostModal({
           finalLinkUrl = detectedParsed.url;
         }
         if (!finalMediaTitle) {
-          finalMediaTitle = detectedParsed.displayTitle;
+          finalMediaTitle = sanitizeMediaTitle(detectedParsed.displayTitle);
         }
       }
     }
@@ -313,6 +318,12 @@ export function CreatePostModal({
       setMediaTitle('');
       setDismissedCaptionUrl(null);
       onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to publish post right now. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
