@@ -58,7 +58,6 @@ interface AuthViewProps {
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
   protectedRedirectNotice?: string | null;
-  onBackToLanding?: () => void;
 }
 
 function GoogleMark() {
@@ -114,7 +113,6 @@ export function AuthView({
   onLogout,
   onContinueAuthenticated,
   protectedRedirectNotice = null,
-  onBackToLanding,
 }: AuthViewProps) {
   const [internalMode, setInternalMode] = useState<AuthMode>(initialMode);
   const [useEmailForm, setUseEmailForm] = useState(false);
@@ -393,15 +391,6 @@ export function AuthView({
           <LoomaLogo />
 
           <div className="flex items-center gap-2.5 shrink-0">
-            {onBackToLanding && (
-              <button
-                type="button"
-                onClick={onBackToLanding}
-                className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer whitespace-nowrap"
-              >
-                Overview
-              </button>
-            )}
             <button
               type="button"
               onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -845,24 +834,12 @@ export function AuthView({
                     .
                   </p>
                 )}
-
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-start gap-3">
-                  <Lock className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
-                  <div className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                    <p className="font-semibold text-slate-900 dark:text-slate-200">
-                      Protected Workspace Access
-                    </p>
-                    <p className="mt-0.5">
-                      Feed posts, direct messages, and profile settings are restricted to authenticated members from the auth page.
-                    </p>
-                  </div>
-                </div>
               </div>
             )}
           </div>
 
-          {/* Mode Toggle & Legal Footer */}
-          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 space-y-3">
+          {/* Mode Toggle Footer */}
+          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
               <span>
                 {isSignIn ? 'New to Looma?' : 'Already have an account?'}
@@ -874,41 +851,6 @@ export function AuthView({
               >
                 {isSignIn ? 'Create an account' : 'Sign in instead'}
               </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-              <a
-                href="/terms"
-                onClick={(e) => {
-                  e.preventDefault();
-                  openLegal('terms');
-                }}
-                className="hover:text-slate-900 dark:hover:text-slate-200 hover:underline"
-              >
-                Terms &amp; Conditions
-              </a>
-              <span aria-hidden="true">·</span>
-              <a
-                href="/privacy"
-                onClick={(e) => {
-                  e.preventDefault();
-                  openLegal('privacy');
-                }}
-                className="hover:text-slate-900 dark:hover:text-slate-200 hover:underline"
-              >
-                Privacy Policy
-              </a>
-              <span aria-hidden="true">·</span>
-              <a
-                href="/guidelines"
-                onClick={(e) => {
-                  e.preventDefault();
-                  openLegal('guidelines');
-                }}
-                className="hover:text-slate-900 dark:hover:text-slate-200 hover:underline"
-              >
-                Community Guidelines
-              </a>
             </div>
           </div>
         </section>

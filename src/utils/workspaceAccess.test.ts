@@ -6,16 +6,17 @@ import {
   resolveRouteAccess,
 } from './workspaceAccess';
 
-test('unauthenticated visitor at root lands on public landingpage and cannot view feed, messages, settings, or admin', () => {
+test('unauthenticated visitor at root goes directly to auth and cannot view feed, messages, notifications, profile, settings, or connections', () => {
   const root = resolveRouteAccess({
     pathname: '/',
     isAuthorized: false,
     onboardingCompleted: false,
     authReady: true,
   });
-  assert.equal(root.surface, 'landing');
+  assert.equal(root.surface, 'auth');
+  assert.equal(root.authMode, 'signin');
 
-  for (const path of ['/feed', '/messages', '/settings', '/profile', '/notifications', '/connections', '/admin']) {
+  for (const path of ['/feed', '/messages', '/settings', '/profile', '/notifications', '/connections']) {
     const res = resolveRouteAccess({
       pathname: path,
       isAuthorized: false,
@@ -72,7 +73,7 @@ test('legal pages remain accessible regardless of auth state', () => {
   }
 });
 
-test('authenticated and onboarded member accesses workspace tabs, /admin, and /landing preview', () => {
+test('authenticated and onboarded member accesses workspace tabs without admin or landingpage coupling', () => {
   const feed = resolveRouteAccess({
     pathname: '/',
     isAuthorized: true,
@@ -91,21 +92,23 @@ test('authenticated and onboarded member accesses workspace tabs, /admin, and /l
   assert.equal(messages.surface, 'workspace');
   assert.equal(messages.tab, 'messages');
 
-  const admin = resolveRouteAccess({
+  const externalAdminPath = resolveRouteAccess({
     pathname: '/admin',
     isAuthorized: true,
     onboardingCompleted: true,
     authReady: true,
   });
-  assert.equal(admin.surface, 'admin');
+  assert.equal(externalAdminPath.surface, 'workspace');
+  assert.equal(externalAdminPath.tab, 'feed');
 
-  const landingPreview = resolveRouteAccess({
+  const externalLandingPath = resolveRouteAccess({
     pathname: '/landing',
     isAuthorized: true,
     onboardingCompleted: true,
     authReady: true,
   });
-  assert.equal(landingPreview.surface, 'landing');
+  assert.equal(externalLandingPath.surface, 'workspace');
+  assert.equal(externalLandingPath.tab, 'feed');
 });
 
 test('authenticated user who has not completed onboarding is gated to onboarding for protected routes', () => {
@@ -120,10 +123,9 @@ test('authenticated user who has not completed onboarding is gated to onboarding
 });
 
 test('canonical paths and redirect notices format accurately', () => {
-  assert.equal(getCanonicalPathForSurface('admin'), '/admin');
   assert.equal(getCanonicalPathForSurface('auth', { authMode: 'signup' }), '/auth?mode=signup');
   assert.equal(getCanonicalPathForSurface('workspace', { tab: 'settings' }), '/settings');
   assert.equal(getCanonicalPathForSurface('legal', { legalDocId: 'privacy' }), '/privacy');
   assert.ok(buildProtectedRedirectNotice('Feed posts').includes('Feed posts are restricted'));
-  assert.ok(buildProtectedRedirectNotice('Admin console').includes('Admin console is restricted'));
+  assert.ok(buildProtectedRedirectNotice('Member profile').includes('Member profile is restricted'));
 });

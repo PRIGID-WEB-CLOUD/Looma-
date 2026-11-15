@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, LogOut, MessageSquare, Moon, Settings, ShieldCheck, Sun, Users } from 'lucide-react';
+import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
   ConnectionsTab,
@@ -28,22 +28,6 @@ import {
   getTabRoutePath,
   resolveRouteAccess,
 } from './utils/workspaceAccess';
-import {
-  LandingPageView,
-  readStoredAccessInquiries,
-  saveStoredAccessInquiries,
-  type AccessInquiry,
-} from './landingpage';
-import {
-  AdminView,
-  readAdminModerationState,
-  saveAdminModerationState,
-  toggleHiddenPostId,
-  toggleRestrictedMemberUid,
-  updateAccessInquiryStatus,
-  useAdminRole,
-  type AdminModerationState,
-} from './admin';
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
@@ -111,12 +95,6 @@ export default function App() {
   const [protectedRedirectNotice, setProtectedRedirectNotice] = useState<
     string | null
   >(null);
-  const [accessInquiries, setAccessInquiries] = useState<AccessInquiry[]>(() =>
-    readStoredAccessInquiries()
-  );
-  const [adminModeration, setAdminModeration] = useState<AdminModerationState>(
-    () => readAdminModerationState()
-  );
   const [previewOnboarding, setPreviewOnboarding] =
     useState<boolean>(onboardingParam);
   const [publicProfileReturnTab, setPublicProfileReturnTab] = useState<
@@ -148,11 +126,6 @@ export default function App() {
     store.profile.onboardingCompleted,
     store.authReady
   );
-  const adminAuth = useAdminRole({
-    isAuthorized: store.isAuthorized,
-    firebaseUser: store.firebaseUser,
-    isLocalAutostart: store.isLocalAutostart,
-  });
 
   const navigateToPath = (rawTargetPath: string, replace = false) => {
     if (typeof window === 'undefined') return;
@@ -235,12 +208,6 @@ export default function App() {
     }
   }, [routeAccess.surface, routeAccess.tab]);
 
-  const visiblePosts = useMemo(() => {
-    if (adminModeration.hiddenPostIds.length === 0) return store.posts;
-    const hiddenSet = new Set(adminModeration.hiddenPostIds);
-    return store.posts.filter((p) => !hiddenSet.has(p.id));
-  }, [adminModeration.hiddenPostIds, store.posts]);
-
   const openLegalDocument = (docId: LegalDocId) => {
     if (typeof window !== 'undefined') {
       const currentLegal = parseLegalRoute(
@@ -268,29 +235,6 @@ export default function App() {
       }
     }
     setActiveLegalDoc(null);
-  };
-
-  const handleOpenAuthPage = (mode: AuthMode = 'signin', notice: string | null = null) => {
-    setAuthMode(mode);
-    setProtectedRedirectNotice(notice);
-    navigateToPath(mode === 'signup' ? '/auth?mode=signup' : '/auth');
-  };
-
-  const handleNavigateProtectedPath = (
-    targetPath: '/feed' | '/messages' | '/settings' | '/admin'
-  ) => {
-    if (!store.isAuthorized) {
-      const access = resolveRouteAccess({
-        pathname: targetPath,
-        isAuthorized: false,
-        onboardingCompleted: false,
-        authReady: true,
-      });
-      pendingProtectedPathRef.current = targetPath;
-      handleOpenAuthPage('signin', access.protectedNotice || null);
-      return;
-    }
-    navigateToPath(targetPath);
   };
 
   const navigateAfterAuthentication = () => {
@@ -478,31 +422,6 @@ export default function App() {
     );
   }
 
-  if (routeAccess.surface === 'landing') {
-    return (
-      <>
-        <LandingPageView
-          theme={store.theme}
-          isAuthorized={store.isAuthorized}
-          isAdmin={adminAuth.isAdmin}
-          userDisplayName={store.profile.displayName}
-          onSetTheme={store.setThemeExplicit}
-          onNavigateToAuth={(mode = 'signin') => handleOpenAuthPage(mode, null)}
-          onNavigateToProtectedPath={handleNavigateProtectedPath}
-          onOpenLegal={openLegalDocument}
-          onSubmitAccessInquiry={(record) => {
-            setAccessInquiries((prev) => {
-              const next = [record, ...prev];
-              saveStoredAccessInquiries(next);
-              return next;
-            });
-          }}
-        />
-        <OfflineIndicator />
-      </>
-    );
-  }
-
   if (appStage === 'auth' || !store.isAuthorized || routeAccess.surface === 'auth') {
     return (
       <div className="looma-stage-enter">
@@ -524,10 +443,6 @@ export default function App() {
           protectedRedirectNotice={
             protectedRedirectNotice || routeAccess.protectedNotice || null
           }
-          onBackToLanding={() => {
-            setProtectedRedirectNotice(null);
-            navigateToPath('/landing');
-          }}
           profile={store.profile}
           firebaseUser={store.firebaseUser}
           authLoading={store.authLoading}
@@ -589,71 +504,6 @@ export default function App() {
         />
         <OfflineIndicator />
       </div>
-    );
-  }
-
-  if (routeAccess.surface === 'admin') {
-    return (
-      <>
-        <AdminView
-          theme={store.theme}
-          adminAuth={adminAuth}
-          currentProfile={store.profile}
-          accountEmail={store.firebaseUser?.email || null}
-          isLocalAutostart={store.isLocalAutostart}
-          communityUsers={store.communityUsers}
-          posts={store.posts}
-          storyGroups={store.storyGroups}
-          onlineUserIds={store.onlineUserIds}
-          moderation={adminModeration}
-          inquiries={accessInquiries}
-          onSetTheme={store.setThemeExplicit}
-          onBackToWorkspace={() => selectWorkspaceTab('feed')}
-          onOpenAuth={() => handleOpenAuthPage('signin', null)}
-          onOpenPublicProfile={(uid) => {
-            selectWorkspaceTab('feed');
-            void handleOpenPublicProfile(uid);
-          }}
-          onToggleHidePost={(postId) => {
-            setAdminModeration((prev) => {
-              const next: AdminModerationState = {
-                ...prev,
-                hiddenPostIds: toggleHiddenPostId(prev.hiddenPostIds, postId),
-              };
-              saveAdminModerationState(next);
-              return next;
-            });
-          }}
-          onDeletePost={async (postId) => {
-            const target = store.posts.find((p) => p.id === postId);
-            if (target) {
-              await store.deletePost(target);
-            }
-          }}
-          onToggleRestrictMember={(uid) => {
-            setAdminModeration((prev) => {
-              const next: AdminModerationState = {
-                ...prev,
-                restrictedUids: toggleRestrictedMemberUid(
-                  prev.restrictedUids,
-                  uid,
-                  store.profile.uid
-                ),
-              };
-              saveAdminModerationState(next);
-              return next;
-            });
-          }}
-          onUpdateInquiryStatus={(id, status) => {
-            setAccessInquiries((prev) => {
-              const next = updateAccessInquiryStatus(prev, id, status);
-              saveStoredAccessInquiries(next);
-              return next;
-            });
-          }}
-        />
-        <OfflineIndicator />
-      </>
     );
   }
 
@@ -808,19 +658,6 @@ export default function App() {
               </span>
             </button>
 
-            {adminAuth.isAdmin && (
-              <button
-                type="button"
-                onClick={() => navigateToPath('/admin')}
-                className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-2.5">
-                  <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Admin Console</span>
-                </span>
-              </button>
-            )}
-
             <PWAInstallButton />
 
             <button
@@ -846,7 +683,7 @@ export default function App() {
           {activeTab === 'feed' && (
             <FeedView
               profile={store.profile}
-              posts={visiblePosts}
+              posts={store.posts}
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -1036,9 +873,6 @@ export default function App() {
               onEnablePush={store.enablePushNotifications}
               onLogout={handleLogout}
               onOpenLegal={openLegalDocument}
-              isAdmin={adminAuth.isAdmin}
-              onOpenAdmin={() => navigateToPath('/admin')}
-              onOpenLanding={() => navigateToPath('/landing')}
               onDeleteAccount={async () => {
                 await store.deleteAccount();
                 setPreviewOnboarding(false);

@@ -1,5 +1,14 @@
 import type { Post, PostCategory, StoryGroup, UserProfile } from '../types/social';
-import type { AccessInquiry } from '../landingpage/landingData';
+
+export interface AdminAccessInquiry {
+  id: string;
+  fullName: string;
+  email: string;
+  organization: string;
+  note: string;
+  status: 'pending' | 'approved' | 'archived';
+  createdAtMs: number;
+}
 
 export const ADMIN_EMAILS = [
   'prigidwebcloud@gmail.com',
@@ -7,6 +16,7 @@ export const ADMIN_EMAILS = [
 ] as const;
 
 export const ADMIN_MODERATION_STORAGE_KEY = 'looma_admin_moderation_v1';
+export const ADMIN_INQUIRIES_STORAGE_KEY = 'looma_admin_inquiries_v1';
 
 export interface AdminModerationState {
   hiddenPostIds: string[];
@@ -113,11 +123,32 @@ export function toggleRestrictedMemberUid(
     : [...restrictedUids, targetUid];
 }
 
+export function readAdminAccessInquiries(): AdminAccessInquiry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(ADMIN_INQUIRIES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as AdminAccessInquiry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveAdminAccessInquiries(inquiries: AdminAccessInquiry[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(ADMIN_INQUIRIES_STORAGE_KEY, JSON.stringify(inquiries));
+  } catch {
+    // Ignore storage quota issues cleanly
+  }
+}
+
 export function updateAccessInquiryStatus(
-  inquiries: AccessInquiry[],
+  inquiries: AdminAccessInquiry[],
   inquiryId: string,
-  status: AccessInquiry['status']
-): AccessInquiry[] {
+  status: AdminAccessInquiry['status']
+): AdminAccessInquiry[] {
   return inquiries.map((item) =>
     item.id === inquiryId ? { ...item, status } : item
   );
@@ -130,7 +161,7 @@ export function computeWorkspaceMetrics(input: {
   storyGroups: StoryGroup[];
   onlineUserIds: string[];
   moderation: AdminModerationState;
-  inquiries: AccessInquiry[];
+  inquiries: AdminAccessInquiry[];
 }): WorkspaceAdminMetrics {
   const uniqueMembers = new Map<string, UserProfile>();
   if (input.currentProfile.uid) {

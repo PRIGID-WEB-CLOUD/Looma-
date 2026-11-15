@@ -2,7 +2,7 @@ import type { TabId } from '../types/social';
 import type { AuthMode } from '../components/AuthView';
 import { getLegalRoutePath, parseLegalRoute, type LegalDocId } from './legalLogic';
 
-export type AppSurface = 'landing' | 'auth' | 'onboarding' | 'workspace' | 'admin' | 'legal';
+export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal';
 
 export type ProtectedWorkspaceTab = Exclude<TabId, 'public-profile' | 'auth'>;
 
@@ -62,19 +62,9 @@ export function parseProtectedWorkspacePath(
   };
 }
 
-export function isAdminPath(pathname: string): boolean {
-  const normalized = normalizeAppPathname(pathname);
-  return normalized === '/admin' || normalized.startsWith('/admin/');
-}
-
 export function isAuthPath(pathname: string): boolean {
   const normalized = normalizeAppPathname(pathname);
   return normalized === '/auth' || normalized === '/login' || normalized === '/signup';
-}
-
-export function isLandingPath(pathname: string): boolean {
-  const normalized = normalizeAppPathname(pathname);
-  return normalized === '/landing';
 }
 
 export function resolveAuthModeFromUrl(pathname: string, search: string): AuthMode {
@@ -87,8 +77,7 @@ export function resolveAuthModeFromUrl(pathname: string, search: string): AuthMo
 }
 
 export function buildProtectedRedirectNotice(resourceLabel: string): string {
-  const isSingular =
-    resourceLabel === 'Admin console' || resourceLabel === 'Member profile';
+  const isSingular = resourceLabel === 'Member profile';
   const verb = isSingular ? 'is' : 'are';
   return `Protected Workspace Access: ${resourceLabel} ${verb} restricted to authenticated members from the auth page.`;
 }
@@ -113,30 +102,15 @@ export function resolveRouteAccess(input: {
   }
 
   if (!input.authReady) {
-    return { surface: 'landing' };
+    return { surface: 'auth', authMode: resolveAuthModeFromUrl(pathname, search) };
   }
 
   const protectedTab = parseProtectedWorkspacePath(pathname);
-  const requestingAdmin = isAdminPath(pathname);
   const requestingAuth = isAuthPath(pathname);
-  const requestingLanding = isLandingPath(pathname);
   const authModeFromUrl = resolveAuthModeFromUrl(pathname, search);
-  const params = new URLSearchParams(search);
-  const hasAuthQueryParam = params.has('auth');
 
   // Unauthenticated or unverified visitor gating
   if (!input.isAuthorized) {
-    if (requestingAdmin) {
-      return {
-        surface: 'auth',
-        authMode: 'signin',
-        blockedPath: '/admin',
-        blockedResourceLabel: 'Admin console',
-        protectedNotice: buildProtectedRedirectNotice('Admin console'),
-        returnToPath: '/admin',
-      };
-    }
-
     if (protectedTab) {
       return {
         surface: 'auth',
@@ -148,36 +122,18 @@ export function resolveRouteAccess(input: {
       };
     }
 
-    if (requestingAuth || hasAuthQueryParam) {
-      return {
-        surface: 'auth',
-        authMode: authModeFromUrl,
-      };
-    }
-
     return {
-      surface: 'landing',
+      surface: 'auth',
+      authMode: authModeFromUrl,
     };
   }
 
   // Authenticated visitor onboarding gate
-  if (!input.onboardingCompleted && !requestingLanding) {
+  if (!input.onboardingCompleted) {
     return {
       surface: 'onboarding',
-      returnToPath: requestingAdmin
-        ? '/admin'
-        : protectedTab
-          ? protectedTab.canonicalPath
-          : '/feed',
+      returnToPath: protectedTab ? protectedTab.canonicalPath : '/feed',
     };
-  }
-
-  if (requestingLanding) {
-    return { surface: 'landing' };
-  }
-
-  if (requestingAdmin) {
-    return { surface: 'admin' };
   }
 
   if (protectedTab) {
@@ -211,13 +167,11 @@ export function getCanonicalPathForSurface(
   if (surface === 'legal' && options?.legalDocId) {
     return getLegalRoutePath(options.legalDocId);
   }
-  if (surface === 'admin') return '/admin';
   if (surface === 'auth') {
     return options?.authMode === 'signup' ? '/auth?mode=signup' : '/auth';
   }
-  if (surface === 'landing') return '/';
   if (surface === 'workspace') {
     return getTabRoutePath(options?.tab || 'feed');
   }
-  return '/';
+  return '/auth';
 }

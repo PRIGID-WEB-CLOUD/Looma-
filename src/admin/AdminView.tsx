@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { LoomaLogo } from '../components/LoomaLogo';
-import type { AccessInquiry } from '../landingpage/landingData';
 import type { Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../types/social';
 import { formatRelativeTime, POST_CATEGORIES } from '../utils/socialLogic';
 import {
@@ -25,6 +24,7 @@ import {
   computeWorkspaceMetrics,
   filterAdminMembers,
   filterAdminPosts,
+  type AdminAccessInquiry,
   type AdminAuthorizationResult,
   type AdminMemberFilter,
   type AdminModerationState,
@@ -43,7 +43,7 @@ interface AdminViewProps {
   storyGroups: StoryGroup[];
   onlineUserIds: string[];
   moderation: AdminModerationState;
-  inquiries: AccessInquiry[];
+  inquiries: AdminAccessInquiry[];
   onSetTheme: (theme: ThemeMode) => void;
   onBackToWorkspace: () => void;
   onOpenAuth: () => void;
@@ -51,7 +51,7 @@ interface AdminViewProps {
   onToggleHidePost: (postId: string) => void;
   onDeletePost: (postId: string) => Promise<void>;
   onToggleRestrictMember: (uid: string) => void;
-  onUpdateInquiryStatus: (id: string, status: AccessInquiry['status']) => void;
+  onUpdateInquiryStatus: (id: string, status: AdminAccessInquiry['status']) => void;
 }
 
 const SECTION_NAV: Array<{
@@ -449,13 +449,13 @@ export function AdminView({
 
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Pending Inquiries
+                    Pending Requests
                   </p>
                   <p className="font-display text-2xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums">
                     {metrics.pendingInquiries}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    From public landing page
+                    Workspace access queue
                   </p>
                 </div>
               </div>
@@ -474,10 +474,10 @@ export function AdminView({
                   </span>
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Unauthenticated visitors are kept on the public Landing Page (/) and Legal
+                  Unauthenticated visitors are directed straight to the Auth Page (/auth) and Legal
                   routes (/terms, /privacy, /guidelines). Navigating to /feed, /messages,
                   /settings, /profile, or /admin without an authenticated member session
-                  redirects immediately to the Auth Page (/auth).
+                  redirects immediately to /auth with a Protected Workspace Access notice.
                 </p>
               </section>
 
@@ -910,7 +910,7 @@ export function AdminView({
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                   <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-                    Landing Page Workspace Inquiries
+                    Workspace Access Requests
                   </h2>
                   <span className="text-xs font-mono text-slate-500 dark:text-slate-400 tabular-nums">
                     {inquiries.length} total
@@ -919,7 +919,7 @@ export function AdminView({
 
                 {inquiries.length === 0 ? (
                   <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                    No studio access inquiries submitted from the Landing Page yet.
+                    No pending administrator access requests.
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
