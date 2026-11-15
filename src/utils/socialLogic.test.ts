@@ -61,6 +61,8 @@ import {
   parseVoiceNote,
   formatGifMessage,
   parseGifMessage,
+  normalizeGifUrl,
+  formatLastMessageSnippet,
   filterGifs,
   CURATED_GIFS,
 } from './socialLogic';
@@ -1021,7 +1023,7 @@ test('voice notes formatting and parsing preserves audio url and duration', () =
   assert.equal(parseVoiceNote(''), null);
 });
 
-test('gif messages formatting and parsing handles media urls and optional captions', () => {
+test('gif messages formatting and parsing handles media urls, unclosed brackets, and optional captions', () => {
   const gifUrl = 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif';
   const formattedWithCaption = formatGifMessage(gifUrl, 'Huge congratulations team!');
   assert.equal(
@@ -1041,8 +1043,81 @@ test('gif messages formatting and parsing handles media urls and optional captio
   assert.equal(parsedWithoutCaption?.url, gifUrl);
   assert.equal(parsedWithoutCaption?.caption, '');
 
+  // URL normalization
+  assert.equal(
+    normalizeGifUrl('https://media.giphy.com/media/artj92V8o75VPL7AeQ/'),
+    'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif'
+  );
+  assert.equal(
+    normalizeGifUrl('https://media.giphy.com/media/artj92V8o75VPL7AeQ'),
+    'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif'
+  );
+  assert.equal(
+    normalizeGifUrl('https://giphy.com/gifs/artj92V8o75VPL7AeQ'),
+    'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif'
+  );
+
+  // Exact bug report reproduction: unclosed bracket and trailing slash
+  const rawBugSnippet = '[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/';
+  const parsedBug = parseGifMessage(rawBugSnippet);
+  assert.ok(parsedBug);
+  assert.equal(parsedBug?.url, 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif');
+  assert.equal(parsedBug?.caption, '');
+
+  // Unclosed bracket with caption
+  const unclosedWithCaption = '[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/ Round of applause!';
+  const parsedUnclosedWithCap = parseGifMessage(unclosedWithCaption);
+  assert.ok(parsedUnclosedWithCap);
+  assert.equal(parsedUnclosedWithCap?.url, 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif');
+  assert.equal(parsedUnclosedWithCap?.caption, 'Round of applause!');
+
   assert.equal(parseGifMessage('Hello world'), null);
   assert.equal(parseGifMessage(''), null);
+});
+
+test('formatLastMessageSnippet formats GIFs, voice notes, and text cleanly without exposing raw bracket markup', () => {
+  // GIFs without caption
+  assert.equal(
+    formatLastMessageSnippet('[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif]'),
+    '🎬 GIF'
+  );
+  // Truncated / unclosed bug snippet
+  assert.equal(
+    formatLastMessageSnippet('[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/'),
+    '🎬 GIF'
+  );
+  // GIFs with caption
+  assert.equal(
+    formatLastMessageSnippet('[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif] Round of applause!'),
+    '🎬 GIF: Round of applause!'
+  );
+  // Voice notes
+  assert.equal(
+    formatLastMessageSnippet('[voice:https://cdn.example.com/audio.webm:15]'),
+    '🎤 Voice message'
+  );
+  // Plain text
+  assert.equal(
+    formatLastMessageSnippet('See you at the studio tonight'),
+    'See you at the studio tonight'
+  );
+  // Empty or missing
+  assert.equal(formatLastMessageSnippet(''), 'No messages yet');
+  assert.equal(formatLastMessageSnippet(null), 'No messages yet');
+  assert.equal(formatLastMessageSnippet(undefined), 'No messages yet');
+
+  // Push payload uses formatted snippet
+  const groupThread: Pick<ChatThread, 'title' | 'isGroup'> = {
+    title: 'Prigid Holdings',
+    isGroup: false,
+  };
+  const gifPush = formatChatPushPayload(
+    groupThread,
+    'Prigid Holdings',
+    '[gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif]'
+  );
+  assert.equal(gifPush.title, 'Message from Prigid Holdings');
+  assert.equal(gifPush.body, '🎬 GIF');
 });
 
 test('curated gif catalog filtering matches keywords, categories, and titles', () => {

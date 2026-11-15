@@ -176,15 +176,29 @@ export function formatRelativeTime(
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+export function formatLastMessageSnippet(
+  text: string | null | undefined
+): string {
+  if (!text || !text.trim()) return 'No messages yet';
+  const clean = text.trim();
+  if (parseVoiceNote(clean) || clean.startsWith('[voice:')) {
+    return '🎤 Voice message';
+  }
+  const gifData = parseGifMessage(clean);
+  if (gifData || clean.startsWith('[gif:')) {
+    if (gifData?.caption) {
+      return `🎬 GIF: ${gifData.caption}`;
+    }
+    return '🎬 GIF';
+  }
+  return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
+}
+
 export function buildChatPreview(messages: ChatMessage[]): string {
   if (messages.length === 0) return 'No messages yet';
   const sorted = [...messages].sort((a, b) => a.createdAtMs - b.createdAtMs);
   const latest = sorted[sorted.length - 1];
-  const text = latest.text.trim();
-  if (parseVoiceNote(text)) return '🎤 Voice message';
-  const gifData = parseGifMessage(text);
-  if (gifData) return gifData.caption ? `🎬 GIF: ${gifData.caption}` : '🎬 GIF';
-  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+  return formatLastMessageSnippet(latest.text);
 }
 
 export function resolvePublicProfile(
@@ -1343,16 +1357,16 @@ export function formatChatPushPayload(
   senderName: string,
   text: string
 ): { title: string; body: string } {
-  const cleanText = text.trim();
+  const cleanSnippet = formatLastMessageSnippet(text);
   if (thread.isGroup) {
     return {
       title: thread.title,
-      body: `${senderName}: ${cleanText}`.slice(0, 240),
+      body: `${senderName}: ${cleanSnippet}`.slice(0, 240),
     };
   }
   return {
     title: `Message from ${senderName}`,
-    body: cleanText.slice(0, 240),
+    body: cleanSnippet.slice(0, 240),
   };
 }
 
@@ -1581,25 +1595,90 @@ export function parseVoiceNote(text: string): VoiceNotePayload | null {
   };
 }
 
+export function normalizeGifUrl(url: string): string {
+  if (!url) return '';
+  let clean = url.trim();
+  // Strip wrapping quotes, brackets or angle brackets
+  clean = clean.replace(/^[<"'\[]+|[>"'\]]+$/g, '');
+
+  // Match media.giphy.com or i.giphy.com
+  const mediaMatch = clean.match(
+    /^https?:\/\/(?:media\d*|i)\.giphy\.com\/media\/([a-zA-Z0-9_-]+)(?:\/.*)?$/i
+  );
+  if (mediaMatch) {
+    const id = mediaMatch[1];
+    if (!/\.(?:gif|webp|mp4|png)(?:\?.*)?$/i.test(clean)) {
+      return `https://media.giphy.com/media/${id}/giphy.gif`;
+    }
+  }
+
+  // Match standard giphy.com/gifs/<slug-id> or giphy.com/gifs/<id>
+  const pageMatch = clean.match(
+    /^https?:\/\/giphy\.com\/gifs\/(?:.*-)?([a-zA-Z0-9]+)(?:\/.*)?$/i
+  );
+  if (pageMatch) {
+    const id = pageMatch[1];
+    return `https://media.giphy.com/media/${id}/giphy.gif`;
+  }
+
+  return clean;
+}
+
 export interface GifMessagePayload {
   url: string;
   caption: string;
 }
 
 export function formatGifMessage(url: string, caption: string = ''): string {
-  const cleanUrl = url.trim();
+  const cleanUrl = normalizeGifUrl(url);
   const cleanCap = caption.trim();
   return cleanCap ? `[gif:${cleanUrl}] ${cleanCap}` : `[gif:${cleanUrl}]`;
 }
 
 export function parseGifMessage(text: string): GifMessagePayload | null {
   if (!text) return null;
-  const match = text.trim().match(/^\[gif:([^\]]+)\](?:\s*(.*))?$/s);
-  if (!match) return null;
-  return {
-    url: match[1].trim(),
-    caption: (match[2] || '').trim(),
-  };
+  const trimmed = text.trim();
+
+  // 1. Tagged gif syntax: [gif:<url>] <caption?> or [gif:<url> (handling unclosed bracket/truncated preview)
+  if (trimmed.startsWith('[gif:')) {
+    const inner = trimmed.slice(5).trim();
+    const closeBracketIdx = inner.indexOf(']');
+
+    let rawUrl = '';
+    let rawCaption = '';
+
+    if (closeBracketIdx !== -1) {
+      rawUrl = inner.slice(0, closeBracketIdx).trim();
+      rawCaption = inner.slice(closeBracketIdx + 1).trim();
+    } else {
+      // Unclosed bracket, e.g. [gif:https://media.giphy.com/media/artj92V8o75VPL7AeQ/
+      const firstSpaceIdx = inner.indexOf(' ');
+      if (firstSpaceIdx !== -1) {
+        rawUrl = inner.slice(0, firstSpaceIdx).trim();
+        rawCaption = inner.slice(firstSpaceIdx + 1).trim();
+      } else {
+        rawUrl = inner;
+        rawCaption = '';
+      }
+    }
+
+    if (rawUrl) {
+      return {
+        url: normalizeGifUrl(rawUrl),
+        caption: rawCaption,
+      };
+    }
+  }
+
+  // 2. Direct standalone Giphy or .gif URL
+  if (/^https?:\/\/[^\s]+(?:\.gif|\.webp|giphy\.com)[^\s]*$/i.test(trimmed)) {
+    return {
+      url: normalizeGifUrl(trimmed),
+      caption: '',
+    };
+  }
+
+  return null;
 }
 
 export interface CuratedGif {

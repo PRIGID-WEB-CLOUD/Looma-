@@ -11,6 +11,7 @@ import type {
 import {
   computeOtherUserConnections,
   countUnreadNotifications,
+  formatLastMessageSnippet,
   formatRelativeTime,
   getThreadOnlineStatus,
   isUserOnline,
@@ -949,7 +950,7 @@ export default function App() {
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                          {thread.lastMessageText}
+                          {formatLastMessageSnippet(thread.lastMessageText)}
                         </p>
                       </div>
                     </button>

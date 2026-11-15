@@ -28,11 +28,13 @@ import {
   extractFirstUrl,
   filterUsersByQuery,
   formatGifMessage,
+  formatLastMessageSnippet,
   formatRelativeTime,
   formatVoiceNote,
   getThreadOnlineStatus,
   isUserOnline,
   MAX_GROUP_MEMBERS,
+  normalizeGifUrl,
   parseGifMessage,
   parseRichUrl,
   parseVoiceNote,
@@ -191,15 +193,26 @@ function GifBubble({
   caption?: string;
   mine: boolean;
 }) {
+  const safeUrl = normalizeGifUrl(url);
+  const [loadError, setLoadError] = useState(false);
+
   return (
     <div className="space-y-1.5">
       <div className="rounded-xl overflow-hidden max-w-[280px] sm:max-w-[320px] bg-black/10">
-        <img
-          src={url}
-          alt={caption || 'Animated GIF'}
-          loading="lazy"
-          className="w-full h-auto max-h-64 object-cover"
-        />
+        {!loadError ? (
+          <img
+            src={safeUrl}
+            alt={caption || 'Animated GIF'}
+            loading="lazy"
+            onError={() => setLoadError(true)}
+            className="w-full h-auto max-h-64 object-cover"
+          />
+        ) : (
+          <div className="p-3 text-xs flex items-center gap-2 text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800">
+            <span>🎬</span>
+            <span className="truncate">Animated GIF</span>
+          </div>
+        )}
       </div>
       {caption && (
         <p
@@ -335,6 +348,7 @@ export function ChatView({
       (t) =>
         t.title.toLowerCase().includes(q) ||
         t.partnerHandle.toLowerCase().includes(q) ||
+        formatLastMessageSnippet(t.lastMessageText).toLowerCase().includes(q) ||
         (t.lastMessageText || '').toLowerCase().includes(q)
     );
   }, [threads, threadSearch]);
@@ -736,7 +750,7 @@ export function ChatView({
                         {thread.memberIds.length} members ·
                       </span>
                     )}
-                    {thread.lastMessageText || 'No messages yet'}
+                    {formatLastMessageSnippet(thread.lastMessageText)}
                   </p>
                 </div>
               </button>
