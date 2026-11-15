@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { ImagePlus, X } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Sparkles } from 'lucide-react';
 import {
   ASSET_POST_ALPINE,
   ASSET_POST_ARCH,
@@ -53,7 +53,9 @@ export function AddStoryModal({
       const uploaded = await uploadMediaToCloudflareR2(file, 'stories');
       if (uploaded.kind !== 'image') {
         void deleteUploadedMedia(uploaded.url);
-        setError('Stories support image files only (PNG, JPG, WebP, GIF, or AVIF).');
+        setError(
+          'Stories support image files only (PNG, JPG, WebP, GIF, or AVIF).'
+        );
         return;
       }
       void deleteUploadedMedia(previousUrl);
@@ -93,44 +95,73 @@ export function AddStoryModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-story-title"
-      className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4"
+      data-testid="add-story-fullscreen"
+      className="fixed inset-0 z-50 h-[100dvh] w-screen bg-slate-950 text-white flex flex-col overflow-hidden"
     >
-      <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-5 shadow-2xl">
-        <div className="flex items-center justify-between gap-3">
-          <h2
-            id="add-story-title"
-            className="font-display text-lg font-bold text-slate-900 dark:text-white"
-          >
-            Add to Your Story
-          </h2>
+      {/* Full-Screen Top Navigation Bar */}
+      <header className="h-16 px-4 sm:px-6 border-b border-white/10 bg-slate-950/95 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={handleClose}
             aria-label="Close add story modal"
-            className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            className="min-h-[44px] min-w-[44px] px-2.5 rounded-xl flex items-center justify-center gap-2 text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-colors"
           >
-            <X className="w-4 h-4" aria-hidden="true" />
+            <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+            <span className="hidden sm:inline text-xs font-semibold">Back</span>
           </button>
+          <div className="min-w-0">
+            <h2
+              id="add-story-title"
+              className="font-display text-base sm:text-lg font-bold text-white truncate"
+            >
+              Create Story
+            </h2>
+            <p className="text-[11px] text-slate-400 truncate">
+              Full-screen frame · Visible for 24 hours
+            </p>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div
-              role="alert"
-              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-            >
-              {error}
-            </div>
-          )}
+        <button
+          type="submit"
+          form="add-story-form"
+          disabled={submitting || uploading}
+          className="min-h-[44px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold cursor-pointer disabled:opacity-60 transition-colors shrink-0"
+        >
+          {submitting ? 'Sharing...' : 'Share Story'}
+        </button>
+      </header>
 
-          <div className="relative h-56 rounded-2xl overflow-hidden bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+      {/* Main Studio Body */}
+      <form
+        id="add-story-form"
+        onSubmit={handleSubmit}
+        className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden"
+      >
+        {/* Edge-to-Edge Live Story Frame Preview */}
+        <div className="lg:col-span-7 relative flex-1 min-h-[260px] flex items-center justify-center bg-slate-900/60 p-4 sm:p-8 overflow-hidden">
+          <div
+            className="absolute inset-0 bg-cover bg-center blur-3xl opacity-35 scale-110 pointer-events-none"
+            style={{ backgroundImage: `url(${imageUrl})` }}
+          />
+          <div className="relative z-10 h-full max-h-[68vh] lg:max-h-[78vh] w-full max-w-[380px] aspect-[9/16] rounded-3xl overflow-hidden bg-slate-900 border border-white/15 shadow-2xl flex items-center justify-center">
             <img
               src={imageUrl}
               alt="Story preview"
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
             />
-            <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/75 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/85 via-black/40 to-transparent pointer-events-none" />
+
+            {caption.trim() && (
+              <div className="absolute bottom-14 inset-x-4 text-center pointer-events-none">
+                <p className="inline-block px-3.5 py-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 text-xs sm:text-sm font-medium text-white leading-relaxed">
+                  {caption}
+                </p>
+              </div>
+            )}
+
             <input
               ref={fileRef}
               type="file"
@@ -142,69 +173,103 @@ export function AddStoryModal({
               type="button"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
-              className="absolute bottom-3 right-3 min-h-[38px] px-3.5 rounded-xl bg-white/90 hover:bg-white text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-60"
+              className="absolute bottom-3 right-3 min-h-[42px] px-4 rounded-xl bg-white/95 hover:bg-white text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-60"
             >
-              <ImagePlus className="w-3.5 h-3.5" aria-hidden="true" />
+              <ImagePlus className="w-4 h-4" aria-hidden="true" />
               <span>{uploading ? 'Uploading...' : 'Upload Photo'}</span>
             </button>
           </div>
+        </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            {STORY_PRESETS.map((preset) => {
-              const selected = imageUrl === preset.url;
-              return (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => setImageUrl(preset.url)}
-                  className={`min-h-[38px] px-2.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer truncate ${
-                    selected
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
-                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
+        {/* Side / Bottom Customization Controls */}
+        <div className="lg:col-span-5 lg:border-l border-t lg:border-t-0 border-white/10 bg-slate-950 p-4 sm:p-6 flex flex-col justify-between gap-5 overflow-y-auto shrink-0">
+          <div className="space-y-5">
+            {error && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-red-950/60 border border-red-800 text-xs text-red-200"
+              >
+                {error}
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2.5 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+                <span>Curated Backdrops</span>
+              </p>
+              <div className="grid grid-cols-3 gap-2.5">
+                {STORY_PRESETS.map((preset) => {
+                  const selected = imageUrl === preset.url;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setImageUrl(preset.url)}
+                      className={`group rounded-2xl overflow-hidden border text-left transition-all cursor-pointer ${
+                        selected
+                          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-950/30'
+                          : 'border-white/10 bg-slate-900 hover:border-white/25'
+                      }`}
+                    >
+                      <div className="aspect-[4/3] w-full overflow-hidden bg-slate-800">
+                        <img
+                          src={preset.url}
+                          alt={preset.label}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                      <p className="px-2 py-2 text-[11px] font-medium text-slate-200 truncate">
+                        {preset.label}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label
+                  htmlFor="story-caption-input"
+                  className="text-xs font-semibold uppercase tracking-wider text-slate-400"
                 >
-                  {preset.label}
-                </button>
-              );
-            })}
+                  Story Note (optional)
+                </label>
+                <span className="text-[11px] text-slate-500 tabular-nums">
+                  {caption.length}/160
+                </span>
+              </div>
+              <textarea
+                id="story-caption-input"
+                rows={3}
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder="Add a brief caption for the next 24 hours..."
+                maxLength={160}
+                className="w-full p-3.5 rounded-2xl border border-slate-800 bg-slate-900 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
           </div>
 
-          <div>
-            <label
-              htmlFor="story-caption-input"
-              className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5"
-            >
-              Story Note (optional)
-            </label>
-            <input
-              id="story-caption-input"
-              type="text"
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              placeholder="Add a brief caption for the next 24 hours..."
-              maxLength={160}
-              className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-1">
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-white/10">
             <button
               type="button"
-              onClick={onClose}
-              className="min-h-[42px] px-4 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              onClick={handleClose}
+              className="min-h-[44px] px-5 rounded-xl border border-white/15 text-xs font-semibold text-slate-300 hover:bg-white/10 cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={submitting}
-              className="min-h-[42px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              disabled={submitting || uploading}
+              className="min-h-[44px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold cursor-pointer disabled:opacity-60"
             >
               {submitting ? 'Sharing...' : 'Share to Story'}
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   );
 }

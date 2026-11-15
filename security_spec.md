@@ -5,10 +5,11 @@
 2. **PII Isolation**: Sensitive user data (`email`, `pushEnabled`, `themePreference`) is stored strictly inside `/users/{userId}/private/{docId}` and is readable/writable exclusively by `request.auth.uid == userId`. Public `/users/{userId}` documents contain zero PII.
 3. **Bounded Arrays & String Lengths**: Every string enforces explicit `.size()` bounds matching `firebase-blueprint.json`. Arrays (`interests` max 8, `memberIds` max 10) are bounded and first-element type checked.
 4. **Atomic Interaction Sync**: Incrementing `Post.likesCount` requires `existsAfter` on `/posts/{postId}/likes/{uid}`; decrementing requires `!existsAfter`.
-5. **Chat Thread Membership**: Only UIDs present in `ChatThread.memberIds` can list, read, or post messages inside `/chats/{chatId}/messages/{messageId}`.
-6. **Temporal Integrity**: `createdAt == request.time` on creation and immutable afterward; `updatedAt == request.time` on writes.
+5. **Chat Thread Membership & Group Admins**: Only UIDs present in `ChatThread.memberIds` can list, read, or post messages inside `/chats/{chatId}/messages/{messageId}`. Group renames, additions, kicks, and admin promotions require `request.auth.uid in existing().adminIds`; non-admin members may only remove themselves (`self-leave`).
+6. **Temporal Integrity**: `createdAt == request.time` on creation and immutable afterward; `updatedAt == request.time` on writes. Stories cap `expiresAtMs` to at most ~25 hours from `request.time`.
+7. **Server-Derived / Protected Follower Counters**: Clients cannot arbitrarily mutate `UserProfile.followersCount` via direct profile updates, and self-follow (`userId == targetUid`) is denied.
 
-## 2. The "Dirty Dozen" Attack Payloads (Expected: PERMISSION_DENIED)
+## 2. The "Dirty Dozen+" Attack Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Post Write**: `POST /posts/p1` with `request.auth == null` -> Denied.
 2. **Unverified Email Write**: `POST /posts/p1` with `email_verified: false` -> Denied.
 3. **Author Spoofing**: `POST /posts/p1` with `authorId: "victim_uid"` != `request.auth.uid` -> Denied.
@@ -21,3 +22,7 @@
 10. **Arbitrary Likes Inflation**: `UPDATE /posts/p1` setting `likesCount: 99999` -> Denied by `+1/-1` + `existsAfter` atomicity gate.
 11. **Chat Eavesdropping**: `GET /chats/private_chat/messages/m1` when `request.auth.uid` is not in `ChatThread.memberIds` -> Denied.
 12. **Notification Hijack**: `UPDATE /users/victim/notifications/n1` marking `read: true` as `attacker` -> Denied by `isOwner(userId)`.
+13. **Followers Count Tampering**: `UPDATE /users/attacker` setting `followersCount: 999999` -> Denied (`followersCount` immutable on profile update).
+14. **Self-Follow Abuse**: `POST /users/u1/following/u1` -> Denied by `userId != targetUid`.
+15. **Non-Admin Group Hijack**: Non-admin member updating `title` or removing another member in `/chats/g1` -> Denied.
+16. **Permanent Story TTL Spoof**: `POST /stories/s1` with `expiresAtMs` 10 years in the future -> Denied.

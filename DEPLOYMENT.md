@@ -1,44 +1,75 @@
-# Deploying Looma 🚀
+# Deploying Looma
 
-This guide outlines how to build and deploy **Looma** to production environments (such as Google Cloud Run, Vercel, Netlify, or self-hosted Node.js servers).
+Looma runs as a unified **Cloudflare Workers** application (`wrangler.jsonc`) combining:
+- **Static SPA Frontend**: React 19, TypeScript, Vite, and Tailwind CSS v4 served via Workers Static Assets (`dist/`).
+- **Worker API Backend**: Hono (`src/worker.ts`) handling `/api/*` with cryptographic RS256 Firebase ID-token verification, rate limiting, and strict CORS.
+- **Object Storage**: Native Cloudflare **R2** bucket binding (`R2_BUCKET` -> bucket `looma`) with S3 presigned URL fallback when R2 S3 API keys are configured.
+- **Real-Time Calls**: **Cloudflare Calls SFU** (`/api/calls/*`) bound to verified call room membership in Cloud Firestore and optional STUN/TURN ICE traversal.
+- **Database & Auth**: Firebase Authentication (Google Sign-In + verified email enforcement) and Cloud Firestore (`firestore.rules`).
 
 ---
 
-## 📦 Production Build & Start
+## 1. Local Development
 
-1. **Build the Production Bundle**:
+1. **Install dependencies**:
    ```bash
+   npm install
+   ```
+2. **Create `.env`** (never commit `.env` or real secrets) using `.env.example` as a template.
+3. **Start dev server** (`@hono/node-server` + Vite middleware on port `3000`):
+   ```bash
+   npm run dev
+   ```
+4. **Run automated tests**:
+   ```bash
+   npx --yes tsx --test src/utils/*.test.ts src/services/*.test.ts src/worker.test.ts
+   ```
+5. **Typecheck and build**:
+   ```bash
+   npm run lint
    npm run build
    ```
-   This compiles the React SPA into static assets in the `dist/` directory using Vite.
-
-2. **Start the Production Server**:
-   ```bash
-   npm start
-   ```
-   This runs `node server.ts` (powered by `tsx`), serving static files from `dist/` and handling Express API routes (`/api/*`) and Cloudflare R2 object storage streaming.
 
 ---
 
-## 🔐 Environment Variables
+## 2. Cloudflare Workers Production Setup (Git Integration or CLI)
 
-Configure the following environment variables in your production environment (or `.env` file):
+The Worker entry point (`src/worker.ts`) and bindings are configured in `wrangler.jsonc`:
+- `name`: `"looma"`
+- `main`: `"src/worker.ts"`
+- `assets.directory`: `"./dist"` (`not_found_handling: "single-page-application"`, `run_worker_first: ["/api/*"]`)
+- `r2_buckets`: binding `"R2_BUCKET"`, bucket `"looma"`
 
-| Variable | Description | Required |
+### GitHub Integration Build Settings (Cloudflare Workers Dashboard)
+- **Build command**: `npm run build`
+- **Deploy command**: `npx wrangler deploy`
+- **Root directory**: `/`
+
+### Required & Optional Worker Secrets (`wrangler secret put <NAME>`)
+
+Never place server secrets into `VITE_*` variables, `wrangler.jsonc` plaintext `vars`, or client bundles. Configure secrets in Cloudflare Workers **Variables and Secrets** or via CLI:
+
+| Secret / Variable | Purpose | Required |
 | :--- | :--- | :--- |
-| `PORT` | Server port (default `3000`) | No |
-| `NODE_ENV` | Set to `production` for static asset serving | Recommended |
-| `R2_ACCOUNT_ID` | Cloudflare R2 Account ID | Yes (for Storage) |
-| `R2_ACCESS_KEY_ID` | Cloudflare R2 Access Key ID | Yes (for Storage) |
-| `R2_SECRET_ACCESS_KEY` | Cloudflare R2 Secret Access Key | Yes (for Storage) |
-| `R2_BUCKET_NAME` | Cloudflare R2 Bucket Name (e.g. `looma-media`) | Yes (for Storage) |
-| `R2_PUBLIC_URL` | Optional custom public domain URL for R2 bucket | No |
+| `CLOUDFLARE_CALLS_APP_ID` | Cloudflare Calls App ID | Yes (for Audio/Video Calls) |
+| `CLOUDFLARE_CALLS_APP_TOKEN` | Cloudflare Calls API Token (server-only) | Yes (for Audio/Video Calls) |
+| `CALLS_STATE_SECRET` | Random 32+ byte secret for HMAC call session tokens | Recommended |
+| `FIREBASE_PROJECT_ID` | Firebase Project ID (defaults to `firebase-applet-config.json`) | Recommended |
+| `FIREBASE_API_KEY` | Firebase Web API Key for `accounts:lookup` disabled-account check | Recommended |
+| `TURN_URLS` | Comma-separated `turn:` / `turns:` relay URLs | Recommended for strict NATs |
+| `TURN_USERNAME` | TURN credential username | If `TURN_URLS` set |
+| `TURN_CREDENTIAL` | TURN credential password | If `TURN_URLS` set |
+| `ALLOWED_ORIGINS` | Comma-separated trusted HTTPS origins | Set in `wrangler.jsonc` / Secrets |
+| `PUBLIC_APP_URL` | Canonical deployed HTTPS origin | Set in `wrangler.jsonc` |
+| `R2_PUBLIC_URL` | Optional custom public R2 CDN domain (defaults to `/api/storage/file/...` proxy) | Optional |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3 API keys only needed for local Node dev or `/api/storage/presign` (production Worker uses `R2_BUCKET` binding) | Optional in Workers |
 
 ---
 
-## 🔥 Firebase & Firestore Configuration
+## 3. Security Rules & Firebase Deployment
 
-Looma connects to your provisioned Firebase project and Firestore database using `firebase-applet-config.json` and security rules in `firestore.rules`. Ensure rules are deployed via:
+Ensure Cloud Firestore security rules stay synchronized with `firestore.rules`:
 ```bash
 npx firebase-tools deploy --only firestore:rules
 ```
+And ensure your deployed domain (e.g. `looma.prigidcollection.workers.dev`) is listed under **Firebase Console -> Authentication -> Settings -> Authorized domains**.

@@ -269,3 +269,160 @@ export function mergePeerSignalingUpdate(
       : p
   );
 }
+
+export interface IceServerConfigInput {
+  TURN_URLS?: string;
+  TURN_USERNAME?: string;
+  TURN_CREDENTIAL?: string;
+}
+
+export function parseIceServersConfig(env: IceServerConfigInput): {
+  iceServers: RTCIceServer[];
+  hasTurnConfigured: boolean;
+} {
+  const servers: RTCIceServer[] = [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ];
+
+  const clean = (v?: string) => {
+    const t = (v || '').trim().replace(/^["']|["']$/g, '');
+    return !t || t.startsWith('MY_') ? '' : t;
+  };
+
+  const turnUrls = clean(env.TURN_URLS)
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => /^turns?:.+/.test(u));
+
+  const username = clean(env.TURN_USERNAME);
+  const credential = clean(env.TURN_CREDENTIAL);
+
+  if (turnUrls.length > 0) {
+    const turnServer: RTCIceServer = { urls: turnUrls };
+    if (username) turnServer.username = username;
+    if (credential) turnServer.credential = credential;
+    servers.push(turnServer);
+  }
+
+  return {
+    iceServers: servers,
+    hasTurnConfigured: turnUrls.length > 0,
+  };
+}
+
+export const MAX_SDP_BYTES = 200 * 1024; // 200 KB strict SDP limit
+
+export function isValidCallsSessionId(sessionId: string): boolean {
+  return /^[a-zA-Z0-9_-]{8,128}$/.test(sessionId.trim());
+}
+
+export function isValidCallRoomId(callId: string): boolean {
+  return /^[a-zA-Z0-9_-]{4,128}$/.test(callId.trim());
+}
+
+export function validateCallsTracksPayload(body: unknown): {
+  valid: boolean;
+  error?: string;
+} {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object.' };
+  }
+  const record = body as {
+    sessionDescription?: { type?: unknown; sdp?: unknown };
+    tracks?: unknown;
+  };
+
+  if (record.sessionDescription !== undefined) {
+    const sd = record.sessionDescription;
+    if (!sd || typeof sd !== 'object') {
+      return { valid: false, error: 'Invalid sessionDescription object.' };
+    }
+    if (sd.type !== 'offer' && sd.type !== 'answer') {
+      return { valid: false, error: 'sessionDescription.type must be offer or answer.' };
+    }
+    if (typeof sd.sdp !== 'string' || sd.sdp.length < 16 || sd.sdp.length > MAX_SDP_BYTES) {
+      return { valid: false, error: 'SDP payload size is invalid or exceeds 200 KB.' };
+    }
+    if (!sd.sdp.includes('v=0') || !sd.sdp.includes('a=ice-ufrag')) {
+      return { valid: false, error: 'SDP payload is missing required WebRTC attributes.' };
+    }
+  }
+
+  if (!Array.isArray(record.tracks) || record.tracks.length === 0 || record.tracks.length > 8) {
+    return { valid: false, error: 'tracks must contain between 1 and 8 entries.' };
+  }
+
+  for (const track of record.tracks) {
+    if (!track || typeof track !== 'object') {
+      return { valid: false, error: 'Invalid track entry.' };
+    }
+    const t = track as {
+      location?: unknown;
+      mid?: unknown;
+      sessionId?: unknown;
+      trackName?: unknown;
+    };
+    if (t.location !== 'local' && t.location !== 'remote') {
+      return { valid: false, error: 'track.location must be local or remote.' };
+    }
+    if (typeof t.trackName !== 'string' || !/^[a-zA-Z0-9_.:-]{1,64}$/.test(t.trackName)) {
+      return { valid: false, error: 'Invalid trackName.' };
+    }
+    if (t.location === 'local') {
+      if (typeof t.mid !== 'string' || !/^[a-zA-Z0-9_-]{1,16}$/.test(t.mid)) {
+        return { valid: false, error: 'Local track requires valid mid.' };
+      }
+    } else if (typeof t.sessionId !== 'string' || !isValidCallsSessionId(t.sessionId)) {
+      return { valid: false, error: 'Remote track requires valid sessionId.' };
+    }
+  }
+
+  return { valid: true };
+}
+
+export function validateCallsRenegotiatePayload(body: unknown): {
+  valid: boolean;
+  error?: string;
+} {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object.' };
+  }
+  const sd = (body as { sessionDescription?: { type?: unknown; sdp?: unknown } }).sessionDescription;
+  if (!sd || typeof sd !== 'object') {
+    return { valid: false, error: 'Missing sessionDescription.' };
+  }
+  if (sd.type !== 'answer' && sd.type !== 'offer') {
+    return { valid: false, error: 'sessionDescription.type must be answer or offer.' };
+  }
+  if (typeof sd.sdp !== 'string' || sd.sdp.length < 16 || sd.sdp.length > MAX_SDP_BYTES) {
+    return { valid: false, error: 'SDP payload size is invalid or exceeds 200 KB.' };
+  }
+  if (!sd.sdp.includes('v=0')) {
+    return { valid: false, error: 'Malformed SDP payload.' };
+  }
+  return { valid: true };
+}
+
+export function validateCallsClosePayload(body: unknown): {
+  valid: boolean;
+  error?: string;
+} {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object.' };
+  }
+  const tracks = (body as { tracks?: unknown }).tracks;
+  if (!Array.isArray(tracks) || tracks.length === 0 || tracks.length > 8) {
+    return { valid: false, error: 'tracks must contain between 1 and 8 entries.' };
+  }
+  for (const item of tracks) {
+    if (!item || typeof item !== 'object') {
+      return { valid: false, error: 'Invalid track close entry.' };
+    }
+    const mid = (item as { mid?: unknown }).mid;
+    if (typeof mid !== 'string' || !/^[a-zA-Z0-9_-]{1,16}$/.test(mid)) {
+      return { valid: false, error: 'Each track close entry requires a valid mid.' };
+    }
+  }
+  return { valid: true };
+}
+

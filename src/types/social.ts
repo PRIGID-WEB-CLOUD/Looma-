@@ -84,6 +84,7 @@ export interface ChatThread {
   title: string;
   isGroup: boolean;
   memberIds: string[];
+  adminIds?: string[];
   partnerAvatar: string;
   partnerHandle: string;
   lastMessageText: string;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Bell,
   Camera,
@@ -8,6 +9,7 @@ import {
   LogOut,
   Moon,
   Sun,
+  Trash2,
 } from 'lucide-react';
 import type { PushPermissionState } from '../services/notifications';
 import type {
@@ -33,6 +35,7 @@ interface ProfileSettingsViewProps {
   onSetTheme: (theme: ThemeMode) => void;
   onEnablePush: () => Promise<PushPermissionState>;
   onLogout: () => Promise<void>;
+  onDeleteAccount?: () => Promise<void>;
   onUpdateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   onUpdatePrivateSettings: (
     updates: Partial<UserPrivateSettings>
@@ -99,6 +102,7 @@ export function ProfileSettingsView({
   onSetTheme,
   onEnablePush,
   onLogout,
+  onDeleteAccount,
   onUpdateProfile,
   onUpdatePrivateSettings,
   onBack,
@@ -129,6 +133,10 @@ export function ProfileSettingsView({
   const [savedNotice, setSavedNotice] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDeletePanel, setShowDeletePanel] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const syncedUidRef = useRef<string>(profile.uid);
 
@@ -679,6 +687,97 @@ export function ProfileSettingsView({
               <span>Log Out</span>
             </button>
           </div>
+
+          {onDeleteAccount && (
+            <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-red-600 dark:text-red-400">
+                    Danger Zone · Delete Account
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Permanently remove your Looma profile, private settings, presence, and Firebase Auth account.
+                  </p>
+                </div>
+                {!showDeletePanel && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeletePanel(true);
+                      setDeleteConfirmText('');
+                      setDeleteAccountError(null);
+                    }}
+                    className="min-h-[38px] px-3.5 rounded-xl border border-red-300 dark:border-red-800 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Delete Account</span>
+                  </button>
+                )}
+              </div>
+
+              {showDeletePanel && (
+                <div className="rounded-2xl border border-red-200 dark:border-red-900/70 bg-red-50/60 dark:bg-red-950/25 p-4 space-y-3">
+                  <div className="flex items-start gap-2.5 text-xs text-red-800 dark:text-red-200">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" aria-hidden="true" />
+                    <p>
+                      This action cannot be undone. Type <span className="font-bold">DELETE</span> below to permanently delete your account.
+                    </p>
+                  </div>
+
+                  {deleteAccountError && (
+                    <p role="alert" className="text-xs font-medium text-red-700 dark:text-red-300">
+                      {deleteAccountError}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label htmlFor="delete-account-confirm" className="sr-only">
+                      Type DELETE to confirm account deletion
+                    </label>
+                    <input
+                      id="delete-account-confirm"
+                      type="text"
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Type DELETE to confirm"
+                      className="flex-1 min-w-[180px] min-h-[40px] px-3 rounded-xl border border-red-200 dark:border-red-800 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      disabled={deletingAccount || deleteConfirmText.trim() !== 'DELETE'}
+                      onClick={async () => {
+                        setDeleteAccountError(null);
+                        setDeletingAccount(true);
+                        try {
+                          await onDeleteAccount();
+                        } catch (err) {
+                          setDeleteAccountError(
+                            err instanceof Error ? err.message : 'Unable to delete account.'
+                          );
+                          setDeletingAccount(false);
+                        }
+                      }}
+                      className="min-h-[40px] px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+                    >
+                      {deletingAccount ? 'Deleting...' : 'Permanently Delete Account'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingAccount}
+                      onClick={() => {
+                        setShowDeletePanel(false);
+                        setDeleteConfirmText('');
+                        setDeleteAccountError(null);
+                      }}
+                      className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Bottom Action Bar */}

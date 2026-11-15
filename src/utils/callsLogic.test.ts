@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseCallsConfig,
+  parseIceServersConfig,
+  isValidCallsSessionId,
+  isValidCallRoomId,
+  validateCallsTracksPayload,
+  validateCallsRenegotiatePayload,
+  validateCallsClosePayload,
+  MAX_SDP_BYTES,
   buildCloudflareCallsUrl,
   formatCallsHeaders,
   formatPublishTracksPayload,
@@ -183,3 +190,67 @@ test('mergePeerSignalingUpdate updates existing peer and appends new peer safely
   assert.equal(added.length, 2);
   assert.equal(added[1].name, 'Kenji');
 });
+
+test('parseIceServersConfig ignores placeholders and parses TURN URLs + credentials', () => {
+  const stunOnly = parseIceServersConfig({ TURN_URLS: 'MY_TURN_URLS' });
+  assert.equal(stunOnly.hasTurnConfigured, false);
+  assert.equal(stunOnly.iceServers.length, 1);
+
+  const withTurn = parseIceServersConfig({
+    TURN_URLS: 'turn:turn1.looma.dev:3478, turns:turn2.looma.dev:5349, https://ignored.example',
+    TURN_USERNAME: 'u_turn',
+    TURN_CREDENTIAL: 'p_turn',
+  });
+  assert.equal(withTurn.hasTurnConfigured, true);
+  assert.equal(withTurn.iceServers.length, 2);
+  assert.deepEqual(withTurn.iceServers[1], {
+    urls: ['turn:turn1.looma.dev:3478', 'turns:turn2.looma.dev:5349'],
+    username: 'u_turn',
+    credential: 'p_turn',
+  });
+});
+
+test('Calls ID & signaling payload validators reject invalid IDs, missing SDP attributes, and oversized payloads', () => {
+  assert.equal(isValidCallsSessionId('sess_12345678'), true);
+  assert.equal(isValidCallsSessionId('../bad'), false);
+  assert.equal(isValidCallRoomId('call_room_1'), true);
+  assert.equal(isValidCallRoomId('x'), false);
+
+  assert.equal(
+    validateCallsTracksPayload({
+      sessionDescription: { type: 'offer', sdp: 'v=0\r\na=ice-ufrag:abc\r\n' },
+      tracks: [{ location: 'local', mid: '0', trackName: 'audio-u1' }],
+    }).valid,
+    true
+  );
+
+  assert.equal(
+    validateCallsTracksPayload({
+      sessionDescription: { type: 'offer', sdp: `v=0\r\na=ice-ufrag:abc\r\n${'a'.repeat(MAX_SDP_BYTES + 1)}` },
+      tracks: [{ location: 'local', mid: '0', trackName: 'audio-u1' }],
+    }).valid,
+    false
+  );
+
+  assert.equal(
+    validateCallsTracksPayload({
+      tracks: [{ location: 'remote', sessionId: 'short', trackName: 'audio-u2' }],
+    }).valid,
+    false
+  );
+
+  assert.equal(
+    validateCallsRenegotiatePayload({
+      sessionDescription: { type: 'answer', sdp: 'v=0\r\na=ice-ufrag:xyz\r\n' },
+    }).valid,
+    true
+  );
+  assert.equal(
+    validateCallsRenegotiatePayload({ sessionDescription: { type: 'answer', sdp: 'bad' } }).valid,
+    false
+  );
+
+  assert.equal(validateCallsClosePayload({ tracks: [{ mid: '0' }] }).valid, true);
+  assert.equal(validateCallsClosePayload({ tracks: [] }).valid, false);
+});
+

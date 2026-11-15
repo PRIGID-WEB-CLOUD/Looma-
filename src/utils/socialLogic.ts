@@ -953,6 +953,7 @@ export function createGroupThreadRecord(params: {
     title: cleanTitle,
     isGroup: true,
     memberIds,
+    adminIds: [params.creator.uid],
     partnerAvatar: leadPartner.avatarUrl,
     partnerHandle: `${memberIds.length} members`,
     lastMessageText: `${params.creator.displayName} created "${cleanTitle}"`,
@@ -960,6 +961,14 @@ export function createGroupThreadRecord(params: {
     createdAtMs: now,
     updatedAtMs: now,
   };
+}
+
+export function isGroupAdmin(thread: ChatThread, uid: string): boolean {
+  if (!thread.isGroup) return false;
+  if (Array.isArray(thread.adminIds) && thread.adminIds.length > 0) {
+    return thread.adminIds.includes(uid);
+  }
+  return thread.memberIds.includes(uid);
 }
 
 export function addGroupParticipantsState(
@@ -1028,6 +1037,14 @@ export function removeGroupParticipantState(
       error: 'Participant is not in this group.',
     };
   }
+  const removedSelf = targetUid === actorUid;
+  if (!removedSelf && !isGroupAdmin(thread, actorUid)) {
+    return {
+      thread,
+      removedSelf: false,
+      error: 'Only group admins can remove other participants.',
+    };
+  }
   if (thread.memberIds.length <= 1) {
     return {
       thread,
@@ -1036,17 +1053,55 @@ export function removeGroupParticipantState(
     };
   }
   const nextMemberIds = thread.memberIds.filter((id) => id !== targetUid);
-  const removedSelf = targetUid === actorUid;
+  let nextAdminIds = thread.adminIds
+    ? thread.adminIds.filter((id) => id !== targetUid && nextMemberIds.includes(id))
+    : undefined;
+  if (nextAdminIds && nextAdminIds.length === 0 && nextMemberIds.length > 0) {
+    nextAdminIds = [nextMemberIds[0]];
+  }
 
   return {
     removedSelf,
     thread: {
       ...thread,
       memberIds: nextMemberIds,
+      ...(nextAdminIds ? { adminIds: nextAdminIds } : {}),
       partnerHandle: `${nextMemberIds.length} members`,
       lastMessageText: removedSelf
         ? `${targetName} left the group`
         : `${targetName} was removed from the group`,
+      updatedAtMs: nowMs,
+    },
+  };
+}
+
+export function promoteGroupAdminState(
+  thread: ChatThread,
+  targetUid: string,
+  targetName: string,
+  actorUid: string,
+  nowMs: number = Date.now()
+): { thread: ChatThread; error?: string } {
+  if (!thread.isGroup) {
+    return { thread, error: 'Admins only apply to group chats.' };
+  }
+  if (!isGroupAdmin(thread, actorUid)) {
+    return { thread, error: 'Only an existing group admin can promote members.' };
+  }
+  if (!thread.memberIds.includes(targetUid)) {
+    return { thread, error: 'User must be a group member first.' };
+  }
+  const currentAdmins =
+    thread.adminIds && thread.adminIds.length > 0 ? thread.adminIds : [actorUid];
+  if (currentAdmins.includes(targetUid)) {
+    return { thread };
+  }
+  const nextAdminIds = [...currentAdmins, targetUid].slice(0, MAX_GROUP_MEMBERS);
+  return {
+    thread: {
+      ...thread,
+      adminIds: nextAdminIds,
+      lastMessageText: `${targetName} is now a group admin`,
       updatedAtMs: nowMs,
     },
   };

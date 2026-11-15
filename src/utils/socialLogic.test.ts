@@ -37,8 +37,10 @@ import {
   filterHashtags,
   validateGroupChatInput,
   createGroupThreadRecord,
+  isGroupAdmin,
   addGroupParticipantsState,
   removeGroupParticipantState,
+  promoteGroupAdminState,
   formatChatPushPayload,
   shouldDispatchChatPushNotification,
   resolvePostMediaDescriptor,
@@ -889,3 +891,35 @@ test('call session state transitions (mute, video off, screen share, and end cal
   const ended = { ...sharing, active: false };
   assert.equal(ended.active, false);
 });
+
+test('isGroupAdmin and promoteGroupAdminState enforce admin-only promotions and membership', () => {
+  const thread: ChatThread = {
+    id: 'grp_admin_test',
+    title: 'Design Leads',
+    isGroup: true,
+    memberIds: ['u_creator', 'u_member', 'u_other'],
+    adminIds: ['u_creator'],
+    partnerAvatar: '',
+    partnerHandle: '3 members',
+    lastMessageText: 'Created group',
+    lastMessageSenderId: 'u_creator',
+    createdAtMs: 100,
+    updatedAtMs: 100,
+  };
+
+  assert.equal(isGroupAdmin(thread, 'u_creator'), true);
+  assert.equal(isGroupAdmin(thread, 'u_member'), false);
+
+  const nonAdminAttempt = promoteGroupAdminState(thread, 'u_other', 'Other', 'u_member', 200);
+  assert.equal(Boolean(nonAdminAttempt.error), true);
+  assert.deepEqual(nonAdminAttempt.thread.adminIds, ['u_creator']);
+
+  const nonMemberAttempt = promoteGroupAdminState(thread, 'u_outsider', 'Outsider', 'u_creator', 200);
+  assert.equal(Boolean(nonMemberAttempt.error), true);
+
+  const validPromote = promoteGroupAdminState(thread, 'u_member', 'Member', 'u_creator', 300);
+  assert.equal(validPromote.error, undefined);
+  assert.deepEqual(validPromote.thread.adminIds, ['u_creator', 'u_member']);
+  assert.equal(isGroupAdmin(validPromote.thread, 'u_member'), true);
+});
+

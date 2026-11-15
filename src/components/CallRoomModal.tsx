@@ -1,40 +1,76 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowLeftRight,
   Mic,
   MicOff,
   MonitorUp,
+  Phone,
   PhoneOff,
-  UserCheck,
+  RotateCcw,
+  Users,
   Video,
   VideoOff,
   Volume2,
+  VolumeX,
+  X,
 } from 'lucide-react';
-import type { CallSession, UserProfile } from '../types/social';
+import { auth } from '../services/firebase';
+import type { CallParticipant, CallSession, UserProfile } from '../types/social';
+import {
+  collectPendingRemoteTrackSubscriptions,
+  extractCallsErrorMessage,
+  formatRenegotiatePayload,
+  formatSubscribeTracksPayload,
+  formatTracksClosePayload,
+} from '../utils/callsLogic';
 import { Avatar } from './Avatar';
 
 interface CallRoomModalProps {
   session: CallSession | null;
   profile: UserProfile;
+  isLocalAutostart?: boolean;
   onEndCall: () => void;
   onToggleMute: () => void;
   onToggleVideo: () => void;
   onToggleScreenShare: () => void;
+  onPublishPeerSession?: (
+    callId: string,
+    payload: {
+      cfSessionId: string;
+      audioTrackName?: string;
+      videoTrackName?: string;
+      isMuted: boolean;
+      isVideoOff: boolean;
+      isScreenSharing: boolean;
+      state: 'joined' | 'declined' | 'left';
+    }
+  ) => Promise<void>;
+  onSubscribeCallPeers?: (
+    callId: string,
+    onPeers: (peers: CallParticipant[]) => void
+  ) => () => void;
 }
 
-function createFallbackMediaStream(displayName: string, isAudioOnly: boolean): MediaStream {
+type SfuConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'error';
+
+function createFallbackMediaStream(
+  displayName: string,
+  isAudioOnly: boolean
+): MediaStream {
   const tracks: MediaStreamTrack[] = [];
 
-  // Generate synthetic audio track so WebRTC negotiation always succeeds
   try {
     const AudioCtx =
       window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
     if (AudioCtx) {
       const ctx = new AudioCtx();
       const osc = ctx.createOscillator();
       const dst = ctx.createMediaStreamDestination();
       const gain = ctx.createGain();
-      gain.gain.value = 0; // Silent by default
+      gain.gain.value = 0;
       osc.connect(gain);
       gain.connect(dst);
       osc.start();
@@ -42,10 +78,9 @@ function createFallbackMediaStream(displayName: string, isAudioOnly: boolean): M
       if (audioTrack) tracks.push(audioTrack);
     }
   } catch {
-    // Ignore synthetic audio errors
+    // Ignore audio context restriction errors
   }
 
-  // Generate canvas stream for video representation if not audio-only
   if (!isAudioOnly && typeof document !== 'undefined') {
     try {
       const canvas = document.createElement('canvas');
@@ -56,45 +91,123 @@ function createFallbackMediaStream(displayName: string, isAudioOnly: boolean): M
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 36px sans-serif';
+        ctx.font = 'bold 32px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(displayName || 'User', canvas.width / 2, canvas.height / 2);
+        ctx.fillText(displayName || 'Looma', canvas.width / 2, canvas.height / 2);
       }
       const canvasStream = canvas.captureStream ? canvas.captureStream(15) : null;
       const videoTrack = canvasStream?.getVideoTracks()[0];
       if (videoTrack) tracks.push(videoTrack);
     } catch {
-      // Ignore canvas errors
+      // Ignore canvas stream errors
     }
   }
 
   return new MediaStream(tracks);
 }
 
+function RemoteVideoPlayer({
+  stream,
+  muted,
+}: {
+  stream: MediaStream;
+  muted?: boolean;
+}) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted={Boolean(muted)}
+      className="w-full h-full object-cover"
+    />
+  );
+}
+
+function RemoteAudioPlayer({
+  stream,
+  muted,
+}: {
+  stream: MediaStream;
+  muted?: boolean;
+}) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return <audio ref={ref} autoPlay playsInline muted={Boolean(muted)} className="hidden" />;
+}
+
 export function CallRoomModal({
   session,
   profile,
+  isLocalAutostart = false,
   onEndCall,
   onToggleMute,
   onToggleVideo,
   onToggleScreenShare,
+  onPublishPeerSession,
+  onSubscribeCallPeers,
 }: CallRoomModalProps) {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isVirtualMedia, setIsVirtualMedia] = useState(false);
+  const [isUsingFallbackStream, setIsUsingFallbackStream] = useState(false);
   const [cfSessionId, setCfSessionId] = useState<string | null>(null);
-  const [cfStatus, setCfStatus] = useState<'connecting' | 'connected' | 'ready'>('connecting');
+  const [cfStatus, setCfStatus] = useState<SfuConnectionStatus>('connecting');
   const [cfError, setCfError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+  const [showParticipantsDrawer, setShowParticipantsDrawer] = useState(false);
+  const [swappedLocalToMain, setSwappedLocalToMain] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const peerConnRef = useRef<RTCPeerConnection | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
+  const cfSessionIdRef = useRef<string | null>(null);
+  const publishedMidsRef = useRef<string[]>([]);
+  const subscribedTrackKeysRef = useRef<Set<string>>(new Set());
+  const midToPeerUidRef = useRef<Map<string, string>>(new Map());
+  const peersRef = useRef<CallParticipant[]>([]);
+  const subscribeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const audioTrackNameRef = useRef<string>('');
+  const videoTrackNameRef = useRef<string>('');
+  const onPublishPeerRef = useRef(onPublishPeerSession);
+  const onSubscribePeersRef = useRef(onSubscribeCallPeers);
 
-  // Timer
+  useEffect(() => {
+    onPublishPeerRef.current = onPublishPeerSession;
+  }, [onPublishPeerSession]);
+
+  useEffect(() => {
+    onSubscribePeersRef.current = onSubscribeCallPeers;
+  }, [onSubscribeCallPeers]);
+
+  useEffect(() => {
+    peersRef.current = session?.participants || [];
+  }, [session?.participants]);
+
+  // Call timer
   useEffect(() => {
     if (!session || !session.active) {
       setElapsedSec(0);
+      setIsSpeakerMuted(false);
+      setShowParticipantsDrawer(false);
+      setSwappedLocalToMain(false);
       return;
     }
     const timer = window.setInterval(() => {
@@ -103,24 +216,44 @@ export function CallRoomModal({
     return () => window.clearInterval(timer);
   }, [session?.active]);
 
-  // Request camera / microphone stream when call becomes active
+  // Keep local video element synchronized when toggling camera / screen share / stage swap
+  useEffect(() => {
+    if (!localVideoRef.current) return;
+    const displayStream = session?.isScreenSharing && screenStream ? screenStream : localStream;
+    localVideoRef.current.srcObject = displayStream || null;
+  }, [
+    localStream,
+    screenStream,
+    session?.isScreenSharing,
+    session?.isVideoOff,
+    session?.isAudioOnly,
+    swappedLocalToMain,
+  ]);
+
+  // Main hardware capture + authenticated Cloudflare Calls WebRTC negotiation
   useEffect(() => {
     if (!session || !session.active) {
-      if (localStream) {
-        for (const track of localStream.getTracks()) {
+      if (localStreamRef.current) {
+        for (const track of localStreamRef.current.getTracks()) {
           track.stop();
         }
+        localStreamRef.current = null;
         setLocalStream(null);
       }
-      if (screenStream) {
-        for (const track of screenStream.getTracks()) {
-          track.stop();
+      setScreenStream((prev) => {
+        if (prev) {
+          for (const t of prev.getTracks()) t.stop();
         }
-        setScreenStream(null);
-      }
+        return null;
+      });
       setCameraError(null);
-      setIsVirtualMedia(false);
       setCfSessionId(null);
+      cfSessionIdRef.current = null;
+      sessionTokenRef.current = null;
+      publishedMidsRef.current = [];
+      subscribedTrackKeysRef.current.clear();
+      midToPeerUidRef.current.clear();
+      setRemoteStreams({});
       setCfStatus('connecting');
       setCfError(null);
       return;
@@ -128,154 +261,387 @@ export function CallRoomModal({
 
     let activeStream: MediaStream | null = null;
     let peerConn: RTCPeerConnection | null = null;
+    let unsubPeers: (() => void) | null = null;
     let cancelled = false;
+    const callId = session.callId || session.chatId;
+    const idempotencyKey = `looma-${callId}-${profile.uid}-${retryNonce}`;
 
     const initMediaAndSignaling = async () => {
       let stream: MediaStream | null = null;
-      let usingVirtual = false;
+      let hardwareIssue: string | null = null;
 
-      // 1. Try accessing real hardware media
-      try {
-        if (navigator.mediaDevices?.getUserMedia) {
+      // 1. Request hardware camera / microphone
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: !session.isAudioOnly && !session.isVideoOff,
+            video: !session.isAudioOnly,
             audio: true,
           });
-        }
-      } catch {
-        // Try audio-only hardware if video failed
-        try {
-          if (!session.isAudioOnly && navigator.mediaDevices?.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: false,
-              audio: true,
-            });
-            setCameraError('Camera blocked or not found. Connected in audio mode.');
+        } catch (err) {
+          if (!session.isAudioOnly) {
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: false,
+                audio: true,
+              });
+              hardwareIssue =
+                'Camera permission denied or unavailable. Running with audio only.';
+            } catch {
+              const name = err instanceof Error ? err.name : '';
+              hardwareIssue =
+                name === 'NotAllowedError'
+                  ? 'Camera and microphone permissions were denied by your browser.'
+                  : 'No active camera or microphone detected by your browser.';
+            }
+          } else {
+            const name = err instanceof Error ? err.name : '';
+            hardwareIssue =
+              name === 'NotAllowedError'
+                ? 'Microphone permission was denied by your browser.'
+                : 'No active microphone detected by your browser.';
           }
-        } catch {
-          // Hardware blocked
         }
+      } else {
+        hardwareIssue = 'This browser does not support getUserMedia hardware capture.';
       }
 
-      // If hardware media blocked/unavailable, fallback to virtual media stream
       if (!stream) {
         stream = createFallbackMediaStream(profile.displayName, session.isAudioOnly);
-        usingVirtual = true;
-        setIsVirtualMedia(true);
+        setIsUsingFallbackStream(true);
         setCameraError(
-          session.isAudioOnly
-            ? 'Virtual microphone active. Click "Retry Hardware" to enable real microphone.'
-            : 'Virtual video/audio active. Click "Retry Hardware" to enable real camera.'
+          hardwareIssue
+            ? `${hardwareIssue} Using silent fallback stream.`
+            : 'Using fallback media stream. Click Retry Hardware to attach mic/cam.'
         );
       } else {
-        setIsVirtualMedia(false);
+        setIsUsingFallbackStream(false);
+        setCameraError(hardwareIssue);
       }
 
       if (cancelled) {
-        for (const track of stream.getTracks()) {
-          track.stop();
-        }
+        for (const track of stream.getTracks()) track.stop();
         return;
       }
 
-      activeStream = stream;
-      setLocalStream(stream);
-      if (localVideoRef.current && !usingVirtual) {
-        localVideoRef.current.srcObject = stream;
+      for (const track of stream.getAudioTracks()) {
+        track.enabled = !session.isMuted;
+      }
+      for (const track of stream.getVideoTracks()) {
+        track.enabled = !session.isAudioOnly && !session.isVideoOff;
       }
 
-      // 2. Establish session with Cloudflare Calls SFU API
+      activeStream = stream;
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+
+      // 2. Require authenticated Firebase ID token before calling protected Calls endpoints
+      setCfStatus('connecting');
+      setCfError(null);
+
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        setCfStatus('error');
+        setCfError(
+          isLocalAutostart
+            ? 'Sign in with a verified Firebase account to establish a Cloudflare Calls SFU session.'
+            : 'Authentication required to connect to Cloudflare Calls.'
+        );
+        return;
+      }
+
       try {
-        setCfStatus('connecting');
-        const res = await fetch('/api/calls/sessions/new', { method: 'POST' });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `HTTP ${res.status}`);
+        const idToken = await currentUser.getIdToken();
+        if (cancelled) return;
+
+        const res = await fetch('/api/calls/sessions/new', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ callId, idempotencyKey }),
+        });
+
+        const data = (await res.json().catch(() => ({}))) as {
+          sessionId?: string;
+          sessionToken?: string;
+          iceServers?: RTCIceServer[];
+          error?: string;
+          errorDescription?: string;
+        };
+
+        if (!res.ok || !data.sessionId || !data.sessionToken) {
+          throw new Error(extractCallsErrorMessage(data, res.status));
         }
-        const data = (await res.json()) as { sessionId?: string };
-        if (cancelled || !data.sessionId) return;
+        if (cancelled) return;
 
         const newSessionId = data.sessionId;
+        const newSessionToken = data.sessionToken;
+        cfSessionIdRef.current = newSessionId;
+        sessionTokenRef.current = newSessionToken;
         setCfSessionId(newSessionId);
 
-        if (typeof RTCPeerConnection !== 'undefined') {
-          const pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
-          });
-          peerConn = pc;
+        if (typeof RTCPeerConnection === 'undefined') {
+          throw new Error('WebRTC RTCPeerConnection is not supported in this browser.');
+        }
 
-          for (const track of stream.getTracks()) {
-            pc.addTrack(track, stream);
-          }
+        const pc = new RTCPeerConnection({
+          iceServers:
+            Array.isArray(data.iceServers) && data.iceServers.length > 0
+              ? data.iceServers
+              : [{ urls: 'stun:stun.cloudflare.com:3478' }],
+        });
+        peerConn = pc;
+        peerConnRef.current = pc;
 
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          // Crucial: Wait for ICE gathering so Cloudflare Calls receives ice-ufrag and candidate lines!
-          if (pc.iceGatheringState !== 'complete') {
-            await new Promise<void>((resolve) => {
-              const onState = () => {
-                if (pc.iceGatheringState === 'complete') {
-                  pc.removeEventListener('icegatheringstatechange', onState);
-                  resolve();
-                }
-              };
-              pc.addEventListener('icegatheringstatechange', onState);
-              setTimeout(() => {
-                pc.removeEventListener('icegatheringstatechange', onState);
-                resolve();
-              }, 1200);
-            });
-          }
-
+        pc.onconnectionstatechange = () => {
           if (cancelled) return;
-
-          const trackRequests = pc.getTransceivers().map((t, i) => ({
-            location: 'local',
-            mid: t.mid || String(i),
-            trackName: t.sender.track?.kind || (i === 0 ? 'audio' : 'video'),
-          }));
-
-          const sdpToSend = pc.localDescription?.sdp || offer.sdp;
-          const pubRes = await fetch(
-            `/api/calls/sessions/${encodeURIComponent(newSessionId)}/tracks/new`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                sessionDescription: {
-                  type: 'offer',
-                  sdp: sdpToSend,
-                },
-                tracks: trackRequests,
-              }),
-            }
-          );
-
-          const pubData = (await pubRes.json().catch(() => ({}))) as {
-            sessionDescription?: { type: string; sdp: string };
-            errorCode?: string;
-            errorDescription?: string;
-          };
-
-          if (pubRes.ok && pubData.sessionDescription) {
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(pubData.sessionDescription as RTCSessionDescriptionInit)
-            );
+          if (pc.connectionState === 'connected') {
             setCfStatus('connected');
             setCfError(null);
-          } else {
-            console.warn('[Cloudflare Calls WebRTC negotiation]', pubData);
-            setCfStatus('connected');
-            if (pubData.errorDescription) {
-              setCfError(pubData.errorDescription);
-            }
+          } else if (pc.connectionState === 'disconnected') {
+            setCfStatus('reconnecting');
+            setCfError('Connection interrupted. Attempting to reconnect...');
+          } else if (pc.connectionState === 'failed') {
+            setCfStatus('error');
+            setCfError('WebRTC peer connection failed. Check network or TURN settings.');
           }
+        };
+
+        pc.ontrack = (event) => {
+          if (cancelled) return;
+          const mid = event.transceiver?.mid || '';
+          const matchedUid =
+            (mid && midToPeerUidRef.current.get(mid)) ||
+            peersRef.current.find(
+              (p) => p.uid !== profile.uid && p.connectionState === 'joined'
+            )?.uid ||
+            `remote-${mid || event.track.id}`;
+
+          setRemoteStreams((prev) => {
+            const existing = prev[matchedUid];
+            if (existing) {
+              if (!existing.getTracks().some((t) => t.id === event.track.id)) {
+                existing.addTrack(event.track);
+              }
+              return { ...prev, [matchedUid]: new MediaStream(existing.getTracks()) };
+            }
+            const nextStream = event.streams?.[0]
+              ? event.streams[0]
+              : new MediaStream([event.track]);
+            return { ...prev, [matchedUid]: nextStream };
+          });
+        };
+
+        for (const track of stream.getTracks()) {
+          pc.addTrack(track, stream);
+        }
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        if (pc.iceGatheringState !== 'complete') {
+          await new Promise<void>((resolve) => {
+            const onState = () => {
+              if (pc.iceGatheringState === 'complete') {
+                pc.removeEventListener('icegatheringstatechange', onState);
+                resolve();
+              }
+            };
+            pc.addEventListener('icegatheringstatechange', onState);
+            window.setTimeout(() => {
+              pc.removeEventListener('icegatheringstatechange', onState);
+              resolve();
+            }, 1400);
+          });
+        }
+
+        if (cancelled) return;
+
+        const audioName = `audio-${profile.uid}`;
+        const videoName = `video-${profile.uid}`;
+        let hasAudio = false;
+        let hasVideo = false;
+        const trackRequests = pc
+          .getTransceivers()
+          .filter((t) => t.sender.track)
+          .map((t, i) => {
+            const kind = t.sender.track?.kind === 'video' ? 'video' : 'audio';
+            if (kind === 'audio') hasAudio = true;
+            if (kind === 'video') hasVideo = true;
+            return {
+              location: 'local' as const,
+              mid: t.mid || String(i),
+              trackName: kind === 'audio' ? audioName : videoName,
+            };
+          });
+
+        audioTrackNameRef.current = hasAudio ? audioName : '';
+        videoTrackNameRef.current = hasVideo ? videoName : '';
+
+        const sdpToSend = pc.localDescription?.sdp || offer.sdp || '';
+        const pubRes = await fetch(
+          `/api/calls/sessions/${encodeURIComponent(newSessionId)}/tracks/new`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${idToken}`,
+              'X-Call-Session-Token': newSessionToken,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              sessionDescription: {
+                type: 'offer',
+                sdp: sdpToSend,
+              },
+              tracks: trackRequests,
+            }),
+          }
+        );
+
+        const pubData = (await pubRes.json().catch(() => ({}))) as {
+          sessionDescription?: { type: string; sdp: string };
+          tracks?: Array<{ mid?: string; errorCode?: string; errorDescription?: string }>;
+          error?: string;
+          errorCode?: string;
+          errorDescription?: string;
+        };
+
+        const trackFailure = Array.isArray(pubData.tracks)
+          ? pubData.tracks.find((t) => Boolean(t.errorCode || t.errorDescription))
+          : undefined;
+
+        if (!pubRes.ok || !pubData.sessionDescription || pubData.errorCode || trackFailure) {
+          throw new Error(extractCallsErrorMessage(pubData, pubRes.status));
+        }
+
+        await pc.setRemoteDescription(
+          new RTCSessionDescription(
+            pubData.sessionDescription as RTCSessionDescriptionInit
+          )
+        );
+
+        publishedMidsRef.current = trackRequests.map((t) => t.mid);
+        if (cancelled) return;
+
+        // Only transition to connected strictly after SFU session + SDP answer succeed
+        setCfStatus('connected');
+        setCfError(null);
+
+        if (onPublishPeerRef.current && session.callId) {
+          await onPublishPeerRef.current(session.callId, {
+            cfSessionId: newSessionId,
+            audioTrackName: audioTrackNameRef.current,
+            videoTrackName: videoTrackNameRef.current,
+            isMuted: session.isMuted,
+            isVideoOff: session.isVideoOff,
+            isScreenSharing: session.isScreenSharing,
+            state: 'joined',
+          });
+        }
+
+        // Subscribe to remote peers via Firestore room peers subcollection
+        if (onSubscribePeersRef.current && session.callId) {
+          unsubPeers = onSubscribePeersRef.current(session.callId, (peers) => {
+            peersRef.current = peers;
+            const pending = collectPendingRemoteTrackSubscriptions(
+              peers,
+              profile.uid,
+              subscribedTrackKeysRef.current
+            );
+            if (pending.length === 0) return;
+
+            for (const item of pending) {
+              subscribedTrackKeysRef.current.add(item.key);
+            }
+
+            subscribeQueueRef.current = subscribeQueueRef.current
+              .then(async () => {
+                if (cancelled || !peerConnRef.current || !cfSessionIdRef.current) return;
+                const freshToken = (await auth.currentUser?.getIdToken()) || idToken;
+                const subPayload = formatSubscribeTracksPayload(
+                  pending.map((p) => ({
+                    sessionId: p.sessionId,
+                    trackName: p.trackName,
+                  }))
+                );
+                if (subPayload.tracks.length === 0) return;
+
+                const subRes = await fetch(
+                  `/api/calls/sessions/${encodeURIComponent(
+                    cfSessionIdRef.current
+                  )}/tracks/new`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${freshToken}`,
+                      'X-Call-Session-Token': newSessionToken,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(subPayload),
+                  }
+                );
+
+                const subData = (await subRes.json().catch(() => ({}))) as {
+                  requiresImmediateRenegotiation?: boolean;
+                  sessionDescription?: { type: string; sdp: string };
+                  tracks?: Array<{ mid?: string; trackName?: string; sessionId?: string }>;
+                };
+                if (!subRes.ok) {
+                  for (const item of pending) {
+                    subscribedTrackKeysRef.current.delete(item.key);
+                  }
+                  return;
+                }
+
+                if (Array.isArray(subData.tracks)) {
+                  subData.tracks.forEach((returnedTrack, idx) => {
+                    const matched = pending[idx];
+                    if (returnedTrack.mid && matched) {
+                      midToPeerUidRef.current.set(returnedTrack.mid, matched.uid);
+                    }
+                  });
+                }
+
+                if (subData.requiresImmediateRenegotiation && subData.sessionDescription) {
+                  await peerConnRef.current.setRemoteDescription(
+                    new RTCSessionDescription(
+                      subData.sessionDescription as RTCSessionDescriptionInit
+                    )
+                  );
+                  const answer = await peerConnRef.current.createAnswer();
+                  await peerConnRef.current.setLocalDescription(answer);
+                  const answerSdp = peerConnRef.current.localDescription?.sdp || answer.sdp || '';
+
+                  await fetch(
+                    `/api/calls/sessions/${encodeURIComponent(
+                      cfSessionIdRef.current
+                    )}/renegotiate`,
+                    {
+                      method: 'PUT',
+                      headers: {
+                        Authorization: `Bearer ${freshToken}`,
+                        'X-Call-Session-Token': newSessionToken,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify(formatRenegotiatePayload(answerSdp)),
+                    }
+                  );
+                }
+              })
+              .catch((subErr) => {
+                console.warn('[Cloudflare Calls remote subscription error]', subErr);
+              });
+          });
         }
       } catch (err) {
-        console.warn('[Cloudflare Calls session error]', err);
-        setCfStatus('connected');
-        setCfError(err instanceof Error ? err.message : 'Calls signaling connected');
+        if (cancelled) return;
+        setCfStatus('error');
+        setCfError(
+          err instanceof Error
+            ? err.message
+            : 'Unable to establish Cloudflare Calls WebRTC connection.'
+        );
       }
     };
 
@@ -283,56 +649,153 @@ export function CallRoomModal({
 
     return () => {
       cancelled = true;
+      if (unsubPeers) unsubPeers();
+      const closingSessionId = cfSessionIdRef.current;
+      const closingToken = sessionTokenRef.current;
+      const closingMids = [...publishedMidsRef.current];
+      if (closingSessionId && closingToken && closingMids.length > 0 && auth.currentUser) {
+        void auth.currentUser
+          .getIdToken()
+          .then((token) =>
+            fetch(
+              `/api/calls/sessions/${encodeURIComponent(closingSessionId)}/tracks/close`,
+              {
+                method: 'PUT',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'X-Call-Session-Token': closingToken,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formatTracksClosePayload(closingMids, true)),
+              }
+            )
+          )
+          .catch(() => {});
+      }
+
       if (peerConn) {
         peerConn.close();
       }
+      peerConnRef.current = null;
       if (activeStream) {
         for (const track of activeStream.getTracks()) {
           track.stop();
         }
       }
     };
-  }, [session?.active, session?.isAudioOnly, profile.displayName]);
+  }, [
+    session?.active,
+    session?.callId,
+    session?.chatId,
+    session?.isAudioOnly,
+    profile.uid,
+    profile.displayName,
+    isLocalAutostart,
+    retryNonce,
+  ]);
 
-  // Handle local video/audio mute updates on stream
+  // Apply mute & camera enabled toggles + notify peers in Firestore
   useEffect(() => {
-    if (!localStream) return;
-    for (const track of localStream.getAudioTracks()) {
-      track.enabled = !session?.isMuted;
+    const stream = localStreamRef.current;
+    if (stream) {
+      for (const track of stream.getAudioTracks()) {
+        track.enabled = !session?.isMuted;
+      }
+      for (const track of stream.getVideoTracks()) {
+        track.enabled = !session?.isAudioOnly && !session?.isVideoOff;
+      }
     }
-    for (const track of localStream.getVideoTracks()) {
-      track.enabled = !session?.isAudioOnly && !session?.isVideoOff;
-    }
-  }, [localStream, session?.isMuted, session?.isVideoOff, session?.isAudioOnly]);
 
-  // Handle screen share
+    if (
+      session?.active &&
+      session.callId &&
+      cfSessionIdRef.current &&
+      cfStatus === 'connected' &&
+      onPublishPeerRef.current
+    ) {
+      void onPublishPeerRef.current(session.callId, {
+        cfSessionId: cfSessionIdRef.current,
+        audioTrackName: audioTrackNameRef.current,
+        videoTrackName: videoTrackNameRef.current,
+        isMuted: Boolean(session.isMuted),
+        isVideoOff: Boolean(session.isVideoOff),
+        isScreenSharing: Boolean(session.isScreenSharing),
+        state: 'joined',
+      });
+    }
+  }, [
+    session?.active,
+    session?.callId,
+    session?.isMuted,
+    session?.isVideoOff,
+    session?.isAudioOnly,
+    session?.isScreenSharing,
+    cfStatus,
+  ]);
+
+  // Screen share acquisition & sender track replacement
   useEffect(() => {
     if (!session?.isScreenSharing) {
-      if (screenStream) {
-        for (const track of screenStream.getTracks()) {
-          track.stop();
+      setScreenStream((prev) => {
+        if (prev) {
+          for (const track of prev.getTracks()) track.stop();
         }
-        setScreenStream(null);
+        return null;
+      });
+      const camTrack = localStreamRef.current?.getVideoTracks()[0];
+      const videoSender = peerConnRef.current
+        ?.getSenders()
+        .find((s) => s.track?.kind === 'video');
+      if (camTrack && videoSender) {
+        void videoSender.replaceTrack(camTrack).catch(() => {});
       }
       return;
     }
 
+    let cancelled = false;
     const startScreen = async () => {
       try {
-        const stream = await (navigator.mediaDevices as unknown as {
-          getDisplayMedia: (opts: MediaStreamConstraints) => Promise<MediaStream>;
-        }).getDisplayMedia({ video: true, audio: true });
+        if (
+          typeof navigator === 'undefined' ||
+          !(navigator.mediaDevices as { getDisplayMedia?: unknown } | undefined)
+            ?.getDisplayMedia
+        ) {
+          throw new Error('Screen sharing is not supported in this browser.');
+        }
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+        if (cancelled) {
+          for (const t of stream.getTracks()) t.stop();
+          return;
+        }
         setScreenStream(stream);
-        for (const track of stream.getVideoTracks()) {
-          track.onended = () => {
+        const screenTrack = stream.getVideoTracks()[0];
+        if (screenTrack) {
+          const videoSender = peerConnRef.current
+            ?.getSenders()
+            .find((s) => s.track?.kind === 'video');
+          if (videoSender) {
+            await videoSender.replaceTrack(screenTrack).catch(() => {});
+          }
+          screenTrack.onended = () => {
             onToggleScreenShare();
           };
         }
-      } catch {
+      } catch (err) {
+        setCameraError(
+          err instanceof Error
+            ? err.message
+            : 'Screen sharing permission was declined or unavailable.'
+        );
         onToggleScreenShare();
       }
     };
     void startScreen();
+    return () => {
+      cancelled = true;
+    };
   }, [session?.isScreenSharing]);
 
   if (!session || !session.active) return null;
@@ -343,38 +806,231 @@ export function CallRoomModal({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const handleRetryHardware = async () => {
+    try {
+      const hwStream = await navigator.mediaDevices.getUserMedia({
+        video: !session.isAudioOnly && !session.isVideoOff,
+        audio: true,
+      });
+      if (peerConnRef.current) {
+        const nextAudio = hwStream.getAudioTracks()[0];
+        const nextVideo = hwStream.getVideoTracks()[0];
+        for (const sender of peerConnRef.current.getSenders()) {
+          if (sender.track?.kind === 'audio' && nextAudio) {
+            await sender.replaceTrack(nextAudio);
+          } else if (sender.track?.kind === 'video' && nextVideo) {
+            await sender.replaceTrack(nextVideo);
+          }
+        }
+      }
+      if (localStreamRef.current) {
+        for (const t of localStreamRef.current.getTracks()) t.stop();
+      }
+      localStreamRef.current = hwStream;
+      setLocalStream(hwStream);
+      setIsUsingFallbackStream(false);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = hwStream;
+      }
+      setCameraError(null);
+    } catch {
+      setCameraError('Microphone/camera access still blocked by browser permissions.');
+    }
+  };
+
+  const remoteParticipants = session.participants.filter(
+    (p) => p.uid !== profile.uid
+  );
+
+  const statusMeta =
+    cfStatus === 'connected'
+      ? { dot: 'bg-emerald-400', textColor: 'text-emerald-400', label: 'Cloudflare Calls SFU Live' }
+      : cfStatus === 'reconnecting'
+        ? { dot: 'bg-amber-400', textColor: 'text-amber-300', label: 'Reconnecting...' }
+        : cfStatus === 'error'
+          ? { dot: 'bg-rose-500', textColor: 'text-rose-400', label: 'Signaling Disconnected' }
+          : { dot: 'bg-blue-400', textColor: 'text-blue-300', label: 'Connecting to Calls SFU...' };
+
+  const getPeerStatusText = (peer: CallParticipant) =>
+    peer.connectionState === 'declined'
+      ? 'Declined call'
+      : peer.connectionState === 'left'
+        ? 'Left the room'
+        : peer.connectionState === 'invited'
+          ? 'Ringing / Invited...'
+          : peer.isScreenSharing
+            ? 'Sharing screen'
+            : peer.isMuted
+              ? 'Joined · Muted'
+              : 'Joined · Live audio';
+
+  const renderLocalVideoTile = (className: string, isCompact = false) => {
+    const showAvatarPlaceholder =
+      (session.isVideoOff || isUsingFallbackStream) && !session.isScreenSharing;
+    return (
+      <div
+        className={`relative rounded-3xl bg-slate-900 border border-white/15 overflow-hidden shadow-2xl flex flex-col items-center justify-center ${className}`}
+      >
+        {showAvatarPlaceholder ? (
+          <div className="flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+            <Avatar
+              src={profile.avatarUrl}
+              name={profile.displayName}
+              size={isCompact ? 'md' : 'xl'}
+            />
+            {!isCompact && (
+              <div>
+                <p className="font-display text-base font-bold text-white">
+                  {profile.displayName} (You)
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {isUsingFallbackStream
+                    ? 'Camera unavailable — silent stream active'
+                    : 'Camera turned off'}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <video
+            ref={localVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover ${
+              session.isScreenSharing ? '' : 'scale-x-[-1]'
+            }`}
+          />
+        )}
+
+        <div
+          className={`absolute ${
+            isCompact
+              ? 'bottom-2 left-2 right-2 px-2.5 py-1.5 rounded-xl text-[11px]'
+              : 'bottom-3 left-3 right-3 px-3.5 py-2 rounded-2xl text-xs'
+          } flex items-center justify-between gap-2 bg-black/65 backdrop-blur-md border border-white/10`}
+        >
+          <span className="font-semibold truncate">
+            {isCompact ? 'You' : `${profile.displayName} (You)`}
+            {session.isScreenSharing ? ' · Screen' : ''}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {session.isMuted ? (
+              <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+            ) : (
+              <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+            )}
+            {session.isVideoOff && (
+              <VideoOff className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderRemoteVideoTile = (
+    peer: CallParticipant,
+    className: string,
+    isCompact = false
+  ) => {
+    const remoteStream = remoteStreams[peer.uid];
+    const hasRemoteVideo =
+      Boolean(remoteStream?.getVideoTracks().length) && !peer.isVideoOff;
+
+    return (
+      <div
+        key={peer.uid}
+        className={`relative rounded-3xl bg-slate-900 border border-white/15 overflow-hidden shadow-2xl flex flex-col items-center justify-center ${className}`}
+      >
+        {remoteStream && hasRemoteVideo ? (
+          <RemoteVideoPlayer stream={remoteStream} muted={isSpeakerMuted} />
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+            <Avatar
+              src={peer.avatar}
+              name={peer.name}
+              size={isCompact ? 'md' : 'xl'}
+            />
+            {!isCompact && (
+              <div>
+                <p className="font-display text-base font-bold text-white">
+                  {peer.name}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {getPeerStatusText(peer)}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {remoteStream &&
+          !hasRemoteVideo &&
+          remoteStream.getAudioTracks().length > 0 && (
+            <RemoteAudioPlayer stream={remoteStream} muted={isSpeakerMuted} />
+          )}
+
+        <div
+          className={`absolute ${
+            isCompact
+              ? 'bottom-2 left-2 right-2 px-2.5 py-1.5 rounded-xl text-[11px]'
+              : 'bottom-3 left-3 right-3 px-3.5 py-2 rounded-2xl text-xs'
+          } flex items-center justify-between gap-2 bg-black/65 backdrop-blur-md border border-white/10`}
+        >
+          <span className="font-semibold truncate">{peer.name}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {peer.isMuted ? (
+              <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+            ) : (
+              <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Cloudflare RealtimeKit / WebRTC Call Room"
+      aria-label={
+        session.isAudioOnly
+          ? 'Looma Voice Call Studio'
+          : 'Cloudflare Calls WebRTC Room'
+      }
       data-testid="call-room-modal"
-      className="fixed inset-0 z-50 bg-slate-950/96 backdrop-blur-xl text-white flex flex-col"
+      data-call-mode={session.isAudioOnly ? 'audio' : 'video'}
+      className="fixed inset-0 z-50 h-[100dvh] w-screen bg-slate-950 text-white flex flex-col overflow-hidden"
     >
-      {/* Header */}
-      <header className="px-4 sm:px-6 py-4 border-b border-white/10 flex items-center justify-between gap-4 shrink-0 bg-slate-900/60">
+      {/* Top Studio Header */}
+      <header className="h-16 px-4 sm:px-6 border-b border-white/10 flex items-center justify-between gap-3 shrink-0 bg-slate-950/90 backdrop-blur-md">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-2xl bg-blue-600/30 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
+          <div
+            className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${
+              session.isAudioOnly
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+            }`}
+          >
             {session.isAudioOnly ? (
-              <Volume2 className="w-5 h-5 animate-pulse" aria-hidden="true" />
+              <Phone className="w-5 h-5" aria-hidden="true" />
             ) : (
-              <Video className="w-5 h-5 animate-pulse" aria-hidden="true" />
+              <Video className="w-5 h-5" aria-hidden="true" />
             )}
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-white truncate">
+            <h2 className="font-display text-sm sm:text-base font-bold text-white truncate">
               {session.title}
             </h2>
-            <p className="text-xs text-slate-400 flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>
-                  {cfStatus === 'connected'
-                    ? 'Cloudflare Calls SFU Live'
-                    : cfStatus === 'connecting'
-                    ? 'Cloudflare Calls Connecting...'
-                    : 'Cloudflare RealtimeKit Ready'}
-                </span>
+            <p className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
+              <span
+                data-testid="calls-connection-status"
+                className={`inline-flex items-center gap-1.5 font-medium ${statusMeta.textColor}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${statusMeta.dot}`} />
+                <span>{statusMeta.label}</span>
               </span>
               {cfSessionId && (
                 <>
@@ -385,184 +1041,420 @@ export function CallRoomModal({
                 </>
               )}
               <span aria-hidden="true">·</span>
-              <span className="tabular-nums font-mono">{formatDuration(elapsedSec)}</span>
+              <span className="tabular-nums font-mono text-slate-200">
+                {formatDuration(elapsedSec)}
+              </span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 text-xs font-semibold">
-            <UserCheck className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
-            <span>{session.participants.length} connected</span>
-          </span>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowParticipantsDrawer((v) => !v)}
+          aria-expanded={showParticipantsDrawer}
+          aria-label="Toggle call participants list"
+          className="min-h-[44px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors shrink-0"
+        >
+          <Users className="w-4 h-4 text-blue-400" aria-hidden="true" />
+          <span className="tabular-nums">{session.participants.length} in call</span>
+        </button>
       </header>
 
-      {/* Video / Audio Grid Stage */}
-      <div className="flex-1 min-h-0 p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center justify-center overflow-auto max-w-6xl mx-auto w-full">
-        {/* Local Stream Card */}
-        <div className="relative aspect-video rounded-3xl bg-slate-900 border border-white/15 overflow-hidden shadow-2xl flex flex-col items-center justify-center group">
-          {session.isAudioOnly || session.isVideoOff ? (
-            <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
-              <Avatar src={profile.avatarUrl} name={profile.displayName} size="xl" />
-              <div>
-                <p className="text-sm font-bold text-white">{profile.displayName} (You)</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {session.isMuted ? 'Muted' : 'Microphone active'}
-                </p>
+      {/* Honest Error & Hardware Banners (No Overlapping Over Controls) */}
+      {(cfError || cameraError) && (
+        <div className="px-4 sm:px-6 pt-3 space-y-2 max-w-5xl mx-auto w-full shrink-0">
+          {cfError && (
+            <div
+              role="alert"
+              data-testid="calls-error-banner"
+              className="px-4 py-2.5 rounded-2xl bg-rose-950/85 border border-rose-500/40 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-2"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
+                <span>{cfError}</span>
               </div>
+              {cfStatus === 'error' && (
+                <button
+                  type="button"
+                  onClick={() => setRetryNonce((n) => n + 1)}
+                  className="min-h-[34px] px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Retry Connection</span>
+                </button>
+              )}
             </div>
-          ) : (
-            <video
-              ref={localVideoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover scale-x-[-1]"
-            />
           )}
 
           {cameraError && (
-            <div className="absolute top-3 left-3 right-3 px-3 py-2 rounded-xl bg-slate-900/90 border border-amber-500/50 text-[11px] text-amber-200 flex items-center justify-between gap-2 backdrop-blur-md z-10">
+            <div className="px-4 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/40 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2">
               <span className="truncate">{cameraError}</span>
               <button
                 type="button"
-                onClick={async () => {
-                  try {
-                    const hwStream = await navigator.mediaDevices.getUserMedia({
-                      video: !session.isAudioOnly && !session.isVideoOff,
-                      audio: true,
-                    });
-                    setLocalStream(hwStream);
-                    if (localVideoRef.current) {
-                      localVideoRef.current.srcObject = hwStream;
-                    }
-                    setIsVirtualMedia(false);
-                    setCameraError(null);
-                  } catch {
-                    setCameraError('Microphone/camera access still blocked by browser.');
-                  }
-                }}
-                className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold shrink-0 cursor-pointer text-[10px]"
+                onClick={handleRetryHardware}
+                className="min-h-[34px] px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold shrink-0 cursor-pointer text-xs"
               >
                 Retry Hardware
               </button>
             </div>
           )}
-
-          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-black/60 backdrop-blur-md text-xs">
-            <span className="font-semibold truncate">{profile.displayName} (You)</span>
-            <div className="flex items-center gap-1.5">
-              {session.isMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
-              {session.isAudioOnly && <VideoOff className="w-3.5 h-3.5 text-slate-400" />}
-            </div>
-          </div>
         </div>
+      )}
 
-        {/* Remote Simulated Peers in Room */}
-        {session.participants
-          .filter((p) => p.uid !== profile.uid)
-          .map((peer) => (
-            <div
-              key={peer.uid}
-              className="relative aspect-video rounded-3xl bg-slate-900 border border-white/15 overflow-hidden shadow-2xl flex flex-col items-center justify-center group"
-            >
-              <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
-                <Avatar src={peer.avatar} name={peer.name} size="xl" />
-                <div>
-                  <p className="text-sm font-bold text-white">{peer.name}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {peer.isMuted ? 'Muted' : 'Speaking via Cloudflare RealtimeKit'}
+      {/* Main Stage: Distinct Audio Call Studio vs Adaptive Video Call Stage */}
+      {session.isAudioOnly ? (
+        <main
+          data-testid="audio-call-stage"
+          className="flex-1 min-h-0 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto relative"
+        >
+          {/* Always mount hidden audio tracks for every remote participant */}
+          {remoteParticipants.map((peer) => {
+            const remoteStream = remoteStreams[peer.uid];
+            if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
+              return null;
+            }
+            return (
+              <RemoteAudioPlayer
+                key={`audio-${peer.uid}`}
+                stream={remoteStream}
+                muted={isSpeakerMuted}
+              />
+            );
+          })}
+
+          {remoteParticipants.length <= 1 ? (() => {
+            const primaryPartner = remoteParticipants[0];
+            const focalName = primaryPartner ? primaryPartner.name : session.title;
+            const focalAvatar = primaryPartner
+              ? primaryPartner.avatar
+              : profile.avatarUrl;
+            const focalStatus = primaryPartner
+              ? getPeerStatusText(primaryPartner)
+              : isUsingFallbackStream
+                ? 'Microphone unavailable — waiting for others'
+                : session.isMuted
+                  ? 'Microphone muted · Waiting for partner'
+                  : 'Voice ready · Waiting for partner';
+
+            return (
+              <div className="flex flex-col items-center text-center max-w-md w-full space-y-6">
+                <div className="relative flex items-center justify-center">
+                  <div className="w-52 h-52 sm:w-60 sm:h-60 rounded-full border border-white/10 flex items-center justify-center bg-slate-900/40">
+                    <div
+                      className={`w-40 h-40 sm:w-44 sm:h-44 rounded-full border flex items-center justify-center transition-colors ${
+                        cfStatus === 'connected' && !session.isMuted
+                          ? 'border-emerald-400/50 bg-emerald-500/10'
+                          : 'border-white/15 bg-slate-900/80'
+                      }`}
+                    >
+                      <Avatar
+                        src={focalAvatar}
+                        name={focalName}
+                        size="xl"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
+                    {primaryPartner ? 'Voice Call' : 'Voice Room'}
+                  </p>
+                  <h3 className="font-display text-2xl sm:text-3xl font-bold text-white">
+                    {focalName}
+                  </h3>
+                  <p className="text-sm text-slate-300">{focalStatus}</p>
+                </div>
+
+                <div className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900 border border-white/10 text-xs text-slate-300">
+                  {session.isMuted ? (
+                    <MicOff className="w-4 h-4 text-rose-400" aria-hidden="true" />
+                  ) : (
+                    <Mic className="w-4 h-4 text-emerald-400" aria-hidden="true" />
+                  )}
+                  <span>
+                    {profile.displayName} (You) ·{' '}
+                    {session.isMuted ? 'Muted' : 'Mic active'}
+                  </span>
+                </div>
+              </div>
+            );
+          })() : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 max-w-4xl w-full">
+              {/* Self Card */}
+              <div className="rounded-3xl bg-slate-900 border border-white/15 p-5 flex flex-col items-center text-center gap-3">
+                <Avatar
+                  src={profile.avatarUrl}
+                  name={profile.displayName}
+                  size="lg"
+                />
+                <div className="min-w-0 w-full">
+                  <p className="text-sm font-bold text-white truncate">
+                    {profile.displayName} (You)
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5 inline-flex items-center gap-1">
+                    {session.isMuted ? (
+                      <>
+                        <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+                        <span>Muted</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                        <span>Mic active</span>
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
 
-              <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-black/60 backdrop-blur-md text-xs">
-                <span className="font-semibold truncate">{peer.name}</span>
-                <div className="flex items-center gap-1.5">
-                  {peer.isMuted ? (
-                    <MicOff className="w-3.5 h-3.5 text-rose-400" />
-                  ) : (
-                    <Mic className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  )}
+              {remoteParticipants.map((peer) => (
+                <div
+                  key={peer.uid}
+                  className="rounded-3xl bg-slate-900 border border-white/15 p-5 flex flex-col items-center text-center gap-3"
+                >
+                  <Avatar src={peer.avatar} name={peer.name} size="lg" />
+                  <div className="min-w-0 w-full">
+                    <p className="text-sm font-bold text-white truncate">
+                      {peer.name}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-0.5 inline-flex items-center gap-1">
+                      {peer.isMuted ? (
+                        <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+                      ) : (
+                        <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                      )}
+                      <span className="truncate">{getPeerStatusText(peer)}</span>
+                    </p>
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </main>
+      ) : (
+        <main
+          data-testid="video-call-stage"
+          className="flex-1 min-h-0 p-3 sm:p-5 flex flex-col overflow-hidden relative"
+        >
+          {remoteParticipants.length === 0 && (
+            <div className="relative flex-1 min-h-0 max-w-5xl mx-auto w-full flex flex-col">
+              {renderLocalVideoTile('w-full flex-1 min-h-0')}
+              <div className="mt-3 flex items-center justify-center">
+                <p className="text-xs text-slate-400 bg-slate-900/90 border border-white/10 rounded-xl px-3.5 py-2">
+                  Room is ready · Invited participants will appear automatically when they join
+                </p>
               </div>
             </div>
-          ))}
-
-        {session.participants.length <= 1 && (
-          <div className="aspect-video rounded-3xl border border-dashed border-white/20 bg-slate-900/50 flex flex-col items-center justify-center gap-2 p-6 text-center text-slate-400">
-            <UserCheck className="w-8 h-8 text-slate-500" aria-hidden="true" />
-            <p className="text-sm font-semibold text-slate-300">Waiting for others to join</p>
-            <p className="text-xs text-slate-500">Other participants in this chat can join this secure call room instantly.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Control Bar */}
-      <footer className="px-4 sm:px-8 py-5 border-t border-white/10 bg-slate-950/95 shrink-0 flex items-center justify-center gap-3 sm:gap-4">
-        <button
-          type="button"
-          onClick={onToggleMute}
-          aria-label={session.isMuted ? 'Unmute microphone' : 'Mute microphone'}
-          className={`min-h-[50px] min-w-[50px] sm:min-w-[56px] rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
-            session.isMuted
-              ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/30'
-              : 'bg-white/10 hover:bg-white/20 text-white'
-          }`}
-        >
-          {session.isMuted ? (
-            <MicOff className="w-5 h-5" aria-hidden="true" />
-          ) : (
-            <Mic className="w-5 h-5" aria-hidden="true" />
           )}
-          <span className="text-[10px] font-semibold">{session.isMuted ? 'Unmute' : 'Mute'}</span>
-        </button>
 
-        {!session.isAudioOnly && (
+          {remoteParticipants.length === 1 && (() => {
+            const partner = remoteParticipants[0];
+            return (
+              <div className="relative flex-1 min-h-0 max-w-6xl mx-auto w-full">
+                {swappedLocalToMain
+                  ? renderLocalVideoTile('w-full h-full')
+                  : renderRemoteVideoTile(partner, 'w-full h-full')}
+
+                <button
+                  type="button"
+                  onClick={() => setSwappedLocalToMain((v) => !v)}
+                  aria-label="Swap main video and self preview"
+                  className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 w-36 sm:w-56 aspect-video rounded-2xl overflow-hidden shadow-2xl border-2 border-white/25 hover:border-blue-400 transition-colors cursor-pointer z-20 text-left group"
+                >
+                  {swappedLocalToMain
+                    ? renderRemoteVideoTile(partner, 'w-full h-full rounded-none border-0', true)
+                    : renderLocalVideoTile('w-full h-full rounded-none border-0', true)}
+                  <span className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <ArrowLeftRight className="w-3.5 h-3.5" aria-hidden="true" />
+                  </span>
+                </button>
+              </div>
+            );
+          })()}
+
+          {remoteParticipants.length >= 2 && (
+            <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 auto-rows-fr overflow-y-auto">
+              {renderLocalVideoTile('min-h-[200px] h-full')}
+              {remoteParticipants.map((peer) =>
+                renderRemoteVideoTile(peer, 'min-h-[200px] h-full')
+              )}
+            </div>
+          )}
+        </main>
+      )}
+
+      {/* Slide-Over Participants Drawer */}
+      {showParticipantsDrawer && (
+        <aside
+          aria-label="Participants in call"
+          data-testid="call-participants-drawer"
+          className="fixed top-16 right-0 bottom-0 w-full sm:w-80 bg-slate-900/95 backdrop-blur-xl border-l border-white/15 z-40 flex flex-col shadow-2xl"
+        >
+          <div className="px-4 py-3.5 border-b border-white/10 flex items-center justify-between">
+            <h3 className="font-display text-sm font-bold text-white">
+              Participants ({session.participants.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowParticipantsDrawer(false)}
+              aria-label="Close participants drawer"
+              className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+            >
+              <X className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+            {session.participants.map((p) => {
+              const isSelf = p.uid === profile.uid;
+              return (
+                <div
+                  key={p.uid}
+                  className="p-3 rounded-2xl bg-slate-950/60 border border-white/10 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar src={p.avatar} name={p.name} size="sm" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-white truncate">
+                        {p.name} {isSelf ? '(You)' : ''}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        {isSelf
+                          ? session.isMuted
+                            ? 'Muted'
+                            : 'Mic active'
+                          : getPeerStatusText(p)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {(isSelf ? session.isMuted : p.isMuted) ? (
+                      <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+                    ) : (
+                      <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                    )}
+                    {!session.isAudioOnly &&
+                      ((isSelf ? session.isVideoOff : p.isVideoOff) ? (
+                        <VideoOff className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                      ) : (
+                        <Video className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+                      ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      )}
+
+      {/* Floating Studio Control Dock */}
+      <footer className="px-4 py-4 pb-5 bg-slate-950/95 border-t border-white/10 shrink-0 flex justify-center">
+        <div className="inline-flex flex-wrap items-center justify-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 rounded-3xl bg-slate-900 border border-white/15 shadow-2xl">
           <button
             type="button"
-            onClick={onToggleVideo}
-            aria-label={session.isVideoOff ? 'Turn camera on' : 'Turn camera off'}
-            className={`min-h-[50px] min-w-[50px] sm:min-w-[56px] rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
-              session.isVideoOff
-                ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/30'
+            onClick={onToggleMute}
+            aria-label={session.isMuted ? 'Unmute microphone' : 'Mute microphone'}
+            className={`min-h-[52px] min-w-[58px] px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+              session.isMuted
+                ? 'bg-rose-600 text-white'
                 : 'bg-white/10 hover:bg-white/20 text-white'
             }`}
           >
-            {session.isVideoOff ? (
-              <VideoOff className="w-5 h-5" aria-hidden="true" />
+            {session.isMuted ? (
+              <MicOff className="w-5 h-5" aria-hidden="true" />
             ) : (
-              <Video className="w-5 h-5" aria-hidden="true" />
+              <Mic className="w-5 h-5" aria-hidden="true" />
             )}
-            <span className="text-[10px] font-semibold">{session.isVideoOff ? 'Cam On' : 'Cam Off'}</span>
+            <span className="text-[10px] font-semibold">
+              {session.isMuted ? 'Unmute' : 'Mute'}
+            </span>
           </button>
-        )}
 
-        <button
-          type="button"
-          onClick={onToggleScreenShare}
-          aria-pressed={session.isScreenSharing}
-          aria-label={session.isScreenSharing ? 'Stop screen share' : 'Share screen'}
-          className={`min-h-[50px] min-w-[50px] sm:min-w-[56px] rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
-            session.isScreenSharing
-              ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
-              : 'bg-white/10 hover:bg-white/20 text-white'
-          }`}
-        >
-          <MonitorUp className="w-5 h-5" aria-hidden="true" />
-          <span className="text-[10px] font-semibold">Share</span>
-        </button>
+          {!session.isAudioOnly && (
+            <button
+              type="button"
+              onClick={onToggleVideo}
+              aria-label={session.isVideoOff ? 'Turn camera on' : 'Turn camera off'}
+              className={`min-h-[52px] min-w-[58px] px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+                session.isVideoOff
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+            >
+              {session.isVideoOff ? (
+                <VideoOff className="w-5 h-5" aria-hidden="true" />
+              ) : (
+                <Video className="w-5 h-5" aria-hidden="true" />
+              )}
+              <span className="text-[10px] font-semibold">
+                {session.isVideoOff ? 'Cam On' : 'Cam Off'}
+              </span>
+            </button>
+          )}
 
-        <button
-          type="button"
-          onClick={onEndCall}
-          aria-label="End call"
-          className="min-h-[50px] px-6 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm inline-flex items-center gap-2 shadow-xl shadow-rose-900/40 transition-colors cursor-pointer"
-        >
-          <PhoneOff className="w-5 h-5" aria-hidden="true" />
-          <span>End Call</span>
-        </button>
+          {!session.isAudioOnly && (
+            <button
+              type="button"
+              onClick={onToggleScreenShare}
+              aria-pressed={session.isScreenSharing}
+              aria-label={session.isScreenSharing ? 'Stop screen share' : 'Share screen'}
+              className={`min-h-[52px] min-w-[58px] px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+                session.isScreenSharing
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+            >
+              <MonitorUp className="w-5 h-5" aria-hidden="true" />
+              <span className="text-[10px] font-semibold">Share</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setIsSpeakerMuted((v) => !v)}
+            aria-pressed={isSpeakerMuted}
+            aria-label={isSpeakerMuted ? 'Unmute call speaker' : 'Mute call speaker'}
+            className={`min-h-[52px] min-w-[58px] px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+              isSpeakerMuted
+                ? 'bg-amber-600 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+          >
+            {isSpeakerMuted ? (
+              <VolumeX className="w-5 h-5" aria-hidden="true" />
+            ) : (
+              <Volume2 className="w-5 h-5" aria-hidden="true" />
+            )}
+            <span className="text-[10px] font-semibold">
+              {isSpeakerMuted ? 'Audio Off' : 'Speaker'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowParticipantsDrawer((v) => !v)}
+            aria-pressed={showParticipantsDrawer}
+            aria-label="View call participants"
+            className={`min-h-[52px] min-w-[58px] px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+              showParticipantsDrawer
+                ? 'bg-blue-600 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+          >
+            <Users className="w-5 h-5" aria-hidden="true" />
+            <span className="text-[10px] font-semibold">People</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onEndCall}
+            aria-label="End call"
+            className="min-h-[52px] px-5 sm:px-6 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm inline-flex items-center gap-2 transition-colors cursor-pointer shadow-lg"
+          >
+            <PhoneOff className="w-5 h-5" aria-hidden="true" />
+            <span>End Call</span>
+          </button>
+        </div>
       </footer>
     </div>
   );

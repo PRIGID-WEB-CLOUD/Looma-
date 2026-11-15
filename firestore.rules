@@ -163,7 +163,7 @@ service cloud.firestore {
           'lastMessageSenderId', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'title', 'isGroup', 'memberIds', 'lastMessageText',
+          'id', 'title', 'isGroup', 'memberIds', 'adminIds', 'lastMessageText',
           'lastMessageSenderId', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
@@ -171,6 +171,12 @@ service cloud.firestore {
         && data.isGroup is bool
         && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
         && isValidId(data.memberIds[0])
+        && (!('adminIds' in data) || (
+          data.adminIds is list
+          && data.adminIds.size() >= 1
+          && data.adminIds.size() <= 10
+          && isValidId(data.adminIds[0])
+        ))
         && data.lastMessageText is string && data.lastMessageText.size() <= 400
         && data.lastMessageSenderId is string && data.lastMessageSenderId.size() <= 128
         && data.createdAt is timestamp
@@ -320,13 +326,14 @@ service cloud.firestore {
         && isValidId(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == existing().uid
+        && incoming().followersCount == existing().followersCount
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'handle', 'bio', 'avatarUrl', 'location',
-          'interests', 'followersCount', 'followingCount', 'onboardingCompleted', 'updatedAt'
+          'interests', 'followingCount', 'onboardingCompleted', 'updatedAt'
         ]);
-      allow delete: if false;
+      allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
 
       match /private/{docId} {
         allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(docId);
@@ -397,6 +404,7 @@ service cloud.firestore {
           && isOwner(userId)
           && isValidId(userId)
           && isValidId(targetUid)
+          && userId != targetUid
           && isValidFollowRelation(incoming(), userId, targetUid)
           && incoming().createdAt == request.time;
         allow update: if false;
@@ -410,6 +418,7 @@ service cloud.firestore {
           && isOwner(followerId)
           && isValidId(userId)
           && isValidId(followerId)
+          && userId != followerId
           && isValidFollowRelation(incoming(), followerId, userId)
           && incoming().createdAt == request.time;
         allow update: if false;
@@ -460,6 +469,12 @@ service cloud.firestore {
             incoming().commentsCount == existing().commentsCount + 1
             && incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt'])
           )
+          // Action 5: Comment counter decrement when deleting a comment
+          || (
+            existing().commentsCount >= 1
+            && incoming().commentsCount == existing().commentsCount - 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt'])
+          )
         );
       allow delete: if isVerifiedUser()
         && isValidId(postId)
@@ -493,7 +508,10 @@ service cloud.firestore {
         allow delete: if isVerifiedUser()
           && isValidId(postId)
           && isValidId(commentId)
-          && existing().authorId == request.auth.uid;
+          && (
+            existing().authorId == request.auth.uid
+            || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
+          );
       }
     }
 
@@ -505,6 +523,11 @@ service cloud.firestore {
         && isValidChatThread(incoming())
         && incoming().id == chatId
         && request.auth.uid in incoming().memberIds
+        && (!incoming().isGroup || (
+          'adminIds' in incoming()
+          && request.auth.uid in incoming().adminIds
+          && incoming().memberIds.hasAll(incoming().adminIds)
+        ))
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerifiedUser()
@@ -516,20 +539,37 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Standard message preview update (membership unchanged)
+          // Action 1: Standard message preview update (membership & admins unchanged)
           (
             incoming().memberIds == existing().memberIds
+            && !incoming().diff(existing()).affectedKeys().hasAny(['adminIds'])
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'lastMessageText', 'lastMessageSenderId', 'updatedAt'
             ])
           )
-          // Action 2: Group chat participant or title management by existing group member
+          // Action 2a: Group chat participant, admin, or title management by group admin (or legacy group without adminIds)
           || (
             existing().isGroup == true
+            && (
+              ('adminIds' in existing() && request.auth.uid in existing().adminIds)
+              || !('adminIds' in existing())
+            )
             && incoming().memberIds.size() >= 1
             && incoming().memberIds.size() <= 10
+            && (!('adminIds' in incoming()) || incoming().memberIds.hasAll(incoming().adminIds))
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'memberIds', 'title', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
+              'memberIds', 'adminIds', 'title', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
+            ])
+          )
+          // Action 2b: Self-leave by any existing group member (only removes request.auth.uid)
+          || (
+            existing().isGroup == true
+            && !(request.auth.uid in incoming().memberIds)
+            && incoming().memberIds.size() == existing().memberIds.size() - 1
+            && existing().memberIds.hasAll(incoming().memberIds)
+            && !incoming().diff(existing()).affectedKeys().hasAny(['adminIds', 'title'])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'memberIds', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
             ])
           )
         );
@@ -562,6 +602,8 @@ service cloud.firestore {
         && isValidStory(incoming())
         && incoming().id == storyId
         && incoming().authorId == request.auth.uid
+        && incoming().expiresAtMs > request.time.toMillis()
+        && incoming().expiresAtMs <= request.time.toMillis() + 90000000
         && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if isVerifiedUser()

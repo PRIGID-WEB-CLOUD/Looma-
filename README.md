@@ -1,54 +1,50 @@
-# Looma 🌿
+# Looma
 
-**Looma** is a cross-platform, full-stack social media web application built with React 19, TypeScript, Vite, Tailwind CSS v4, Express (`server.ts`), Firebase Authentication & Cloud Firestore, and Cloudflare R2 object storage.
+**Looma** is a mobile-first social media application powered by React 19, TypeScript, Vite, Tailwind CSS v4, **Cloudflare Workers + Hono** (`src/worker.ts`), **Cloudflare R2**, **Cloudflare Calls SFU**, and **Firebase Authentication & Cloud Firestore**.
 
 ---
 
-## ✨ Key Features
+## Core Capabilities
 
-1. **Rich Social Feed & Posts**:
-   - Create text posts, photo uploads (via Cloudflare R2), link previews (with automatic YouTube/video/audio detection), and categories.
-   - Like, comment, bookmark, and share your own posts directly to your 24-hour **Story**.
+1. **Social Feed & Rich Media**:
+   - Create text, photo, video, audio, and link posts with categories, `#hashtags`, `@mentions`, likes, bookmarks, inline deletion, and one-click sharing to 24-hour Stories.
 2. **24-Hour Stories**:
-   - View creator stories with immersive gradient overlays, video/image media support, and story replies sent instantly via direct message.
-3. **Real-Time Direct & Group Messaging**:
-   - 1-on-1 and group chat threads with online presence indicators, message history persistence in Firestore, and rich preview snippets.
-4. **Creator Profiles & Follow Network**:
-   - Public creator profiles, follower/following/friends connection lists, and mutual connection discovery.
-5. **Brand & Logo Showcase**:
-   - Interactive brand modal accessible via the top bar logo, supporting one-click SVG downloads and copying for **Default**, **Black & White**, and **Transparent** logo vectors.
-6. **Cloudflare R2 Object Storage**:
-   - Secure server-side proxy streaming with HTTP Range support, mime-type classification, size limits, and presigned upload URLs.
-7. **Protected Access & Google OAuth**:
-   - Firebase Authentication with Google sign-in and verified email enforcement.
+   - Multi-frame story viewer with video/image support, instant direct-message replies, and owner deletion.
+3. **Direct & Group Messaging**:
+   - Real-time 1-on-1 and group chats in Firestore with admin management (rename, add/remove participants, promote admins), online presence indicators, and unread notifications.
+4. **Live Audio & Video Calls (Cloudflare Calls SFU)**:
+   - Authenticated WebRTC audio/video calling backed by Cloudflare Calls, Firestore `/calls` room membership verification, STUN/TURN ICE support, mute/camera/screen-share controls, incoming call ringing modal, and explicit connection/error state reporting.
+5. **Cloudflare R2 Media Storage**:
+   - Authenticated uploads to `uploads/{uid}/{posts|stories|avatars}/...` with MIME and magic-byte signature verification, HTTP byte-range streaming (`206 Partial Content`), and owner-verified deletion.
+6. **Verified Accounts & Profile Management**:
+   - Google Sign-In via Firebase Auth, mandatory email verification gate, public/private profile editing, and full account data cleanup.
 
 ---
 
-## 🛠️ Tech Stack
+## Architecture
 
-- **Frontend**: React 19, Vite, Tailwind CSS v4, Lucide React icons, TypeScript.
-- **Backend**: Node.js, Express (`server.ts`), Vite middleware integration.
-- **Database & Auth**: Firebase Auth & Cloud Firestore (`ai-studio-82404cfa-89f7-49b0-ab36-ea32adf1e5cc`).
-- **Storage**: Cloudflare R2 Object Storage (S3-compatible AWS SDK v3).
+- **Frontend**: React 19, Vite, Tailwind CSS v4, Lucide icons, TypeScript (`src/App.tsx`, `src/components/`, `src/hooks/`).
+- **Production Edge Backend**: Cloudflare Workers + Hono (`src/worker.ts`, `wrangler.jsonc`) with Workers Static Assets (`dist/`) and native `R2_BUCKET` binding (`looma`).
+- **Local Dev Server**: `@hono/node-server` + Vite middleware (`server.ts`) running the exact same Worker Hono app locally on port `3000`.
+- **Database & Auth**: Firebase Auth + Cloud Firestore (`firestore.rules`).
 
 ---
 
-## 🚀 Getting Started
+## Quick Commands
 
-1. **Install Dependencies**:
-   ```bash
-   npm install
-   ```
-2. **Run Development Server**:
-   ```bash
-   npm run dev
-   ```
-   Opens the app at `http://localhost:3000`.
-3. **Run Unit Tests**:
-   ```bash
-   npx --yes tsx --test src/utils/socialLogic.test.ts src/utils/storageLogic.test.ts
-   ```
-4. **Production Build**:
-   ```bash
-   npm run build
-   ```
+```bash
+# Install dependencies
+npm install
+
+# Run local dev server at http://localhost:3000
+npm run dev
+
+# Run all unit & Worker API tests
+npx --yes tsx --test src/utils/*.test.ts src/services/*.test.ts src/worker.test.ts
+
+# Typecheck & production build
+npm run lint
+npm run build
+```
+
+See `DEPLOYMENT.md` for Cloudflare Workers configuration, secrets, and Firebase deployment instructions.

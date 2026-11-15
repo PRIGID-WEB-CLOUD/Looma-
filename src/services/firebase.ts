@@ -6,6 +6,9 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
+  reload,
+  deleteUser,
   updateProfile,
   signOut,
   type User,
@@ -182,7 +185,32 @@ export async function signUpWithEmail(
   if (result.user && displayName) {
     await updateProfile(result.user, { displayName });
   }
+  if (result.user && !result.user.emailVerified) {
+    await sendEmailVerification(result.user).catch((err) => {
+      console.warn('Unable to dispatch initial verification email:', err);
+    });
+  }
   return result.user;
+}
+
+export async function resendVerificationEmail(): Promise<void> {
+  if (!auth.currentUser) {
+    throw new Error('No active signed-in account found.');
+  }
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function reloadCurrentUser(): Promise<User | null> {
+  if (!auth.currentUser) return null;
+  await reload(auth.currentUser);
+  return auth.currentUser;
+}
+
+export async function deleteCurrentAuthUser(): Promise<void> {
+  if (!auth.currentUser) {
+    throw new Error('No signed-in Firebase account to delete.');
+  }
+  await deleteUser(auth.currentUser);
 }
 
 export async function signOutAccount(): Promise<void> {

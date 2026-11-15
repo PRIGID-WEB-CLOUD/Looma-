@@ -22,6 +22,8 @@ interface FeedViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onDeletePost?: (post: Post) => Promise<void>;
+  onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory: (post: Post) => Promise<unknown> | void;
   onAuthorClick: (post: Post) => void;
   onMentionClick?: (handle: string) => void;
@@ -45,6 +47,8 @@ export function FeedView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onDeletePost,
+  onDeleteComment,
   onShareToStory,
   onAuthorClick,
   onMentionClick,
@@ -187,6 +191,8 @@ export function FeedView({
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onDeletePost={onDeletePost}
+              onDeleteComment={onDeleteComment}
               onShareToStory={onShareToStory}
               onAuthorClick={onAuthorClick}
               onSelectHashtag={(tag) => {

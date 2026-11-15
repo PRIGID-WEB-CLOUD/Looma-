@@ -10,6 +10,7 @@ import { RichText } from './RichText';
 
 interface PublicProfileViewProps {
   creator: UserProfile;
+  currentUserId?: string;
   loading?: boolean;
   isFollowing: boolean;
   followersCount?: number;
@@ -28,12 +29,15 @@ interface PublicProfileViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onDeletePost?: (post: Post) => Promise<void>;
+  onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
 }
 
 export function PublicProfileView({
   creator,
+  currentUserId = '',
   loading = false,
   isFollowing,
   followersCount,
@@ -52,6 +56,8 @@ export function PublicProfileView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onDeletePost,
+  onDeleteComment,
   onSelectHashtag,
   onMentionClick,
 }: PublicProfileViewProps) {
@@ -289,12 +295,15 @@ export function PublicProfileView({
             <PostCard
               key={post.id}
               post={post}
+              currentUserId={currentUserId}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onDeletePost={onDeletePost}
+              onDeleteComment={onDeleteComment}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}
               onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
@@ -307,6 +316,7 @@ export function PublicProfileView({
         open={Boolean(activeMediaPostId)}
         entries={creatorMediaEntries}
         activePostId={activeMediaPostId}
+        currentUserId={currentUserId}
         likedPostIds={likedPostIds}
         bookmarkedPostIds={bookmarkedPostIds}
         onClose={() => setActiveMediaPostId(null)}

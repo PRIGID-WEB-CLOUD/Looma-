@@ -23,8 +23,11 @@ import {
 import {
   auth,
   db,
+  deleteCurrentAuthUser,
   handleFirestoreError,
   OperationType,
+  reloadCurrentUser,
+  resendVerificationEmail,
   signInWithGoogle,
   signInWithApple,
   signInWithEmail,
@@ -32,6 +35,7 @@ import {
   signOutAccount,
   testFirestoreConnection,
 } from '../services/firebase';
+import { deleteUploadedMedia } from '../services/storage';
 import {
   buildFallbackPrivateSettings,
   buildFallbackUserProfile,
@@ -57,9 +61,11 @@ import {
 } from '../services/notifications';
 import type {
   AppNotification,
+  CallParticipant,
+  CallSession,
   ChatMessage,
   ChatThread,
-  CallSession,
+  IncomingCallInvite,
   Post,
   PostCategory,
   PostComment,
@@ -81,6 +87,7 @@ import {
   isAuthorizedSession,
   normalizeAssetUrl,
   POST_CATEGORIES,
+  promoteGroupAdminState,
   removeGroupParticipantState,
   resolvePublicProfile,
   sanitizeHandle,
@@ -88,6 +95,7 @@ import {
   toggleFollowState,
   validateGroupChatInput,
 } from '../utils/socialLogic';
+import { extractStorageKeyFromUrl } from '../utils/storageLogic';
 
 const STORAGE_KEYS = {
   SESSION_ACTIVE: 'looma_session_active_v1',
@@ -325,6 +333,10 @@ export function useSocialStore() {
   const initialChatsSyncedRef = useRef(false);
   const notifiedChatStampsRef = useRef<Set<string>>(new Set());
   const leftChatIdsRef = useRef<Set<string>>(new Set());
+  const [incomingCallInvite, setIncomingCallInvite] =
+    useState<IncomingCallInvite | null>(null);
+  const declinedCallIdsRef = useRef<Set<string>>(new Set());
+  const callSessionRef = useRef<CallSession | null>(null);
 
   useEffect(() => {
     themeRef.current = theme;
@@ -591,6 +603,153 @@ export function useSocialStore() {
     testFirestoreConnection();
   }, []);
 
+  const hydrateVerifiedUser = useCallback(
+    async (user: User) => {
+      const cachedProfile = readStorage<UserProfile | null>(
+        STORAGE_KEYS.PROFILE,
+        null
+      );
+      const cachedSettings = readStorage<UserPrivateSettings | null>(
+        STORAGE_KEYS.SETTINGS,
+        null
+      );
+      const fallbackProfile = buildFallbackUserProfile(
+        user,
+        cachedProfile,
+        autostart
+      );
+      const fallbackSettings = buildFallbackPrivateSettings(
+        user,
+        cachedSettings,
+        pushEnabledRef.current,
+        themeRef.current
+      );
+
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const snap = await readDocResilient(userRef);
+        let hydratedProfile: UserProfile = fallbackProfile;
+        let hydratedSettings: UserPrivateSettings = fallbackSettings;
+
+        if (snap && snap.exists()) {
+          const d = snap.data();
+          const resolvedDisplayName =
+            (!d.displayName || d.displayName === 'Looma Member') &&
+            user.displayName
+              ? user.displayName.trim().slice(0, 60)
+              : d.displayName;
+          const resolvedAvatar = normalizeAssetUrl(
+            d.avatarUrl || user.photoURL || ''
+          );
+          hydratedProfile = {
+            uid: d.uid || user.uid,
+            displayName: resolvedDisplayName,
+            handle: d.handle || fallbackProfile.handle,
+            bio: d.bio ?? '',
+            avatarUrl: resolvedAvatar,
+            location: d.location ?? '',
+            interests: Array.isArray(d.interests) ? d.interests : [],
+            followersCount: Number(d.followersCount || 0),
+            followingCount: Number(d.followingCount || 0),
+            onboardingCompleted: Boolean(d.onboardingCompleted),
+            createdAtMs: timestampToMs(d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          };
+          if (
+            resolvedDisplayName !== d.displayName ||
+            resolvedAvatar !== d.avatarUrl
+          ) {
+            updateDoc(userRef, {
+              displayName: resolvedDisplayName,
+              avatarUrl: resolvedAvatar,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+        } else if (snap && !snap.exists()) {
+          const newProfile: UserProfile = {
+            ...fallbackProfile,
+            createdAtMs: Date.now(),
+            updatedAtMs: Date.now(),
+          };
+          hydratedProfile = newProfile;
+          setDoc(userRef, {
+            uid: newProfile.uid,
+            displayName: newProfile.displayName,
+            handle: newProfile.handle,
+            bio: newProfile.bio,
+            avatarUrl: newProfile.avatarUrl,
+            location: newProfile.location,
+            interests: newProfile.interests,
+            followersCount: 0,
+            followingCount: 0,
+            onboardingCompleted: newProfile.onboardingCompleted,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+          setDoc(doc(db, 'users', user.uid, 'private', 'settings'), {
+            uid: user.uid,
+            email: user.email || '',
+            pushEnabled: pushEnabledRef.current,
+            themePreference: themeRef.current,
+            notifyLikes: true,
+            notifyComments: true,
+            notifyMessages: true,
+            profileVisibility: 'public',
+            messagePrivacy: 'everyone',
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+
+        try {
+          const settingsSnap = await readDocResilient(
+            doc(db, 'users', user.uid, 'private', 'settings')
+          );
+          if (settingsSnap && settingsSnap.exists()) {
+            const s = settingsSnap.data();
+            hydratedSettings = {
+              uid: s.uid || user.uid,
+              email: s.email || user.email || '',
+              pushEnabled: Boolean(s.pushEnabled ?? true),
+              themePreference:
+                s.themePreference === 'dark' ? 'dark' : 'light',
+              notifyLikes: Boolean(s.notifyLikes ?? true),
+              notifyComments: Boolean(s.notifyComments ?? true),
+              notifyMessages: Boolean(s.notifyMessages ?? true),
+              profileVisibility:
+                s.profileVisibility === 'followers' ? 'followers' : 'public',
+              messagePrivacy:
+                s.messagePrivacy === 'following' ? 'following' : 'everyone',
+            };
+          }
+        } catch {
+          // Keep fallback private settings if transient failure occurs
+        }
+
+        setAuthError(null);
+        setFirebaseUser(user);
+        setProfile(hydratedProfile);
+        setPrivateSettings(hydratedSettings);
+        setIsAuthenticated(true);
+        writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
+        writeStorage(STORAGE_KEYS.PROFILE, hydratedProfile);
+      } catch (err) {
+        if (!isTransientFirestoreError(err)) {
+          console.error('Failed to load user profile', err);
+        }
+        setAuthError(null);
+        setFirebaseUser(user);
+        setProfile(fallbackProfile);
+        setPrivateSettings(fallbackSettings);
+        setIsAuthenticated(true);
+        writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
+        writeStorage(STORAGE_KEYS.PROFILE, fallbackProfile);
+      } finally {
+        setAuthReady(true);
+      }
+    },
+    [autostart]
+  );
+
   // Auth listener & Firestore bootstrapping
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -603,147 +762,7 @@ export function useSocialStore() {
           setAuthReady(true);
           return;
         }
-        const cachedProfile = readStorage<UserProfile | null>(
-          STORAGE_KEYS.PROFILE,
-          null
-        );
-        const cachedSettings = readStorage<UserPrivateSettings | null>(
-          STORAGE_KEYS.SETTINGS,
-          null
-        );
-        const fallbackProfile = buildFallbackUserProfile(
-          user,
-          cachedProfile,
-          autostart
-        );
-        const fallbackSettings = buildFallbackPrivateSettings(
-          user,
-          cachedSettings,
-          pushEnabledRef.current,
-          themeRef.current
-        );
-
-        try {
-          const userRef = doc(db, 'users', user.uid);
-          const snap = await readDocResilient(userRef);
-          let hydratedProfile: UserProfile = fallbackProfile;
-          let hydratedSettings: UserPrivateSettings = fallbackSettings;
-
-          if (snap && snap.exists()) {
-            const d = snap.data();
-            const resolvedDisplayName =
-              (!d.displayName || d.displayName === 'Looma Member') &&
-              user.displayName
-                ? user.displayName.trim().slice(0, 60)
-                : d.displayName;
-            const resolvedAvatar = normalizeAssetUrl(
-              d.avatarUrl || user.photoURL || ''
-            );
-            hydratedProfile = {
-              uid: d.uid || user.uid,
-              displayName: resolvedDisplayName,
-              handle: d.handle || fallbackProfile.handle,
-              bio: d.bio ?? '',
-              avatarUrl: resolvedAvatar,
-              location: d.location ?? '',
-              interests: Array.isArray(d.interests) ? d.interests : [],
-              followersCount: Number(d.followersCount || 0),
-              followingCount: Number(d.followingCount || 0),
-              onboardingCompleted: Boolean(d.onboardingCompleted),
-              createdAtMs: timestampToMs(d.createdAt),
-              updatedAtMs: timestampToMs(d.updatedAt),
-            };
-            if (
-              resolvedDisplayName !== d.displayName ||
-              resolvedAvatar !== d.avatarUrl
-            ) {
-              updateDoc(userRef, {
-                displayName: resolvedDisplayName,
-                avatarUrl: resolvedAvatar,
-                updatedAt: serverTimestamp(),
-              }).catch(() => {});
-            }
-          } else if (snap && !snap.exists()) {
-            const newProfile: UserProfile = {
-              ...fallbackProfile,
-              createdAtMs: Date.now(),
-              updatedAtMs: Date.now(),
-            };
-            hydratedProfile = newProfile;
-            setDoc(userRef, {
-              uid: newProfile.uid,
-              displayName: newProfile.displayName,
-              handle: newProfile.handle,
-              bio: newProfile.bio,
-              avatarUrl: newProfile.avatarUrl,
-              location: newProfile.location,
-              interests: newProfile.interests,
-              followersCount: 0,
-              followingCount: 0,
-              onboardingCompleted: newProfile.onboardingCompleted,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            }).catch(() => {});
-            setDoc(doc(db, 'users', user.uid, 'private', 'settings'), {
-              uid: user.uid,
-              email: user.email || '',
-              pushEnabled: pushEnabledRef.current,
-              themePreference: themeRef.current,
-              notifyLikes: true,
-              notifyComments: true,
-              notifyMessages: true,
-              profileVisibility: 'public',
-              messagePrivacy: 'everyone',
-              updatedAt: serverTimestamp(),
-            }).catch(() => {});
-          }
-
-          try {
-            const settingsSnap = await readDocResilient(
-              doc(db, 'users', user.uid, 'private', 'settings')
-            );
-            if (settingsSnap && settingsSnap.exists()) {
-              const s = settingsSnap.data();
-              hydratedSettings = {
-                uid: s.uid || user.uid,
-                email: s.email || user.email || '',
-                pushEnabled: Boolean(s.pushEnabled ?? true),
-                themePreference:
-                  s.themePreference === 'dark' ? 'dark' : 'light',
-                notifyLikes: Boolean(s.notifyLikes ?? true),
-                notifyComments: Boolean(s.notifyComments ?? true),
-                notifyMessages: Boolean(s.notifyMessages ?? true),
-                profileVisibility:
-                  s.profileVisibility === 'followers' ? 'followers' : 'public',
-                messagePrivacy:
-                  s.messagePrivacy === 'following' ? 'following' : 'everyone',
-              };
-            }
-          } catch {
-            // Keep fallback private settings if transient failure occurs
-          }
-
-          setAuthError(null);
-          setFirebaseUser(user);
-          setProfile(hydratedProfile);
-          setPrivateSettings(hydratedSettings);
-          setIsAuthenticated(true);
-          writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
-          writeStorage(STORAGE_KEYS.PROFILE, hydratedProfile);
-        } catch (err) {
-          if (!isTransientFirestoreError(err)) {
-            console.error('Failed to load user profile', err);
-          }
-          setAuthError(null);
-          setFirebaseUser(user);
-          setProfile(fallbackProfile);
-          setPrivateSettings(fallbackSettings);
-          setIsAuthenticated(true);
-          writeStorage(STORAGE_KEYS.SESSION_ACTIVE, true);
-          writeStorage(STORAGE_KEYS.PROFILE, fallbackProfile);
-        } finally {
-          setAuthReady(true);
-        }
+        await hydrateVerifiedUser(user);
       } else {
         setFirebaseUser(null);
         setIsAuthenticated(autostart);
@@ -754,7 +773,7 @@ export function useSocialStore() {
       }
     });
     return () => unsub();
-  }, [autostart]);
+  }, [autostart, hydrateVerifiedUser]);
 
   // Firestore real-time listeners when authenticated
   useEffect(() => {
@@ -864,6 +883,7 @@ export function useSocialStore() {
           const d = docSnap.data();
           const memberIds = Array.isArray(d.memberIds) ? d.memberIds : [];
           const isGroup = Boolean(d.isGroup);
+          const adminIds = Array.isArray(d.adminIds) ? d.adminIds : undefined;
           const partnerUid =
             memberIds.find((id: string) => id !== firebaseUser.uid) || memberIds[0];
           const partnerProfile = communityUsersRef.current.find(
@@ -874,6 +894,7 @@ export function useSocialStore() {
             title: d.title,
             isGroup,
             memberIds,
+            ...(adminIds ? { adminIds } : {}),
             partnerAvatar: partnerProfile?.avatarUrl || '',
             partnerHandle: isGroup
               ? `${memberIds.length} members`
@@ -1124,6 +1145,53 @@ export function useSocialStore() {
       }
     );
 
+    const callsQuery = query(
+      collection(db, 'calls'),
+      where('memberIds', 'array-contains', firebaseUser.uid)
+    );
+    const unsubCalls = onSnapshot(
+      callsQuery,
+      (snapshot) => {
+        const now = Date.now();
+        let nextInvite: IncomingCallInvite | null = null;
+        for (const docSnap of snapshot.docs) {
+          const d = docSnap.data();
+          const callId = d.id || docSnap.id;
+          const status = String(d.status || '');
+          const createdAtMs = timestampToMs(d.createdAt);
+          if (status === 'ended') {
+            if (callSessionRef.current?.callId === callId) {
+              setCallSession(null);
+            }
+            continue;
+          }
+          if (
+            status === 'ringing' &&
+            d.callerId !== firebaseUser.uid &&
+            !declinedCallIdsRef.current.has(callId) &&
+            callSessionRef.current?.callId !== callId &&
+            now - createdAtMs < 120_000
+          ) {
+            nextInvite = {
+              callId,
+              chatId: String(d.chatId || ''),
+              title: String(d.title || 'Incoming Call'),
+              callerId: String(d.callerId || ''),
+              callerName: String(d.callerName || 'Looma Member'),
+              callerAvatar: normalizeAssetUrl(String(d.callerAvatar || '')),
+              isAudioOnly: Boolean(d.isAudioOnly),
+              memberIds: Array.isArray(d.memberIds) ? d.memberIds : [],
+              createdAtMs,
+            };
+          }
+        }
+        setIncomingCallInvite(nextInvite);
+      },
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+      }
+    );
+
     const syncOwnPresence = () => {
       setDoc(doc(db, 'presence', firebaseUser.uid), {
         uid: firebaseUser.uid,
@@ -1147,6 +1215,7 @@ export function useSocialStore() {
       unsubFollowing();
       unsubFollowers();
       unsubPresence();
+      unsubCalls();
     };
   }, [authReady, firebaseUser]);
 
@@ -1216,7 +1285,10 @@ export function useSocialStore() {
 
   const posts: Post[] = firebaseUser ? remotePosts : localPosts;
 
-  const stories: StoryItem[] = firebaseUser ? remoteStories : localStories;
+  const nowMs = Date.now();
+  const stories: StoryItem[] = (firebaseUser ? remoteStories : localStories).filter(
+    (s) => s.expiresAtMs > nowMs
+  );
 
   const isAuthorized = isAuthorizedSession(
     Boolean(firebaseUser),
@@ -1293,6 +1365,43 @@ export function useSocialStore() {
     []
   );
 
+  const resendEmailVerificationLink = useCallback(async () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await resendVerificationEmail();
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'Unable to send verification email.'
+      );
+      throw err;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const refreshVerificationStatus = useCallback(async (): Promise<boolean> => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const updated = await reloadCurrentUser();
+      if (updated && updated.emailVerified) {
+        await updated.getIdToken(true);
+        await hydrateVerifiedUser(updated);
+        return true;
+      }
+      setAuthError('Email is still unverified. Open the link we sent to your inbox, then try again.');
+      return false;
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'Unable to refresh verification status.'
+      );
+      return false;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [hydrateVerifiedUser]);
+
   const logout = useCallback(async () => {
     if (firebaseUser) {
       await setDoc(doc(db, 'presence', firebaseUser.uid), {
@@ -1305,6 +1414,8 @@ export function useSocialStore() {
     }
     setIsAuthenticated(false);
     setAuthError(null);
+    setIncomingCallInvite(null);
+    setCallSession(null);
     writeStorage(STORAGE_KEYS.SESSION_ACTIVE, false);
     const resetProfile = createInitialMemberProfile({
       onboardingCompleted: false,
@@ -1316,6 +1427,71 @@ export function useSocialStore() {
       email: '',
     }));
   }, [firebaseUser]);
+
+  const deleteAccount = useCallback(async () => {
+    requireAuthorized();
+    if (firebaseUser) {
+      const uid = firebaseUser.uid;
+      const userRef = doc(db, 'users', uid);
+      const settingsRef = doc(db, 'users', uid, 'private', 'settings');
+      const presenceRef = doc(db, 'presence', uid);
+      let savedUserDoc: DocumentData | null = null;
+      let savedSettingsDoc: DocumentData | null = null;
+
+      try {
+        const [uSnap, sSnap] = await Promise.all([
+          getDoc(userRef).catch(() => null),
+          getDoc(settingsRef).catch(() => null),
+        ]);
+        if (uSnap?.exists()) savedUserDoc = uSnap.data();
+        if (sSnap?.exists()) savedSettingsDoc = sSnap.data();
+
+        await Promise.all([
+          deleteDoc(presenceRef).catch(() => {}),
+          deleteDoc(settingsRef).catch(() => {}),
+          deleteDoc(userRef).catch(() => {}),
+        ]);
+
+        await deleteCurrentAuthUser();
+      } catch (err) {
+        if (savedUserDoc) {
+          await setDoc(userRef, savedUserDoc).catch(() => {});
+        }
+        if (savedSettingsDoc) {
+          await setDoc(settingsRef, savedSettingsDoc).catch(() => {});
+        }
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.includes('requires-recent-login')) {
+          throw new Error(
+            'For security, please sign out and sign back in before deleting your account.'
+          );
+        }
+        throw err instanceof Error
+          ? err
+          : new Error('Unable to delete Firebase account.');
+      }
+    }
+    try {
+      for (const key of Object.values(STORAGE_KEYS)) {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // Ignore storage cleanup error
+    }
+    setIsAuthenticated(false);
+    setAuthError(null);
+    setIncomingCallInvite(null);
+    setCallSession(null);
+    setLocalPosts([]);
+    setLocalStories([]);
+    setThreads([]);
+    setMessagesByChat({});
+    setNotifications([]);
+    const resetProfile = createInitialMemberProfile({
+      onboardingCompleted: false,
+    });
+    setProfile(resetProfile);
+  }, [firebaseUser, requireAuthorized]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
@@ -1792,6 +1968,99 @@ export function useSocialStore() {
     [firebaseUser, profile, remotePosts, triggerNotification]
   );
 
+  const deletePost = useCallback(
+    async (post: Post) => {
+      requireAuthorized();
+      if (post.authorId !== profile.uid) {
+        throw new Error('You can only delete your own posts.');
+      }
+
+      const isRemotePost = remotePosts.some((rp) => rp.id === post.id);
+      if (firebaseUser && isRemotePost) {
+        try {
+          await deleteDoc(doc(db, 'posts', post.id));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `posts/${post.id}`);
+        }
+      } else {
+        setLocalPosts((prev) => prev.filter((p) => p.id !== post.id));
+      }
+
+      const mediaCandidates = [post.imageUrl, post.videoUrl, post.audioUrl].filter(
+        (u): u is string => Boolean(u && extractStorageKeyFromUrl(u))
+      );
+      if (firebaseUser) {
+        await Promise.all(
+          mediaCandidates.map((url) =>
+            deleteUploadedMedia(url, { ignoreNotFound: true }).catch((err) => {
+              console.warn('Media cleanup warning for post deletion:', err);
+            })
+          )
+        );
+      }
+
+      setCommentsByPost((prev) => {
+        if (!prev[post.id]) return prev;
+        const copy = { ...prev };
+        delete copy[post.id];
+        return copy;
+      });
+      setLikedPostIds((prev) => prev.filter((id) => id !== post.id));
+      setBookmarkedPostIds((prev) => prev.filter((id) => id !== post.id));
+    },
+    [firebaseUser, profile.uid, remotePosts, requireAuthorized]
+  );
+
+  const deleteComment = useCallback(
+    async (post: Post, commentId: string) => {
+      requireAuthorized();
+      const postComments = commentsByPost[post.id] || [];
+      const targetComment = postComments.find((c) => c.id === commentId);
+      if (
+        targetComment &&
+        targetComment.authorId !== profile.uid &&
+        post.authorId !== profile.uid
+      ) {
+        throw new Error('You can only delete your own comments or comments on your posts.');
+      }
+
+      setCommentsByPost((prev) => ({
+        ...prev,
+        [post.id]: (prev[post.id] || []).filter((c) => c.id !== commentId),
+      }));
+
+      const isRemotePost = remotePosts.some((rp) => rp.id === post.id);
+      if (firebaseUser && isRemotePost) {
+        const batch = writeBatch(db);
+        batch.delete(doc(db, 'posts', post.id, 'comments', commentId));
+        if (post.commentsCount >= 1) {
+          batch.update(doc(db, 'posts', post.id), {
+            commentsCount: increment(-1),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        try {
+          await batch.commit();
+        } catch (err) {
+          handleFirestoreError(
+            err,
+            OperationType.DELETE,
+            `posts/${post.id}/comments/${commentId}`
+          );
+        }
+      } else {
+        setLocalPosts((prev) =>
+          prev.map((p) =>
+            p.id === post.id
+              ? { ...p, commentsCount: Math.max(0, p.commentsCount - 1) }
+              : p
+          )
+        );
+      }
+    },
+    [commentsByPost, firebaseUser, profile.uid, remotePosts, requireAuthorized]
+  );
+
   const subscribeChatMessages = useCallback(
     (chatId: string) => {
       if (!firebaseUser) return () => {};
@@ -2050,6 +2319,7 @@ export function useSocialStore() {
             title: newThread.title,
             isGroup: true,
             memberIds: newThread.memberIds,
+            adminIds: newThread.adminIds || [firebaseUser.uid],
             lastMessageText: newThread.lastMessageText,
             lastMessageSenderId: firebaseUser.uid,
             createdAt: serverTimestamp(),
@@ -2081,12 +2351,17 @@ export function useSocialStore() {
       const threadRef = doc(db, 'chats', updatedThread.id);
       try {
         const snap = await readDocResilient(threadRef);
+        const adminPayload =
+          Array.isArray(updatedThread.adminIds) && updatedThread.adminIds.length > 0
+            ? { adminIds: updatedThread.adminIds }
+            : {};
         if (!snap || !snap.exists()) {
           await setDoc(threadRef, {
             id: updatedThread.id,
             title: updatedThread.title,
             isGroup: true,
             memberIds: updatedThread.memberIds,
+            adminIds: updatedThread.adminIds || [firebaseUser.uid],
             lastMessageText: updatedThread.lastMessageText,
             lastMessageSenderId: firebaseUser.uid,
             createdAt: serverTimestamp(),
@@ -2096,6 +2371,7 @@ export function useSocialStore() {
           await updateDoc(threadRef, {
             title: updatedThread.title,
             memberIds: updatedThread.memberIds,
+            ...adminPayload,
             lastMessageText: updatedThread.lastMessageText,
             lastMessageSenderId: firebaseUser.uid,
             updatedAt: serverTimestamp(),
@@ -2261,6 +2537,40 @@ export function useSocialStore() {
       return updated;
     },
     [persistGroupThreadUpdate, profile, requireAuthorized, threads]
+  );
+
+  const promoteGroupAdmin = useCallback(
+    async (chatId: string, targetUid: string): Promise<ChatThread | null> => {
+      requireAuthorized();
+      const target = threads.find((t) => t.id === chatId);
+      if (!target || !target.isGroup) return null;
+
+      const pool = [profile, ...communityUsers];
+      const member = pool.find((u) => u.uid === targetUid);
+      const targetName = member?.displayName || targetUid;
+      const result = promoteGroupAdminState(
+        target,
+        targetUid,
+        targetName,
+        profile.uid
+      );
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      setThreads((prev) =>
+        prev
+          .map((t) => (t.id === chatId ? result.thread : t))
+          .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      );
+      broadcastRef.current?.postMessage({
+        type: 'chat:thread_updated',
+        thread: result.thread,
+      });
+      await persistGroupThreadUpdate(result.thread);
+      return result.thread;
+    },
+    [communityUsers, persistGroupThreadUpdate, profile, requireAuthorized, threads]
   );
 
   const toggleMuteChat = useCallback((chatId: string) => {
@@ -2520,41 +2830,132 @@ export function useSocialStore() {
     );
   }, []);
 
+  const deleteStory = useCallback(
+    async (story: StoryItem) => {
+      requireAuthorized();
+      if (story.authorId !== profile.uid) {
+        throw new Error('You can only delete your own stories.');
+      }
+      if (firebaseUser) {
+        try {
+          await deleteDoc(doc(db, 'stories', story.id));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `stories/${story.id}`);
+        }
+        if (story.imageUrl && extractStorageKeyFromUrl(story.imageUrl)) {
+          await deleteUploadedMedia(story.imageUrl, { ignoreNotFound: true }).catch(
+            (err) => {
+              console.warn('Media cleanup warning for story deletion:', err);
+            }
+          );
+        }
+      } else {
+        setLocalStories((prev) => prev.filter((s) => s.id !== story.id));
+      }
+    },
+    [firebaseUser, profile.uid, requireAuthorized]
+  );
+
   const [callSession, setCallSession] = useState<CallSession | null>(null);
 
-  const startCall = useCallback((thread: ChatThread, isAudioOnly: boolean) => {
-    const participants = thread.memberIds.map((uid) => {
-      const u = communityUsersRef.current.find((member) => member.uid === uid);
-      return {
-        uid,
-        name: u?.displayName || (uid === profile.uid ? profile.displayName : 'Participant'),
-        avatar: u?.avatarUrl || '',
-        isMuted: false,
-        isVideoOff: false,
-      };
-    });
-    setCallSession({
-      chatId: thread.id,
-      title: thread.title,
-      isAudioOnly,
-      active: true,
-      isMuted: false,
-      isVideoOff: false,
-      isScreenSharing: false,
-      participants,
-      startedAtMs: Date.now(),
-    });
-  }, [profile.uid, profile.displayName]);
+  useEffect(() => {
+    callSessionRef.current = callSession;
+  }, [callSession]);
 
-  const startInstantCall = useCallback(
-    (title: string = 'Studio Live Room', isAudioOnly: boolean = false) => {
+  const startCall = useCallback(
+    async (thread: ChatThread, isAudioOnly: boolean) => {
+      requireAuthorized();
+      const callId = makeSafeId('call');
+      const uniqueMembers = Array.from(
+        new Set([profile.uid, ...thread.memberIds].filter(Boolean))
+      ).slice(0, 10);
+
+      const participants: CallParticipant[] = uniqueMembers.map((uid) => {
+        const u = communityUsersRef.current.find((member) => member.uid === uid);
+        return {
+          uid,
+          name:
+            uid === profile.uid
+              ? profile.displayName
+              : u?.displayName || 'Participant',
+          avatar: uid === profile.uid ? profile.avatarUrl : u?.avatarUrl || '',
+          isMuted: false,
+          isVideoOff: isAudioOnly,
+          connectionState: uid === profile.uid ? 'joined' : 'invited',
+        };
+      });
+
+      if (firebaseUser) {
+        await setDoc(doc(db, 'calls', callId), {
+          id: callId,
+          chatId: thread.id,
+          title: thread.title,
+          callerId: firebaseUser.uid,
+          callerName: profile.displayName,
+          callerAvatar: profile.avatarUrl,
+          isAudioOnly,
+          status: 'ringing',
+          memberIds: uniqueMembers,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       setCallSession({
-        chatId: `call_${Date.now()}`,
-        title,
+        callId,
+        chatId: thread.id,
+        title: thread.title,
+        callerId: profile.uid,
+        callerName: profile.displayName,
+        callerAvatar: profile.avatarUrl,
         isAudioOnly,
         active: true,
+        status: 'ringing',
         isMuted: false,
-        isVideoOff: false,
+        isVideoOff: isAudioOnly,
+        isScreenSharing: false,
+        participants,
+        startedAtMs: Date.now(),
+      });
+    },
+    [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid, requireAuthorized]
+  );
+
+  const startInstantCall = useCallback(
+    async (title: string = 'Studio Live Room', isAudioOnly: boolean = false) => {
+      requireAuthorized();
+      const callId = makeSafeId('call');
+      const roomChatId = makeSafeId('room');
+      const memberIds = [profile.uid];
+
+      if (firebaseUser) {
+        await setDoc(doc(db, 'calls', callId), {
+          id: callId,
+          chatId: roomChatId,
+          title: title.trim().slice(0, 80) || 'Studio Live Room',
+          callerId: firebaseUser.uid,
+          callerName: profile.displayName,
+          callerAvatar: profile.avatarUrl,
+          isAudioOnly,
+          status: 'ringing',
+          memberIds,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      setCallSession({
+        callId,
+        chatId: roomChatId,
+        title,
+        callerId: profile.uid,
+        callerName: profile.displayName,
+        callerAvatar: profile.avatarUrl,
+        isAudioOnly,
+        active: true,
+        status: 'ringing',
+        isMuted: false,
+        isVideoOff: isAudioOnly,
         isScreenSharing: false,
         participants: [
           {
@@ -2562,18 +2963,236 @@ export function useSocialStore() {
             name: profile.displayName,
             avatar: profile.avatarUrl || '',
             isMuted: false,
-            isVideoOff: false,
+            isVideoOff: isAudioOnly,
+            connectionState: 'joined',
           },
         ],
         startedAtMs: Date.now(),
       });
     },
-    [profile.uid, profile.displayName, profile.avatarUrl]
+    [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid, requireAuthorized]
+  );
+
+  const startCallWithUser = useCallback(
+    async (creator: UserProfile, isAudioOnly: boolean) => {
+      const thread = await startDirectThread(creator);
+      await startCall(thread, isAudioOnly);
+    },
+    [startCall, startDirectThread]
+  );
+
+  const acceptIncomingCall = useCallback(
+    async (invite: IncomingCallInvite) => {
+      requireAuthorized();
+      setIncomingCallInvite(null);
+      const participants: CallParticipant[] = invite.memberIds.map((uid) => {
+        const u = communityUsersRef.current.find((member) => member.uid === uid);
+        return {
+          uid,
+          name:
+            uid === profile.uid
+              ? profile.displayName
+              : uid === invite.callerId
+                ? invite.callerName
+                : u?.displayName || 'Participant',
+          avatar:
+            uid === profile.uid
+              ? profile.avatarUrl
+              : uid === invite.callerId
+                ? invite.callerAvatar
+                : u?.avatarUrl || '',
+          isMuted: false,
+          isVideoOff: invite.isAudioOnly,
+          connectionState: uid === profile.uid || uid === invite.callerId ? 'joined' : 'invited',
+        };
+      });
+
+      if (firebaseUser) {
+        await updateDoc(doc(db, 'calls', invite.callId), {
+          status: 'active',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+
+      setCallSession({
+        callId: invite.callId,
+        chatId: invite.chatId,
+        title: invite.title,
+        callerId: invite.callerId,
+        callerName: invite.callerName,
+        callerAvatar: invite.callerAvatar,
+        isAudioOnly: invite.isAudioOnly,
+        active: true,
+        status: 'active',
+        isMuted: false,
+        isVideoOff: invite.isAudioOnly,
+        isScreenSharing: false,
+        participants,
+        startedAtMs: Date.now(),
+      });
+    },
+    [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid, requireAuthorized]
+  );
+
+  const declineIncomingCall = useCallback(
+    async (invite: IncomingCallInvite) => {
+      declinedCallIdsRef.current.add(invite.callId);
+      setIncomingCallInvite(null);
+      if (firebaseUser) {
+        await setDoc(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
+          callId: invite.callId,
+          uid: firebaseUser.uid,
+          displayName: profile.displayName,
+          avatarUrl: profile.avatarUrl,
+          cfSessionId: '',
+          audioTrackName: '',
+          videoTrackName: '',
+          isMuted: true,
+          isVideoOff: true,
+          isScreenSharing: false,
+          state: 'declined',
+          memberIds: invite.memberIds,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+        if (invite.memberIds.length <= 2) {
+          await updateDoc(doc(db, 'calls', invite.callId), {
+            status: 'ended',
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+    },
+    [firebaseUser, profile.avatarUrl, profile.displayName]
+  );
+
+  const publishCallPeerSession = useCallback(
+    async (
+      callId: string,
+      payload: {
+        cfSessionId: string;
+        audioTrackName?: string;
+        videoTrackName?: string;
+        isMuted: boolean;
+        isVideoOff: boolean;
+        isScreenSharing: boolean;
+        state: 'joined' | 'declined' | 'left';
+      }
+    ) => {
+      if (!firebaseUser || !callId) return;
+      const session = callSessionRef.current;
+      const memberIds =
+        session?.participants.map((p) => p.uid).filter(Boolean) || [firebaseUser.uid];
+      const safeMemberIds = memberIds.includes(firebaseUser.uid)
+        ? memberIds
+        : [firebaseUser.uid, ...memberIds];
+
+      await setDoc(doc(db, 'calls', callId, 'peers', firebaseUser.uid), {
+        callId,
+        uid: firebaseUser.uid,
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+        cfSessionId: payload.cfSessionId.slice(0, 128),
+        audioTrackName: (payload.audioTrackName || '').slice(0, 64),
+        videoTrackName: (payload.videoTrackName || '').slice(0, 64),
+        isMuted: payload.isMuted,
+        isVideoOff: payload.isVideoOff,
+        isScreenSharing: payload.isScreenSharing,
+        state: payload.state,
+        memberIds: safeMemberIds.slice(0, 10),
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+
+      if (payload.state === 'joined' && session?.status === 'ringing') {
+        await updateDoc(doc(db, 'calls', callId), {
+          status: 'active',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    },
+    [firebaseUser, profile.avatarUrl, profile.displayName]
+  );
+
+  const subscribeCallPeers = useCallback(
+    (callId: string, onPeers: (peers: CallParticipant[]) => void) => {
+      if (!firebaseUser || !callId) return () => {};
+      const peersQuery = query(
+        collection(db, 'calls', callId, 'peers'),
+        where('memberIds', 'array-contains', firebaseUser.uid)
+      );
+      return onSnapshot(
+        peersQuery,
+        (snapshot) => {
+          const peers: CallParticipant[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              uid: String(d.uid || docSnap.id),
+              name: String(d.displayName || 'Participant'),
+              avatar: normalizeAssetUrl(String(d.avatarUrl || '')),
+              isMuted: Boolean(d.isMuted),
+              isVideoOff: Boolean(d.isVideoOff),
+              isScreenSharing: Boolean(d.isScreenSharing),
+              connectionState:
+                d.state === 'declined' || d.state === 'left' ? d.state : 'joined',
+              cfSessionId: String(d.cfSessionId || ''),
+              audioTrackName: String(d.audioTrackName || ''),
+              videoTrackName: String(d.videoTrackName || ''),
+            };
+          });
+          onPeers(peers);
+          setCallSession((prev) => {
+            if (!prev || prev.callId !== callId) return prev;
+            const byUid = new Map(prev.participants.map((p) => [p.uid, p]));
+            for (const p of peers) {
+              const existing = byUid.get(p.uid);
+              byUid.set(p.uid, existing ? { ...existing, ...p } : p);
+            }
+            return {
+              ...prev,
+              participants: Array.from(byUid.values()),
+            };
+          });
+        },
+        () => {}
+      );
+    },
+    [firebaseUser]
   );
 
   const endCall = useCallback(() => {
+    const active = callSessionRef.current;
     setCallSession(null);
-  }, []);
+    if (firebaseUser && active?.callId) {
+      const memberIds = active.participants.map((p) => p.uid);
+      const safeMembers = memberIds.includes(firebaseUser.uid)
+        ? memberIds
+        : [firebaseUser.uid, ...memberIds];
+      setDoc(doc(db, 'calls', active.callId, 'peers', firebaseUser.uid), {
+        callId: active.callId,
+        uid: firebaseUser.uid,
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+        cfSessionId: '',
+        audioTrackName: '',
+        videoTrackName: '',
+        isMuted: true,
+        isVideoOff: true,
+        isScreenSharing: false,
+        state: 'left',
+        memberIds: safeMembers.slice(0, 10),
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+
+      const otherJoined = active.participants.some(
+        (p) => p.uid !== firebaseUser.uid && p.connectionState === 'joined'
+      );
+      if (active.callerId === firebaseUser.uid || !otherJoined) {
+        updateDoc(doc(db, 'calls', active.callId), {
+          status: 'ended',
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    }
+  }, [firebaseUser, profile.avatarUrl, profile.displayName]);
 
   const toggleCallMute = useCallback(() => {
     setCallSession((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
@@ -2617,7 +3236,10 @@ export function useSocialStore() {
     loginWithApple,
     loginWithEmail,
     signupWithEmail,
+    resendEmailVerificationLink,
+    refreshVerificationStatus,
     logout,
+    deleteAccount,
     theme,
     toggleTheme,
     setThemeExplicit,
@@ -2635,6 +3257,7 @@ export function useSocialStore() {
     storyGroups,
     viewedStoryIds,
     addStory,
+    deleteStory,
     sharePostToStory,
     markStoryViewed,
     onlineUserIds,
@@ -2649,9 +3272,11 @@ export function useSocialStore() {
     fetchPublicUserProfile,
     fetchOtherUserConnections,
     createPost,
+    deletePost,
     toggleLike,
     toggleBookmark,
     addComment,
+    deleteComment,
     threads,
     messagesByChat,
     mutedChatIds,
@@ -2662,6 +3287,7 @@ export function useSocialStore() {
     addGroupParticipants,
     removeGroupParticipant,
     renameGroupThread,
+    promoteGroupAdmin,
     toggleMuteChat,
     notifications,
     activeToast,
@@ -2670,8 +3296,14 @@ export function useSocialStore() {
     markNotificationRead,
     markAllNotificationsRead,
     callSession,
+    incomingCallInvite,
     startCall,
+    startCallWithUser,
     startInstantCall,
+    acceptIncomingCall,
+    declineIncomingCall,
+    publishCallPeerSession,
+    subscribeCallPeers,
     endCall,
     toggleCallMute,
     toggleCallVideo,

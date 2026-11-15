@@ -337,6 +337,10 @@
           "type": "array",
           "description": "Bounded participant UIDs (max 10)"
         },
+        "adminIds": {
+          "type": "array",
+          "description": "Group admin UIDs (max 10)"
+        },
         "lastMessageText": {
           "type": "string",
           "maxLength": 400

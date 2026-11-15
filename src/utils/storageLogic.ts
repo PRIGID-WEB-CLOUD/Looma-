@@ -533,3 +533,218 @@ export function inspectUploadHttpResponse(
   };
 }
 
+function startsWithAscii(bytes: Uint8Array, ascii: string, offset: number = 0): boolean {
+  if (bytes.length < offset + ascii.length) return false;
+  for (let i = 0; i < ascii.length; i += 1) {
+    if (bytes[offset + i] !== ascii.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+function matchesPrefix(bytes: Uint8Array, prefix: number[], offset: number = 0): boolean {
+  if (bytes.length < offset + prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (bytes[offset + i] !== prefix[i]) return false;
+  }
+  return true;
+}
+
+export function sniffMediaSignature(
+  bytes: Uint8Array,
+  expectedKind: UploadMediaKind,
+  expectedContentType: string
+): { valid: boolean; reason?: string } {
+  if (!bytes || bytes.length < 4) {
+    return { valid: false, reason: 'Uploaded file is too small or empty.' };
+  }
+
+  // Reject HTML / XML / SVG / Scripts disguised as media
+  const headText = new TextDecoder('utf-8', { fatal: false })
+    .decode(bytes.subarray(0, Math.min(256, bytes.length)))
+    .trimStart()
+    .toLowerCase();
+  if (
+    headText.startsWith('<!doctype') ||
+    headText.startsWith('<html') ||
+    headText.startsWith('<svg') ||
+    headText.startsWith('<?xml') ||
+    headText.startsWith('<script') ||
+    startsWithAscii(bytes, '#!') ||
+    matchesPrefix(bytes, [0x4d, 0x5a]) || // PE/EXE MZ
+    matchesPrefix(bytes, [0x7f, 0x45, 0x4c, 0x46]) // ELF binary
+  ) {
+    return { valid: false, reason: 'Executable or markup payload rejected.' };
+  }
+
+  const mime = expectedContentType.toLowerCase();
+
+  if (expectedKind === 'image') {
+    if (mime === 'image/jpeg') {
+      return matchesPrefix(bytes, [0xff, 0xd8, 0xff])
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match JPEG signature.' };
+    }
+    if (mime === 'image/png') {
+      return matchesPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match PNG signature.' };
+    }
+    if (mime === 'image/gif') {
+      return startsWithAscii(bytes, 'GIF87a') || startsWithAscii(bytes, 'GIF89a')
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match GIF signature.' };
+    }
+    if (mime === 'image/webp') {
+      return startsWithAscii(bytes, 'RIFF', 0) && startsWithAscii(bytes, 'WEBP', 8)
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match WebP signature.' };
+    }
+    if (mime === 'image/avif') {
+      return startsWithAscii(bytes, 'ftyp', 4) &&
+        (startsWithAscii(bytes, 'avif', 8) || startsWithAscii(bytes, 'avis', 8) || startsWithAscii(bytes, 'mif1', 8))
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match AVIF signature.' };
+    }
+    return { valid: false, reason: 'Unverified image signature.' };
+  }
+
+  if (expectedKind === 'video') {
+    if (mime === 'video/mp4' || mime === 'video/quicktime' || mime === 'video/x-m4v') {
+      const hasFtyp = startsWithAscii(bytes, 'ftyp', 4);
+      const hasQtBox =
+        startsWithAscii(bytes, 'moov', 4) ||
+        startsWithAscii(bytes, 'wide', 4) ||
+        startsWithAscii(bytes, 'mdat', 4);
+      return hasFtyp || hasQtBox
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match MP4/MOV container signature.' };
+    }
+    if (mime === 'video/webm') {
+      return matchesPrefix(bytes, [0x1a, 0x45, 0xdf, 0xa3])
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match WebM EBML signature.' };
+    }
+    if (mime === 'video/ogg') {
+      return startsWithAscii(bytes, 'OggS')
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match Ogg signature.' };
+    }
+  }
+
+  if (expectedKind === 'audio') {
+    if (mime === 'audio/mpeg') {
+      const isId3 = startsWithAscii(bytes, 'ID3');
+      const isMpegFrame = bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;
+      return isId3 || isMpegFrame
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match MP3 signature.' };
+    }
+    if (mime === 'audio/wav' || mime === 'audio/x-wav') {
+      return startsWithAscii(bytes, 'RIFF', 0) && startsWithAscii(bytes, 'WAVE', 8)
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match WAV signature.' };
+    }
+    if (mime === 'audio/ogg') {
+      return startsWithAscii(bytes, 'OggS')
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match Ogg audio signature.' };
+    }
+    if (mime === 'audio/flac') {
+      return startsWithAscii(bytes, 'fLaC')
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match FLAC signature.' };
+    }
+    if (mime === 'audio/mp4') {
+      return startsWithAscii(bytes, 'ftyp', 4)
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match M4A container signature.' };
+    }
+    if (mime === 'audio/aac') {
+      const isAdts = bytes[0] === 0xff && (bytes[1] & 0xf0) === 0xf0;
+      const isAdif = startsWithAscii(bytes, 'ADIF');
+      return isAdts || isAdif
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match AAC signature.' };
+    }
+    if (mime === 'audio/webm') {
+      return matchesPrefix(bytes, [0x1a, 0x45, 0xdf, 0xa3])
+        ? { valid: true }
+        : { valid: false, reason: 'File bytes do not match WebM audio signature.' };
+    }
+  }
+
+  return { valid: false, reason: 'Unrecognized media file signature.' };
+}
+
+export type ParsedByteRangeResult =
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+  | { kind: 'valid'; start: number; end: number; length: number; contentRange: string };
+
+export function parseHttpRangeHeader(
+  rangeHeader: string | null | undefined,
+  totalSize: number
+): ParsedByteRangeResult {
+  if (!rangeHeader || !rangeHeader.trim()) {
+    return { kind: 'none' };
+  }
+  if (!Number.isFinite(totalSize) || totalSize <= 0) {
+    return { kind: 'invalid' };
+  }
+
+  const trimmed = rangeHeader.trim();
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(trimmed);
+  if (!match) {
+    return { kind: 'invalid' };
+  }
+
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) {
+    return { kind: 'invalid' };
+  }
+
+  let start: number;
+  let end: number;
+
+  if (!rawStart && rawEnd) {
+    const suffixLen = Number(rawEnd);
+    if (!Number.isInteger(suffixLen) || suffixLen <= 0) {
+      return { kind: 'invalid' };
+    }
+    start = Math.max(0, totalSize - suffixLen);
+    end = totalSize - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd ? Number(rawEnd) : totalSize - 1;
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      start >= totalSize ||
+      end < start
+    ) {
+      return { kind: 'invalid' };
+    }
+    end = Math.min(end, totalSize - 1);
+  }
+
+  return {
+    kind: 'valid',
+    start,
+    end,
+    length: end - start + 1,
+    contentRange: `bytes ${start}-${end}/${totalSize}`,
+  };
+}
+
+export function resolveStorageCacheControl(folderOrKey: string): string {
+  if (folderOrKey === 'stories' || folderOrKey.includes('/stories/')) {
+    return 'public, max-age=3600, must-revalidate';
+  }
+  if (folderOrKey === 'avatars' || folderOrKey.includes('/avatars/')) {
+    return 'public, max-age=86400, must-revalidate';
+  }
+  return 'public, max-age=31536000, immutable';
+}
+
+

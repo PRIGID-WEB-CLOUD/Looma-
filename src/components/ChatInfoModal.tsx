@@ -17,6 +17,7 @@ import type { ChatMessage, ChatThread, UserProfile } from '../types/social';
 import {
   formatRelativeTime,
   getThreadOnlineStatus,
+  isGroupAdmin,
   isUserOnline,
   MAX_GROUP_MEMBERS,
 } from '../utils/socialLogic';
@@ -36,6 +37,7 @@ interface ChatInfoModalProps {
   onAddParticipants: (chatId: string, participantIds: string[]) => Promise<void>;
   onRemoveParticipant: (chatId: string, targetUid: string) => Promise<void>;
   onRenameGroup: (chatId: string, nextTitle: string) => Promise<void>;
+  onPromoteAdmin?: (chatId: string, targetUid: string) => Promise<void>;
   onClose: () => void;
   onOpenPublicProfile: (uid: string) => void;
 }
@@ -54,6 +56,7 @@ export function ChatInfoModal({
   onAddParticipants,
   onRemoveParticipant,
   onRenameGroup,
+  onPromoteAdmin,
   onClose,
   onOpenPublicProfile,
 }: ChatInfoModalProps) {
@@ -77,6 +80,7 @@ export function ChatInfoModal({
     (u) => u.uid !== profile.uid && !thread.memberIds.includes(u.uid)
   );
   const atCapacity = thread.memberIds.length >= MAX_GROUP_MEMBERS;
+  const iAmAdmin = isGroupAdmin(thread, profile.uid);
 
   const filteredMessages =
     showSearch && searchQuery.trim()
@@ -130,6 +134,21 @@ export function ChatInfoModal({
       setActionError(
         err instanceof Error ? err.message : 'Unable to rename group.'
       );
+    }
+  };
+
+  const handlePromote = async (uid: string) => {
+    if (!onPromoteAdmin) return;
+    setActionError(null);
+    setBusyUid(uid);
+    try {
+      await onPromoteAdmin(thread.id, uid);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Unable to promote participant.'
+      );
+    } finally {
+      setBusyUid(null);
     }
   };
 
@@ -203,17 +222,19 @@ export function ChatInfoModal({
                   <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
                     {thread.title}
                   </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTitleDraft(thread.title);
-                      setEditingTitle(true);
-                    }}
-                    aria-label="Rename group"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
+                  {iAmAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTitleDraft(thread.title);
+                        setEditingTitle(true);
+                      }}
+                      aria-label="Rename group"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   {thread.memberIds.length} participants ·{' '}
@@ -294,18 +315,20 @@ export function ChatInfoModal({
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                 Participants ({thread.memberIds.length}/{MAX_GROUP_MEMBERS})
               </p>
-              <button
-                type="button"
-                onClick={() => setShowAddMembers((prev) => !prev)}
-                disabled={atCapacity || availableToAdd.length === 0}
-                className="min-h-[32px] px-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 cursor-pointer"
-              >
-                <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>{showAddMembers ? 'Done Adding' : 'Add Participant'}</span>
-              </button>
+              {iAmAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddMembers((prev) => !prev)}
+                  disabled={atCapacity || availableToAdd.length === 0}
+                  className="min-h-[32px] px-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>{showAddMembers ? 'Done Adding' : 'Add Participant'}</span>
+                </button>
+              )}
             </div>
 
-            {showAddMembers && (
+            {iAmAdmin && showAddMembers && (
               <div className="rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-2.5 space-y-1.5">
                 <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 px-1">
                   {atCapacity
@@ -357,6 +380,8 @@ export function ChatInfoModal({
                   ? `${profile.displayName} (You)`
                   : member?.displayName || uid;
                 const online = isUserOnline(uid, onlineUserIds);
+                const targetIsAdmin = isGroupAdmin(thread, uid);
+                const canRemoveOrLeave = thread.memberIds.length > 1 && (isMe || iAmAdmin);
                 return (
                   <div
                     key={uid}
@@ -377,8 +402,13 @@ export function ChatInfoModal({
                         online={online}
                       />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                          {memberName}
+                        <p className="text-xs font-semibold text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 flex items-center gap-1.5">
+                          <span className="truncate">{memberName}</span>
+                          {targetIsAdmin && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 shrink-0">
+                              Admin
+                            </span>
+                          )}
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                           {member?.handle ? `@${member.handle}` : 'Member'}
@@ -387,22 +417,35 @@ export function ChatInfoModal({
                       </div>
                     </button>
 
-                    {thread.memberIds.length > 1 && (
-                      <button
-                        type="button"
-                        disabled={busyUid === uid}
-                        onClick={() => handleRemove(uid)}
-                        aria-label={
-                          isMe
-                            ? 'Leave group'
-                            : `Remove ${member?.displayName || uid}`
-                        }
-                        className="min-h-[32px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer"
-                      >
-                        <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>{isMe ? 'Leave' : 'Remove'}</span>
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isMe && iAmAdmin && !targetIsAdmin && onPromoteAdmin && (
+                        <button
+                          type="button"
+                          disabled={busyUid === uid}
+                          onClick={() => handlePromote(uid)}
+                          aria-label={`Make ${member?.displayName || uid} admin`}
+                          className="min-h-[32px] px-2 rounded-lg border border-blue-200 dark:border-blue-800 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 disabled:opacity-50 cursor-pointer"
+                        >
+                          Make Admin
+                        </button>
+                      )}
+                      {canRemoveOrLeave && (
+                        <button
+                          type="button"
+                          disabled={busyUid === uid}
+                          onClick={() => handleRemove(uid)}
+                          aria-label={
+                            isMe
+                              ? 'Leave group'
+                              : `Remove ${member?.displayName || uid}`
+                          }
+                          className="min-h-[32px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer"
+                        >
+                          <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>{isMe ? 'Leave' : 'Remove'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -515,7 +558,7 @@ export function ChatInfoModal({
 
           <div className="flex items-center gap-2 text-[11px] text-slate-400 justify-center pt-1">
             <Shield className="w-3.5 h-3.5 text-emerald-500" aria-hidden="true" />
-            <span>End-to-end encrypted chat</span>
+            <span>Protected by HTTPS/TLS &amp; Firebase Auth</span>
           </div>
         </div>
 

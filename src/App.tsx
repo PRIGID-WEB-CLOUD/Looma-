@@ -25,6 +25,7 @@ import { ChatView } from './components/ChatView';
 import { ConnectionsView } from './components/ConnectionsView';
 import { CreatePostModal } from './components/CreatePostModal';
 import { FeedView } from './components/FeedView';
+import { IncomingCallModal } from './components/IncomingCallModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationsView } from './components/NotificationsView';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -269,6 +270,8 @@ export default function App() {
             await store.signupWithEmail(email, pass, name);
             setActiveTab('feed');
           }}
+          onResendVerification={store.resendEmailVerificationLink}
+          onCheckVerified={store.refreshVerificationStatus}
           onLogout={handleLogout}
           onContinueAuthenticated={() => {
             setActiveTab('feed');
@@ -325,6 +328,7 @@ export default function App() {
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
+        onStartCall={store.startInstantCall}
       />
 
       <PushToast
@@ -497,6 +501,8 @@ export default function App() {
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onDeletePost={store.deletePost}
+              onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
               onAuthorClick={(post) =>
                 handleOpenPublicProfile(post.authorId, post)
@@ -511,6 +517,7 @@ export default function App() {
             return (
               <PublicProfileView
                 creator={selectedPublicProfile}
+                currentUserId={store.profile.uid}
                 loading={loadingPublicProfile}
                 isFollowing={store.followedUserIds.includes(
                   selectedPublicProfile.uid
@@ -533,6 +540,7 @@ export default function App() {
                 }
                 onToggleFollow={store.toggleFollowUser}
                 onMessage={handleOpenDm}
+                onStartCallWithUser={store.startCallWithUser}
                 onOpenConnections={(tab) =>
                   openConnections(tab, selectedPublicProfile)
                 }
@@ -540,6 +548,8 @@ export default function App() {
                 onToggleLike={store.toggleLike}
                 onToggleBookmark={store.toggleBookmark}
                 onAddComment={store.addComment}
+                onDeletePost={store.deletePost}
+                onDeleteComment={store.deleteComment}
                 onMentionClick={handleOpenMention}
                 onSelectHashtag={handleHashtagClick}
               />
@@ -569,12 +579,16 @@ export default function App() {
               onRenameGroup={async (chatId, nextTitle) => {
                 await store.renameGroupThread(chatId, nextTitle);
               }}
+              onPromoteAdmin={async (chatId, uid) => {
+                await store.promoteGroupAdmin(chatId, uid);
+              }}
               onToggleMuteChat={store.toggleMuteChat}
               onEnablePush={store.enablePushNotifications}
               onOpenPublicProfile={(uid) =>
                 handleOpenPublicProfile(uid, undefined, 'messages')
               }
               onStartCall={store.startCall}
+              onStartInstantCall={store.startInstantCall}
             />
           )}
 
@@ -602,6 +616,8 @@ export default function App() {
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onDeletePost={store.deletePost}
+              onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
               onOpenSettings={() => setActiveTab('settings')}
               onOpenConnections={(tab) => openConnections(tab, null)}
@@ -660,6 +676,17 @@ export default function App() {
               onSetTheme={store.setThemeExplicit}
               onEnablePush={store.enablePushNotifications}
               onLogout={handleLogout}
+              onDeleteAccount={async () => {
+                await store.deleteAccount();
+                setPreviewOnboarding(false);
+                setAuthMode('signin');
+                setActiveTab('feed');
+                setFeedSearchQuery('');
+                setActiveChatId(null);
+                setSelectedPublicProfile(null);
+                setConnectionsOwner(null);
+                setRemoteOtherConnections(null);
+              }}
               onUpdateProfile={store.updateProfile}
               onUpdatePrivateSettings={store.updatePrivateSettings}
               onBack={() => setActiveTab('profile')}
@@ -817,6 +844,7 @@ export default function App() {
         onMarkViewed={store.markStoryViewed}
         onOpenAuthorProfile={(authorId) => handleOpenPublicProfile(authorId)}
         onReplyToStory={handleReplyToStory}
+        onDeleteStory={store.deleteStory}
       />
 
       <AddStoryModal
@@ -837,10 +865,19 @@ export default function App() {
       <CallRoomModal
         session={store.callSession}
         profile={store.profile}
+        isLocalAutostart={store.isLocalAutostart}
         onEndCall={store.endCall}
         onToggleMute={store.toggleCallMute}
         onToggleVideo={store.toggleCallVideo}
         onToggleScreenShare={store.toggleCallScreenShare}
+        onPublishPeerSession={store.publishCallPeerSession}
+        onSubscribeCallPeers={store.subscribeCallPeers}
+      />
+
+      <IncomingCallModal
+        invite={store.incomingCallInvite}
+        onAccept={store.acceptIncomingCall}
+        onDecline={store.declineIncomingCall}
       />
 
       <OfflineIndicator />

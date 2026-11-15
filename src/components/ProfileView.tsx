@@ -20,6 +20,8 @@ interface ProfileViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onDeletePost?: (post: Post) => Promise<void>;
+  onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory: (post: Post) => Promise<unknown> | void;
   onOpenSettings: () => void;
   onOpenConnections: (tab: ConnectionsTab) => void;
@@ -40,6 +42,8 @@ export function ProfileView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onDeletePost,
+  onDeleteComment,
   onShareToStory,
   onOpenSettings,
   onOpenConnections,
@@ -235,6 +239,8 @@ export function ProfileView({
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onDeletePost={onDeletePost}
+              onDeleteComment={onDeleteComment}
               onShareToStory={onShareToStory}
               onAuthorClick={onAuthorClick}
               onSelectHashtag={onSelectHashtag}

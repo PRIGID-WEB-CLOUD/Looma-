@@ -1,5 +1,15 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowRight, Check, Lock, LogOut, Mail, Moon, Sun } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  Check,
+  Lock,
+  LogOut,
+  Mail,
+  Moon,
+  RefreshCw,
+  Sun,
+} from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { ThemeMode, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
@@ -19,6 +29,8 @@ interface AuthViewProps {
   onLoginApple: () => Promise<void>;
   onLoginEmail: (email: string, pass: string) => Promise<void>;
   onSignupEmail: (email: string, pass: string, name: string) => Promise<void>;
+  onResendVerification?: () => Promise<void>;
+  onCheckVerified?: () => Promise<boolean>;
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
 }
@@ -66,6 +78,8 @@ export function AuthView({
   onLoginApple,
   onLoginEmail,
   onSignupEmail,
+  onResendVerification,
+  onCheckVerified,
   onLogout,
   onContinueAuthenticated,
 }: AuthViewProps) {
@@ -75,10 +89,12 @@ export function AuthView({
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
 
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
     setLocalError(null);
+    setVerificationNotice(null);
   };
 
   const isSignIn = mode === 'signin';
@@ -248,50 +264,133 @@ export function AuthView({
               </div>
             )}
 
-            {/* Authenticated User Card or OAuth & Email CTAs */}
+            {/* Authenticated User Card, Verification Gate, or OAuth & Email CTAs */}
             {firebaseUser ? (
-              <div className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Avatar
-                      src={firebaseUser.photoURL || profile.avatarUrl}
-                      name={firebaseUser.displayName || profile.displayName}
-                      size="md"
+              !firebaseUser.emailVerified ? (
+                <div
+                  data-testid="email-verification-gate"
+                  className="p-4 sm:p-5 rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/30 space-y-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertCircle
+                      className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5"
+                      aria-hidden="true"
                     />
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                        {firebaseUser.displayName || profile.displayName}
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">
+                        Email Verification Required
                       </p>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                        {firebaseUser.email} · Connected via Firebase Auth
+                      <p className="text-xs text-slate-700 dark:text-slate-300 mt-1 leading-relaxed">
+                        We sent a verification link to{' '}
+                        <span className="font-semibold">{firebaseUser.email || 'your email'}</span>.
+                        Verify your inbox before accessing posts, chat, or uploads.
                       </p>
                     </div>
                   </div>
-                  <Check
-                    className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0"
-                    aria-hidden="true"
-                  />
-                </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={onContinueAuthenticated}
-                    className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <span>Continue to Looma</span>
-                    <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onLogout}
-                    className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <LogOut className="w-4 h-4" aria-hidden="true" />
-                    <span>Sign Out</span>
-                  </button>
+                  {verificationNotice && (
+                    <p
+                      role="status"
+                      className="text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2"
+                    >
+                      {verificationNotice}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {onCheckVerified && (
+                      <button
+                        type="button"
+                        disabled={authLoading}
+                        onClick={async () => {
+                          setLocalError(null);
+                          setVerificationNotice(null);
+                          const ok = await onCheckVerified();
+                          if (ok) onContinueAuthenticated();
+                        }}
+                        className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${authLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        <span>I&apos;ve Verified — Continue</span>
+                      </button>
+                    )}
+
+                    {onResendVerification && (
+                      <button
+                        type="button"
+                        disabled={authLoading}
+                        onClick={async () => {
+                          setLocalError(null);
+                          setVerificationNotice(null);
+                          try {
+                            await onResendVerification();
+                            setVerificationNotice(
+                              `Verification email resent to ${firebaseUser.email || 'your address'}.`
+                            );
+                          } catch {
+                            // authError is already updated in store
+                          }
+                        }}
+                        className="min-h-[44px] px-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-xs font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-950/60 cursor-pointer disabled:opacity-60"
+                      >
+                        Resend Verification Email
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={onLogout}
+                      className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4" aria-hidden="true" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar
+                        src={firebaseUser.photoURL || profile.avatarUrl}
+                        name={firebaseUser.displayName || profile.displayName}
+                        size="md"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                          {firebaseUser.displayName || profile.displayName}
+                        </p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
+                          {firebaseUser.email} · Connected via Firebase Auth
+                        </p>
+                      </div>
+                    </div>
+                    <Check
+                      className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                      aria-hidden="true"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={onContinueAuthenticated}
+                      className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>Continue to Looma</span>
+                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onLogout}
+                      className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4" aria-hidden="true" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="space-y-4">
                 {!useEmailForm ? (

@@ -13,8 +13,11 @@ import {
   MAX_IMAGE_BYTES,
   MAX_MEDIA_BYTES,
   normalizeStorageFolder,
+  parseHttpRangeHeader,
   parseR2Config,
+  resolveStorageCacheControl,
   resolveStoragePublicUrl,
+  sniffMediaSignature,
   validateDecodedFirebaseTokenClaims,
 } from './storageLogic';
 
@@ -218,4 +221,82 @@ test('isRetryableUploadHttpError and inspectUploadHttpResponse strictly enforce 
   const bucketInfo = classifyR2BackendError({ Code: 'NoSuchBucket', message: 'The specified bucket does not exist.' });
   assert.equal(bucketInfo.code, 'R2_BUCKET_NOT_FOUND');
 });
+
+test('sniffMediaSignature validates true media signatures and rejects executables/markup payloads', () => {
+  assert.equal(
+    sniffMediaSignature(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), 'image', 'image/png').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), 'image', 'image/jpeg').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('GIF89a\x01\x00'), 'image', 'image/gif').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('RIFF\x24\x00\x00\x00WEBP'), 'image', 'image/webp').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('\x00\x00\x00\x18ftypavif'), 'image', 'image/avif').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('\x00\x00\x00\x18ftypmp42'), 'video', 'video/mp4').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x9f]), 'video', 'video/webm').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('ID3\x03\x00\x00'), 'audio', 'audio/mpeg').valid,
+    true
+  );
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('RIFF\x24\x00\x00\x00WAVE'), 'audio', 'audio/wav').valid,
+    true
+  );
+
+  // Spoofed SVG / HTML / PE / ELF rejected even with image/png mime
+  assert.equal(
+    sniffMediaSignature(new TextEncoder().encode('  <svg onload=alert(1)>'), 'image', 'image/png').valid,
+    false
+  );
+  assert.equal(
+    sniffMediaSignature(new Uint8Array([0x4d, 0x5a, 0x90, 0x00]), 'image', 'image/jpeg').valid,
+    false
+  );
+  assert.equal(
+    sniffMediaSignature(new Uint8Array([0x7f, 0x45, 0x4c, 0x46]), 'video', 'video/mp4').valid,
+    false
+  );
+});
+
+test('parseHttpRangeHeader and resolveStorageCacheControl handle byte slices, suffix ranges, and errors', () => {
+  assert.deepEqual(parseHttpRangeHeader(undefined, 1000), { kind: 'none' });
+  assert.deepEqual(parseHttpRangeHeader('bytes=10-49', 1000), {
+    kind: 'valid',
+    start: 10,
+    end: 49,
+    length: 40,
+    contentRange: 'bytes 10-49/1000',
+  });
+  assert.deepEqual(parseHttpRangeHeader('bytes=-100', 1000), {
+    kind: 'valid',
+    start: 900,
+    end: 999,
+    length: 100,
+    contentRange: 'bytes 900-999/1000',
+  });
+  assert.deepEqual(parseHttpRangeHeader('bytes=1500-2000', 1000), { kind: 'invalid' });
+  assert.deepEqual(parseHttpRangeHeader('items=0-10', 1000), { kind: 'invalid' });
+
+  assert.equal(resolveStorageCacheControl('stories'), 'public, max-age=3600, must-revalidate');
+  assert.equal(resolveStorageCacheControl('avatars'), 'public, max-age=86400, must-revalidate');
+  assert.equal(resolveStorageCacheControl('posts'), 'public, max-age=31536000, immutable');
+});
+
 

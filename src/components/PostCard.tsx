@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Send,
   Share2,
+  Trash2,
 } from 'lucide-react';
 import type { Post, PostComment } from '../types/social';
 import {
@@ -40,6 +41,8 @@ interface PostCardProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onDeletePost?: (post: Post) => Promise<void>;
+  onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory?: (post: Post) => Promise<unknown> | void;
   onAuthorClick?: (post: Post) => void;
   onSelectHashtag?: (tag: string) => void;
@@ -56,6 +59,8 @@ export function PostCard({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onDeletePost,
+  onDeleteComment,
   onShareToStory,
   onAuthorClick,
   onSelectHashtag,
@@ -75,6 +80,10 @@ export function PostCard({
   const [copied, setCopied] = useState(false);
   const [sharingToStory, setSharingToStory] = useState(false);
   const [sharedToStory, setSharedToStory] = useState(false);
+  const [confirmingDeletePost, setConfirmingDeletePost] = useState(false);
+  const [deletingPost, setDeletingPost] = useState(false);
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -131,6 +140,31 @@ export function PostCard({
       window.setTimeout(() => setSharedToStory(false), 2500);
     } finally {
       setSharingToStory(false);
+    }
+  };
+
+  const handleConfirmDeletePost = async () => {
+    if (!onDeletePost || deletingPost) return;
+    setDeleteError(null);
+    setDeletingPost(true);
+    try {
+      await onDeletePost(post);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Unable to delete post.');
+      setDeletingPost(false);
+    }
+  };
+
+  const handleDeleteCommentItem = async (commentId: string) => {
+    if (!onDeleteComment || deletingCommentId) return;
+    setCommentError(null);
+    setDeletingCommentId(commentId);
+    try {
+      await onDeleteComment(post, commentId);
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : 'Unable to delete comment.');
+    } finally {
+      setDeletingCommentId(null);
     }
   };
 
@@ -230,26 +264,69 @@ export function PostCard({
           </div>
         </button>
 
-        <button
-          type="button"
-          onClick={() => onToggleBookmark(post.id)}
-          aria-label={
-            isBookmarked
-              ? `Remove bookmark for ${post.authorName}'s post`
-              : `Bookmark ${post.authorName}'s post`
-          }
-          className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
-            isBookmarked
-              ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50'
-              : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <Bookmark
-            className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`}
-            aria-hidden="true"
-          />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          {isOwnPost && onDeletePost && (
+            confirmingDeletePost ? (
+              <div className="flex items-center gap-1.5 mr-1">
+                <button
+                  type="button"
+                  disabled={deletingPost}
+                  onClick={handleConfirmDeletePost}
+                  className="min-h-[34px] px-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {deletingPost ? 'Deleting...' : 'Confirm'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingPost}
+                  onClick={() => {
+                    setConfirmingDeletePost(false);
+                    setDeleteError(null);
+                  }}
+                  className="min-h-[34px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingDeletePost(true)}
+                aria-label="Delete post"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" aria-hidden="true" />
+              </button>
+            )
+          )}
+
+          <button
+            type="button"
+            onClick={() => onToggleBookmark(post.id)}
+            aria-label={
+              isBookmarked
+                ? `Remove bookmark for ${post.authorName}'s post`
+                : `Bookmark ${post.authorName}'s post`
+            }
+            className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
+              isBookmarked
+                ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50'
+                : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Bookmark
+              className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
       </div>
+
+      {deleteError && (
+        <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+          {deleteError}
+        </p>
+      )}
 
       {/* Caption */}
       {post.caption && (
@@ -627,31 +704,47 @@ export function PostCard({
             </p>
           ) : (
             <div className="space-y-2.5">
-              {comments.map((cmt) => (
-                <div key={cmt.id} className="flex items-start gap-2.5">
-                  <Avatar
-                    src={cmt.authorAvatar}
-                    name={cmt.authorName}
-                    size="sm"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      <span className="font-semibold text-slate-900 dark:text-slate-100">
-                        {cmt.authorName}
-                      </span>{' '}
-                      <span aria-hidden="true">·</span>{' '}
-                      <span>{formatRelativeTime(cmt.createdAtMs)}</span>
-                    </p>
-                    <div className="text-sm text-slate-700 dark:text-slate-300 mt-0.5">
-                      <RichText
-                        text={cmt.text}
-                        onHashtagClick={onSelectHashtag}
-                        onMentionClick={onMentionClick}
-                      />
+              {comments.map((cmt) => {
+                const canDeleteComment =
+                  Boolean(onDeleteComment) &&
+                  (cmt.authorId === currentUserId || isOwnPost);
+                return (
+                  <div key={cmt.id} className="flex items-start gap-2.5">
+                    <Avatar
+                      src={cmt.authorAvatar}
+                      name={cmt.authorName}
+                      size="sm"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">
+                          {cmt.authorName}
+                        </span>{' '}
+                        <span aria-hidden="true">·</span>{' '}
+                        <span>{formatRelativeTime(cmt.createdAtMs)}</span>
+                      </p>
+                      <div className="text-sm text-slate-700 dark:text-slate-300 mt-0.5">
+                        <RichText
+                          text={cmt.text}
+                          onHashtagClick={onSelectHashtag}
+                          onMentionClick={onMentionClick}
+                        />
+                      </div>
                     </div>
+                    {canDeleteComment && (
+                      <button
+                        type="button"
+                        disabled={deletingCommentId === cmt.id}
+                        onClick={() => handleDeleteCommentItem(cmt.id)}
+                        aria-label={`Delete comment by ${cmt.authorName}`}
+                        className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 shrink-0 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
