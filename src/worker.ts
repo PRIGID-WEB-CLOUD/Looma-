@@ -58,6 +58,8 @@ export interface WorkerEnv {
   CLOUDFLARE_R2_PUBLIC_URL?: string;
   CLOUDFLARE_CALLS_APP_ID?: string;
   CLOUDFLARE_CALLS_APP_TOKEN?: string;
+  CLOUDFLARE_TURN_KEY_ID?: string;
+  CLOUDFLARE_TURN_KEY_TOKEN?: string;
   CALLS_STATE_SECRET?: string;
   TURN_URLS?: string;
   TURN_USERNAME?: string;
@@ -1003,7 +1005,37 @@ export function createWorkerApp() {
     });
   });
 
-  app.get('/api/calls/ice-servers', requireVerifiedAuth, (c) => {
+  app.get('/api/calls/ice-servers', requireVerifiedAuth, async (c) => {
+    const turnKeyId = (c.env.CLOUDFLARE_TURN_KEY_ID || '').trim().replace(/^["']|["']$/g, '');
+    const turnKeyToken = (c.env.CLOUDFLARE_TURN_KEY_TOKEN || '').trim().replace(/^["']|["']$/g, '');
+
+    if (turnKeyId && turnKeyToken && !turnKeyId.startsWith('MY_')) {
+      try {
+        const turnRes = await fetch(
+          `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${turnKeyToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ ttl: 86400 }),
+          }
+        );
+        if (turnRes.ok) {
+          const data = (await turnRes.json()) as { iceServers?: RTCIceServer[] };
+          if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+            return c.json({
+              iceServers: data.iceServers,
+              hasTurnConfigured: true,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch Cloudflare TURN ice-servers:', err);
+      }
+    }
+
     const ice = parseIceServersConfig(c.env);
     return c.json(ice);
   });

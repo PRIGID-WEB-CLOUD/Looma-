@@ -60,9 +60,8 @@ Never place server secrets into `VITE_*` variables, `wrangler.jsonc` plaintext `
 | `CALLS_STATE_SECRET` | Random 32+ byte secret for HMAC call session tokens | Recommended |
 | `FIREBASE_PROJECT_ID` | Firebase Project ID (defaults to `firebase-applet-config.json`) | Recommended |
 | `FIREBASE_API_KEY` | Firebase Web API Key for `accounts:lookup` disabled-account check | Recommended |
-| `TURN_URLS` | Comma-separated `turn:` / `turns:` relay URLs | Recommended for strict NATs |
-| `TURN_USERNAME` | TURN credential username | If `TURN_URLS` set |
-| `TURN_CREDENTIAL` | TURN credential password | If `TURN_URLS` set |
+| `CLOUDFLARE_TURN_KEY_ID` | Cloudflare TURN Key ID | Recommended for strict NATs |
+| `CLOUDFLARE_TURN_KEY_TOKEN` | Cloudflare TURN Key API Token | Recommended for strict NATs |
 | `ALLOWED_ORIGINS` | Comma-separated trusted HTTPS origins | Set in `wrangler.jsonc` / Secrets |
 | `PUBLIC_APP_URL` | Canonical deployed HTTPS origin | Set in `wrangler.jsonc` |
 | `R2_PUBLIC_URL` | Optional custom public R2 CDN domain (defaults to `/api/storage/file/...` proxy) | Optional |

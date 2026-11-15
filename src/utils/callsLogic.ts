@@ -274,6 +274,8 @@ export interface IceServerConfigInput {
   TURN_URLS?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
+  CLOUDFLARE_TURN_KEY_ID?: string;
+  CLOUDFLARE_TURN_KEY_TOKEN?: string;
 }
 
 export function parseIceServersConfig(env: IceServerConfigInput): {
@@ -296,17 +298,31 @@ export function parseIceServersConfig(env: IceServerConfigInput): {
 
   const username = clean(env.TURN_USERNAME);
   const credential = clean(env.TURN_CREDENTIAL);
+  const turnKeyId = clean(env.CLOUDFLARE_TURN_KEY_ID);
+  const turnKeyToken = clean(env.CLOUDFLARE_TURN_KEY_TOKEN);
 
   if (turnUrls.length > 0) {
     const turnServer: RTCIceServer = { urls: turnUrls };
     if (username) turnServer.username = username;
     if (credential) turnServer.credential = credential;
     servers.push(turnServer);
+  } else if (turnKeyId && turnKeyToken) {
+    // If Cloudflare TURN Key ID is provided, include Cloudflare's standard TURNS/TURN URLs
+    servers.push({
+      urls: [
+        'turn:turn.cloudflare.com:3478?transport=udp',
+        'turn:turn.cloudflare.com:443?transport=udp',
+        'turn:turn.cloudflare.com:3478?transport=tcp',
+        'turn:turn.cloudflare.com:80?transport=tcp',
+        'turns:turn.cloudflare.com:5349?transport=tcp',
+        'turns:turn.cloudflare.com:443?transport=tcp',
+      ],
+    });
   }
 
   return {
     iceServers: servers,
-    hasTurnConfigured: turnUrls.length > 0,
+    hasTurnConfigured: turnUrls.length > 0 || Boolean(turnKeyId && turnKeyToken),
   };
 }
 
