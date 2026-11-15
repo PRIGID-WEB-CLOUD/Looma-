@@ -83,6 +83,7 @@ import {
   createGroupThreadRecord,
   extractMentions,
   formatChatPushPayload,
+  formatVoiceNote,
   groupStoriesByAuthor,
   isAuthorizedSession,
   normalizeAssetUrl,
@@ -250,9 +251,49 @@ export function useSocialStore() {
   });
 
   const [remotePosts, setRemotePosts] = useState<Post[]>([]);
-  const [localPosts, setLocalPosts] = useState<Post[]>(() =>
-    stripDemoPosts(readStorage<Post[]>(STORAGE_KEYS.POSTS, []))
-  );
+  const [localPosts, setLocalPosts] = useState<Post[]>(() => {
+    const stored = stripDemoPosts(readStorage<Post[]>(STORAGE_KEYS.POSTS, []));
+    if (stored.length > 0) return stored;
+    if (autostart) {
+      return [
+        {
+          id: 'post_seed_1',
+          authorId: 'creator_sophia',
+          authorName: 'Sophia Chen',
+          authorHandle: 'sophia.studio',
+          authorAvatar:
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          caption:
+            'Morning architectural walk around the pavilion #Design #Architecture. Loving the light and clean lines.',
+          category: 'Architecture',
+          imageUrl:
+            'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800',
+          likesCount: 24,
+          commentsCount: 3,
+          createdAtMs: Date.now() - 1000 * 60 * 60 * 2,
+          updatedAtMs: Date.now() - 1000 * 60 * 60 * 2,
+        },
+        {
+          id: 'post_seed_2',
+          authorId: 'creator_marcus',
+          authorName: 'Marcus Vance',
+          authorHandle: 'marcus.vance',
+          authorAvatar:
+            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          caption:
+            'Capturing dawn mist in the Cascade Mountains. Nature never ceases to amaze me. #Photography #Travel',
+          category: 'Photography',
+          imageUrl:
+            'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800',
+          likesCount: 42,
+          commentsCount: 7,
+          createdAtMs: Date.now() - 1000 * 60 * 60 * 5,
+          updatedAtMs: Date.now() - 1000 * 60 * 60 * 5,
+        },
+      ];
+    }
+    return [];
+  });
 
   const [commentsByPost, setCommentsByPost] = useState<
     Record<string, PostComment[]>
@@ -283,7 +324,43 @@ export function useSocialStore() {
     )
   );
   const hasRemoteFollowingRef = useRef(false);
-  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>([]);
+  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>(() => {
+    if (autostart) {
+      return [
+        {
+          uid: 'creator_sophia',
+          displayName: 'Sophia Chen',
+          handle: 'sophia.studio',
+          avatarUrl:
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          bio: 'Senior UX Architect & Design Lead',
+          location: 'San Francisco, CA',
+          interests: ['Design', 'Architecture'],
+          followersCount: 1420,
+          followingCount: 380,
+          onboardingCompleted: true,
+          createdAtMs: Date.now() - 86400000 * 30,
+          updatedAtMs: Date.now(),
+        },
+        {
+          uid: 'creator_marcus',
+          displayName: 'Marcus Vance',
+          handle: 'marcus.vance',
+          avatarUrl:
+            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          bio: 'Landscape & Architectural Photographer',
+          location: 'Seattle, WA',
+          interests: ['Photography', 'Travel'],
+          followersCount: 890,
+          followingCount: 210,
+          onboardingCompleted: true,
+          createdAtMs: Date.now() - 86400000 * 15,
+          updatedAtMs: Date.now(),
+        },
+      ];
+    }
+    return [];
+  });
 
   const [remoteStories, setRemoteStories] = useState<StoryItem[]>([]);
   const [localStories, setLocalStories] = useState<StoryItem[]>(() =>
@@ -292,7 +369,9 @@ export function useSocialStore() {
   const [viewedStoryIds, setViewedStoryIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.VIEWED_STORIES, [])
   );
-  const [remoteOnlineIds, setRemoteOnlineIds] = useState<string[]>([]);
+  const [remoteOnlineIds, setRemoteOnlineIds] = useState<string[]>(() =>
+    autostart ? ['creator_sophia'] : []
+  );
   const onlineUserIds = Array.from(
     new Set([
       ...(isAuthenticated ? [profile.uid] : []),
@@ -301,16 +380,81 @@ export function useSocialStore() {
   );
   const hydratedRemotePostIdsRef = useRef<Set<string>>(new Set());
 
-  const [threads, setThreads] = useState<ChatThread[]>(() =>
-    stripDemoThreads(readStorage<ChatThread[]>(STORAGE_KEYS.CHATS, []))
-  );
+  const [threads, setThreads] = useState<ChatThread[]>(() => {
+    const stored = stripDemoThreads(
+      readStorage<ChatThread[]>(STORAGE_KEYS.CHATS, [])
+    );
+    if (stored.length > 0) return stored;
+    if (autostart) {
+      return [
+        {
+          id: 'chat_sophia_direct',
+          isGroup: false,
+          title: 'Sophia Chen',
+          partnerHandle: 'sophia.studio',
+          partnerAvatar:
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          memberIds: [profile.uid, 'creator_sophia'],
+          adminIds: [profile.uid, 'creator_sophia'],
+          lastMessageText: '🎤 Voice message',
+          lastMessageSenderId: 'creator_sophia',
+          createdAtMs: Date.now() - 1000 * 60 * 60 * 24,
+          updatedAtMs: Date.now() - 1000 * 60 * 5,
+        },
+      ];
+    }
+    return [];
+  });
   const [messagesByChat, setMessagesByChat] = useState<
     Record<string, ChatMessage[]>
-  >(() =>
-    stripDemoMessages(
+  >(() => {
+    const stored = stripDemoMessages(
       readStorage<Record<string, ChatMessage[]>>(STORAGE_KEYS.MESSAGES, {})
-    )
-  );
+    );
+    if (Object.keys(stored).length > 0) return stored;
+    if (autostart) {
+      return {
+        chat_sophia_direct: [
+          {
+            id: 'msg_seed_1',
+            chatId: 'chat_sophia_direct',
+            senderId: 'creator_sophia',
+            senderName: 'Sophia Chen',
+            senderAvatar:
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+            text: 'Hey Alex! Loved your latest post on the feed. Here is a quick voice note about our upcoming sprint!',
+            memberIds: [profile.uid, 'creator_sophia'],
+            createdAtMs: Date.now() - 1000 * 60 * 15,
+          },
+          {
+            id: 'msg_seed_2',
+            chatId: 'chat_sophia_direct',
+            senderId: 'creator_sophia',
+            senderName: 'Sophia Chen',
+            senderAvatar:
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+            text: formatVoiceNote(
+              'https://cdn.freesound.org/previews/612/612082_5674468-lq.mp3',
+              14
+            ),
+            memberIds: [profile.uid, 'creator_sophia'],
+            createdAtMs: Date.now() - 1000 * 60 * 10,
+          },
+          {
+            id: 'msg_seed_3',
+            chatId: 'chat_sophia_direct',
+            senderId: profile.uid,
+            senderName: profile.displayName,
+            senderAvatar: profile.avatarUrl,
+            text: 'Awesome note Sophia! Check out this reference link for the UI components: https://developer.mozilla.org/en-US/docs/Web/CSS',
+            memberIds: [profile.uid, 'creator_sophia'],
+            createdAtMs: Date.now() - 1000 * 60 * 4,
+          },
+        ],
+      };
+    }
+    return {};
+  });
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.MUTED_CHATS, [])
   );

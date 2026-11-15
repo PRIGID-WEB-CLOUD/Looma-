@@ -3,13 +3,21 @@ import {
   ArrowLeft,
   BellOff,
   Check,
+  CheckCheck,
+  ExternalLink,
+  Globe,
   Info,
   MapPin,
   MessageSquare,
   MessageSquarePlus,
+  Mic,
+  MicOff,
+  Pause,
   Phone,
+  Play,
   Search,
   Send,
+  Trash2,
   UserPlus,
   Users,
   Video,
@@ -17,14 +25,23 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, ChatThread, UserProfile } from '../types/social';
 import {
+  extractFirstUrl,
   filterUsersByQuery,
+  formatGifMessage,
   formatRelativeTime,
+  formatVoiceNote,
   getThreadOnlineStatus,
   isUserOnline,
   MAX_GROUP_MEMBERS,
+  parseGifMessage,
+  parseRichUrl,
+  parseVoiceNote,
+  type CuratedGif,
 } from '../utils/socialLogic';
+import { uploadMediaToCloudflareR2 } from '../services/storage';
 import { Avatar } from './Avatar';
 import { ChatInfoModal } from './ChatInfoModal';
+import { GifPickerModal } from './GifPickerModal';
 
 interface ChatViewProps {
   profile: UserProfile;
@@ -54,6 +71,174 @@ interface ChatViewProps {
   onOpenPublicProfile: (uid: string) => void;
   onStartCall: (thread: ChatThread, isAudioOnly: boolean) => void;
   onStartInstantCall: (title: string, isAudioOnly: boolean) => void;
+}
+
+function VoiceNoteBubble({
+  url,
+  durationSec,
+  mine,
+}: {
+  url: string;
+  durationSec: number;
+  mine: boolean;
+}) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(durationSec || 0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(() => {});
+    }
+  };
+
+  const formatSec = (s: number) => {
+    const mins = Math.floor(s / 60);
+    const secs = Math.floor(s % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="flex items-center gap-3 py-1 min-w-[200px] sm:min-w-[240px]">
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="metadata"
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          setCurrentTime(0);
+        }}
+        onTimeUpdate={() => {
+          if (audioRef.current) {
+            setCurrentTime(audioRef.current.currentTime);
+          }
+        }}
+        onLoadedMetadata={() => {
+          if (audioRef.current && (!durationSec || durationSec === 0)) {
+            setDuration(Math.round(audioRef.current.duration) || 0);
+          }
+        }}
+      />
+      <button
+        type="button"
+        onClick={togglePlay}
+        aria-label={isPlaying ? 'Pause voice memo' : 'Play voice memo'}
+        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition shadow-sm cursor-pointer ${
+          mine
+            ? 'bg-white text-blue-600 hover:bg-blue-50'
+            : 'bg-blue-600 text-white hover:bg-blue-700'
+        }`}
+      >
+        {isPlaying ? (
+          <Pause className="w-4 h-4 fill-current" />
+        ) : (
+          <Play className="w-4 h-4 fill-current ml-0.5" />
+        )}
+      </button>
+
+      {/* Waveform Visualization Bars */}
+      <div className="flex-1 flex flex-col justify-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-0.5 h-6">
+          {[40, 75, 30, 85, 60, 100, 45, 90, 75, 50, 80, 65, 35, 95, 55, 70, 85, 40].map(
+            (h, i) => {
+              const progress = duration > 0 ? currentTime / duration : 0;
+              const barProgress = i / 18;
+              const isPassed = progress >= barProgress;
+              return (
+                <div
+                  key={i}
+                  className={`flex-1 rounded-full transition-all duration-150 ${
+                    mine
+                      ? isPassed
+                        ? 'bg-white'
+                        : 'bg-white/40'
+                      : isPassed
+                        ? 'bg-blue-600 dark:bg-blue-400'
+                        : 'bg-slate-300 dark:bg-slate-700'
+                  } ${isPlaying ? 'animate-pulse' : ''}`}
+                  style={{ height: `${Math.max(15, h)}%` }}
+                />
+              );
+            }
+          )}
+        </div>
+        <div
+          className={`flex items-center justify-between text-[11px] font-medium tabular-nums ${
+            mine ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          <span>{formatSec(isPlaying ? currentTime : duration)}</span>
+          <span className="text-[10px] opacity-75">Voice note</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GifBubble({
+  url,
+  caption,
+  mine,
+}: {
+  url: string;
+  caption?: string;
+  mine: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="rounded-xl overflow-hidden max-w-[280px] sm:max-w-[320px] bg-black/10">
+        <img
+          src={url}
+          alt={caption || 'Animated GIF'}
+          loading="lazy"
+          className="w-full h-auto max-h-64 object-cover"
+        />
+      </div>
+      {caption && (
+        <p
+          className={`text-sm ${
+            mine ? 'text-white' : 'text-slate-900 dark:text-slate-100'
+          } break-words`}
+        >
+          {caption}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ChatLinkCard({ url, mine }: { url: string; mine: boolean }) {
+  const parsed = useMemo(() => parseRichUrl(url), [url]);
+  if (!parsed || parsed.kind !== 'link') return null;
+
+  return (
+    <a
+      href={parsed.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`mt-2 block rounded-xl p-2.5 border transition ${
+        mine
+          ? 'bg-blue-700/60 border-blue-500/50 hover:bg-blue-700 text-white'
+          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-900 dark:text-slate-100'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-1.5 text-[11px] opacity-80 mb-1">
+        <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider truncate">
+          <Globe className="w-3 h-3" />
+          {parsed.hostname}
+        </span>
+        <ExternalLink className="w-3 h-3 shrink-0" />
+      </div>
+      <p className="text-xs font-semibold truncate">{parsed.displayTitle}</p>
+      <p className="text-[11px] opacity-70 truncate mt-0.5">{parsed.url}</p>
+    </a>
+  );
 }
 
 export function ChatView({
@@ -96,7 +281,15 @@ export function ChatView({
   const [groupError, setGroupError] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [showChatInfo, setShowChatInfo] = useState(false);
+  const [gifModalOpen, setGifModalOpen] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceUploading, setVoiceUploading] = useState(false);
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<number | null>(null);
 
   const activeThread =
     threads.find((t) => t.id === selectedId) || threads[0] || null;
@@ -163,12 +356,147 @@ export function ChatView({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [showNewPicker]);
 
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+      }
+      if (mediaRecorderRef.current) {
+        try {
+          mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeStatus?.isOnline) {
+      setIsPartnerTyping(true);
+      const timer = setTimeout(() => setIsPartnerTyping(false), 2200);
+      return () => clearTimeout(timer);
+    } else {
+      setIsPartnerTyping(false);
+    }
+  }, [selectedId, activeStatus?.isOnline]);
+
   const handleSend = async (e: FormEvent) => {
     e.preventDefault();
     if (!activeThread || !draft.trim()) return;
     const text = draft;
     setDraft('');
     await onSendMessage(activeThread, text);
+  };
+
+  const handleSelectChatGif = async (gif: CuratedGif) => {
+    if (!activeThread) return;
+    await onSendMessage(activeThread, formatGifMessage(gif.url));
+  };
+
+  const handleStartVoiceRecording = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert('Audio recording is not supported in this browser.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType =
+        typeof MediaRecorder !== 'undefined' &&
+        MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.start(100);
+      mediaRecorderRef.current = recorder;
+      setIsRecordingVoice(true);
+      setRecordingSeconds(0);
+
+      recordTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((sec) => sec + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Failed to start voice recording:', err);
+    }
+  };
+
+  const handleCancelVoiceRecording = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      } catch {
+        // ignore
+      }
+      mediaRecorderRef.current = null;
+    }
+    audioChunksRef.current = [];
+    setIsRecordingVoice(false);
+    setRecordingSeconds(0);
+  };
+
+  const handleSendVoiceRecording = async () => {
+    if (!mediaRecorderRef.current || !activeThread) return;
+    const finalDuration = Math.max(1, recordingSeconds);
+
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+
+    const recorder = mediaRecorderRef.current;
+    setVoiceUploading(true);
+
+    recorder.onstop = async () => {
+      try {
+        recorder.stream.getTracks().forEach((track) => track.stop());
+      } catch {
+        // ignore
+      }
+      try {
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        let audioUrl = '';
+
+        try {
+          const file = new File(
+            [blob],
+            `voice-${Date.now()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`,
+            { type: mimeType }
+          );
+          const uploaded = await uploadMediaToCloudflareR2(file, 'posts');
+          audioUrl = uploaded.url;
+        } catch {
+          // Fall back to object URL so audio memo remains immediately playable
+          audioUrl = URL.createObjectURL(blob);
+        }
+
+        if (audioUrl) {
+          await onSendMessage(activeThread, formatVoiceNote(audioUrl, finalDuration));
+        }
+      } catch (err) {
+        console.error('Failed to upload/send voice note:', err);
+      } finally {
+        setIsRecordingVoice(false);
+        setRecordingSeconds(0);
+        setVoiceUploading(false);
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+      }
+    };
+
+    recorder.stop();
   };
 
   const handlePickCreator = async (creator: UserProfile) => {
@@ -509,80 +837,223 @@ export function ChatView({
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white dark:bg-slate-900">
               {activeMessages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-slate-400">
-                  Send a message or greet {activeThread.title}!
+                <div className="h-full flex flex-col items-center justify-center text-sm text-slate-400 gap-2">
+                  <Avatar src={activeThread.partnerAvatar} name={activeThread.title} size="lg" />
+                  <p className="font-semibold text-slate-700 dark:text-slate-300">
+                    {activeThread.title}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Say hello to start the conversation!
+                  </p>
                 </div>
               ) : (
                 activeMessages.map((msg, idx) => {
                   const mine = msg.senderId === profile.uid;
                   const nextMsg = activeMessages[idx + 1];
                   const isLastInGroup = !nextMsg || nextMsg.senderId !== msg.senderId;
+                  const isLastMine =
+                    mine &&
+                    idx === activeMessages.map((m) => m.senderId).lastIndexOf(profile.uid);
+
+                  const voiceData = parseVoiceNote(msg.text);
+                  const gifData = parseGifMessage(msg.text);
+                  const urlMatch = !voiceData && !gifData ? extractFirstUrl(msg.text) : null;
+
                   return (
                     <div
                       key={msg.id}
-                      className={`flex items-end gap-2 ${
-                        mine ? 'justify-end' : 'justify-start'
+                      className={`flex flex-col ${
+                        mine ? 'items-end' : 'items-start'
                       } ${isLastInGroup ? 'mb-3' : 'mb-1'}`}
                     >
-                      {!mine && (
-                        <div className="w-7 shrink-0">
-                          {isLastInGroup ? (
-                            <Avatar
-                              src={msg.senderAvatar}
-                              name={msg.senderName}
-                              size="sm"
+                      <div
+                        className={`flex items-end gap-2 max-w-[85%] sm:max-w-[75%] ${
+                          mine ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        {!mine && (
+                          <div className="w-7 shrink-0">
+                            {isLastInGroup ? (
+                              <Avatar
+                                src={msg.senderAvatar}
+                                name={msg.senderName}
+                                size="sm"
+                              />
+                            ) : (
+                              <div className="w-7" />
+                            )}
+                          </div>
+                        )}
+                        <div
+                          className={`rounded-2xl px-3.5 py-2 text-sm shadow-2xs ${
+                            mine
+                              ? 'bg-blue-600 text-white rounded-br-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-xs'
+                          }`}
+                        >
+                          {!mine && activeThread.isGroup && isLastInGroup && (
+                            <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5">
+                              {msg.senderName}
+                            </p>
+                          )}
+
+                          {voiceData ? (
+                            <VoiceNoteBubble
+                              url={voiceData.url}
+                              durationSec={voiceData.durationSec}
+                              mine={mine}
+                            />
+                          ) : gifData ? (
+                            <GifBubble
+                              url={gifData.url}
+                              caption={gifData.caption}
+                              mine={mine}
                             />
                           ) : (
-                            <div className="w-7" />
+                            <div>
+                              <p className="leading-relaxed break-words">{msg.text}</p>
+                              {urlMatch && (
+                                <ChatLinkCard url={urlMatch} mine={mine} />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Messenger-style Read Receipt & Status Indicator */}
+                      {isLastMine && (
+                        <div className="flex items-center justify-end gap-1 mt-1 px-1 text-[11px] text-slate-400">
+                          {activeStatus?.isOnline ? (
+                            <div className="flex items-center gap-1.5" title="Seen by partner">
+                              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                                Seen
+                              </span>
+                              <div className="w-3.5 h-3.5 rounded-full overflow-hidden ring-1 ring-blue-500/40 shrink-0">
+                                <img
+                                  src={activeThread.partnerAvatar}
+                                  alt={activeThread.title}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1" title="Delivered">
+                              <span className="text-[10px]">Delivered</span>
+                              <CheckCheck className="w-3.5 h-3.5 text-slate-400" />
+                            </div>
                           )}
                         </div>
                       )}
-                      <div
-                        className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm shadow-2xs ${
-                          mine
-                            ? 'bg-blue-600 text-white rounded-br-xs'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-xs'
-                        }`}
-                      >
-                        {!mine && activeThread.isGroup && isLastInGroup && (
-                          <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5">
-                            {msg.senderName}
-                          </p>
-                        )}
-                        <p className="leading-relaxed break-words">{msg.text}</p>
-                      </div>
                     </div>
                   );
                 })
               )}
+
+              {/* Animated Typing Indicator */}
+              {activeStatus?.isOnline && isPartnerTyping && (
+                <div className="flex items-end gap-2 mb-2 animate-in fade-in duration-200">
+                  <Avatar
+                    src={activeThread.partnerAvatar}
+                    name={activeThread.title}
+                    size="sm"
+                  />
+                  <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-bl-xs px-3.5 py-2.5 flex items-center gap-1.5 shadow-2xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce" />
+                  </div>
+                </div>
+              )}
+
               <div ref={endRef} />
             </div>
 
-            <form
-              onSubmit={handleSend}
-              className="p-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-white dark:bg-slate-900"
-            >
-              <label htmlFor="chat-message-input" className="sr-only">
-                Type a message
-              </label>
-              <input
-                id="chat-message-input"
-                type="text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={`Message ${activeThread.title}...`}
-                maxLength={1000}
-                className="flex-1 min-h-[44px] px-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
-              <button
-                type="submit"
-                aria-label="Send message"
-                className="min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+            {isRecordingVoice ? (
+              <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-red-50/50 dark:bg-red-950/20 animate-in slide-in-from-bottom-2 duration-150">
+                <div className="flex items-center gap-2.5">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-red-600 dark:text-red-400 tabular-nums">
+                    Recording {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, '0')}
+                  </span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
+                    · Speak into your microphone
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelVoiceRecording}
+                    className="min-h-[40px] px-3.5 rounded-xl border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-100/60 dark:hover:bg-red-950/50 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Cancel</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSendVoiceRecording}
+                    disabled={voiceUploading}
+                    className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 transition shadow-sm"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{voiceUploading ? 'Uploading...' : 'Send Voice Note'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleSend}
+                className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-white dark:bg-slate-900"
               >
-                <Send className="w-4 h-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Send</span>
-              </button>
-            </form>
+                {/* GIF Button */}
+                <button
+                  type="button"
+                  onClick={() => setGifModalOpen(true)}
+                  title="Send a GIF"
+                  aria-label="Send a GIF"
+                  className="min-h-[40px] min-w-[40px] rounded-full text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center font-bold text-xs tracking-wider transition cursor-pointer"
+                >
+                  GIF
+                </button>
+
+                {/* Voice Note Mic Button */}
+                <button
+                  type="button"
+                  onClick={handleStartVoiceRecording}
+                  title="Record Voice Note"
+                  aria-label="Record voice note"
+                  className="min-h-[40px] min-w-[40px] rounded-full text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition cursor-pointer"
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+
+                <label htmlFor="chat-message-input" className="sr-only">
+                  Type a message
+                </label>
+                <input
+                  id="chat-message-input"
+                  type="text"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={`Message ${activeThread.title}...`}
+                  maxLength={1000}
+                  className="flex-1 min-h-[40px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 border-none text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                />
+
+                <button
+                  type="submit"
+                  disabled={!draft.trim()}
+                  aria-label="Send message"
+                  className="min-h-[40px] min-w-[40px] rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white flex items-center justify-center cursor-pointer transition shadow-sm"
+                >
+                  <Send className="w-4 h-4 ml-0.5" aria-hidden="true" />
+                </button>
+              </form>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center text-slate-500">
@@ -962,6 +1433,12 @@ export function ChatView({
           )}
         </div>
       )}
+
+      <GifPickerModal
+        open={gifModalOpen}
+        onClose={() => setGifModalOpen(false)}
+        onSelectGif={handleSelectChatGif}
+      />
     </section>
   );
 }

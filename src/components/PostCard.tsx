@@ -696,6 +696,27 @@ export function PostCard({
             <Share2 className="w-4 h-4" aria-hidden="true" />
             <span>{copied ? 'Copied' : 'Share'}</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => onToggleBookmark(post.id)}
+            aria-label={
+              isBookmarked
+                ? `Remove bookmark for post by ${post.authorName}`
+                : `Bookmark post by ${post.authorName}`
+            }
+            className={`min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
+              isBookmarked
+                ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Bookmark
+              className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`}
+              aria-hidden="true"
+            />
+            <span className="hidden xs:inline sm:inline">{isBookmarked ? 'Saved' : 'Save'}</span>
+          </button>
         </div>
       </div>
 

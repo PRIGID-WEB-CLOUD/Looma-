@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Search, X } from 'lucide-react';
-import type { Post, PostComment, StoryGroup, UserProfile } from '../types/social';
-import { filterMediaPosts, paginateFeed } from '../utils/socialLogic';
+import { Bookmark, ImagePlus, Search, X } from 'lucide-react';
+import type {
+  Post,
+  PostCategory,
+  PostComment,
+  StoryGroup,
+  UserProfile,
+} from '../types/social';
+import { filterMediaPosts, paginateFeed, POST_CATEGORIES } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
@@ -60,16 +66,26 @@ export function FeedView({
     if (onSearchQueryChange) onSearchQueryChange(q);
     else setInternalQuery(q);
   };
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
+  const [feedFilter, setFeedFilter] = useState<'All' | 'Saved' | PostCategory>('All');
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
+  const basePosts = useMemo(() => {
+    if (feedFilter === 'Saved') {
+      return posts.filter((p) => bookmarkedPostIds.includes(p.id));
+    }
+    return posts;
+  }, [posts, feedFilter, bookmarkedPostIds]);
+
+  const activeCategory = feedFilter === 'Saved' ? 'All' : feedFilter;
+
   const { items, filteredTotal, hasMore } = paginateFeed(
-    posts,
+    basePosts,
     PAGE_SIZE,
     visibleCount,
-    'All',
+    activeCategory,
     searchQuery
   );
 
@@ -77,7 +93,7 @@ export function FeedView({
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [searchQuery]);
+  }, [searchQuery, feedFilter]);
 
   useEffect(() => {
     if (!hasMore || !sentinelRef.current) return;
@@ -157,18 +173,81 @@ export function FeedView({
         )}
       </div>
 
+      {/* Category & Collection Filter Bar */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <button
+          type="button"
+          onClick={() => setFeedFilter('All')}
+          className={`min-h-[36px] px-3.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+            feedFilter === 'All'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+          }`}
+        >
+          All
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setFeedFilter('Saved')}
+          className={`min-h-[36px] px-3.5 rounded-full text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1.5 transition cursor-pointer ${
+            feedFilter === 'Saved'
+              ? 'bg-amber-600 text-white shadow-sm'
+              : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Bookmark className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
+          <span>Saved</span>
+          <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-black/15 dark:bg-white/15 tabular-nums">
+            {bookmarkedPostIds.length}
+          </span>
+        </button>
+
+        {POST_CATEGORIES.map((cat) => {
+          const isActive = feedFilter === cat;
+          return (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setFeedFilter(cat)}
+              className={`min-h-[36px] px-3.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+                isActive
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+            >
+              {cat}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Feed Cards */}
       {items.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
           <p className="text-sm font-semibold">
-            {posts.length === 0 ? 'No posts yet' : 'No matching posts'}
+            {feedFilter === 'Saved'
+              ? 'No saved posts in your collection'
+              : posts.length === 0
+                ? 'No posts yet'
+                : 'No matching posts'}
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            {posts.length === 0
-              ? 'Be the first to share a note, photo, video, or link with the community.'
-              : 'Try clearing your search to view all posts.'}
+            {feedFilter === 'Saved'
+              ? 'Tap the Save bookmark icon on any post to add it to your personal collection.'
+              : posts.length === 0
+                ? 'Be the first to share a note, photo, video, or link with the community.'
+                : 'Try clearing your search or switching categories to view more posts.'}
           </p>
-          {posts.length === 0 && (
+          {feedFilter === 'Saved' ? (
+            <button
+              type="button"
+              onClick={() => setFeedFilter('All')}
+              className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
+            >
+              Explore Feed
+            </button>
+          ) : posts.length === 0 ? (
             <button
               type="button"
               onClick={onOpenComposer}
@@ -176,7 +255,7 @@ export function FeedView({
             >
               Create First Post
             </button>
-          )}
+          ) : null}
         </div>
       ) : (
         <div className="space-y-4">

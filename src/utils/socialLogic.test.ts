@@ -52,6 +52,12 @@ import {
   cycleZoomLevel,
   stepMediaIndex,
   deriveMediaDownloadName,
+  formatVoiceNote,
+  parseVoiceNote,
+  formatGifMessage,
+  parseGifMessage,
+  filterGifs,
+  CURATED_GIFS,
 } from './socialLogic';
 import type {
   AppNotification,
@@ -991,4 +997,63 @@ test('opaque hash/UUID/R2-key identifiers are stripped from media titles and URL
   assert.equal(buildStoryFromPost(legacyHashPhoto).caption, 'Shared a post');
 });
 
+test('voice notes formatting and parsing preserves audio url and duration', () => {
+  const url = '/api/storage/file/uploads/u1/voice/12345.webm';
+  const formatted = formatVoiceNote(url, 14.8);
+  assert.equal(formatted, '[voice:/api/storage/file/uploads/u1/voice/12345.webm:15]');
 
+  const parsed = parseVoiceNote(formatted);
+  assert.ok(parsed);
+  assert.equal(parsed?.url, url);
+  assert.equal(parsed?.durationSec, 15);
+
+  const parsedNoDuration = parseVoiceNote('[voice:https://cdn.example.com/audio/sample.mp3]');
+  assert.ok(parsedNoDuration);
+  assert.equal(parsedNoDuration?.url, 'https://cdn.example.com/audio/sample.mp3');
+  assert.equal(parsedNoDuration?.durationSec, 0);
+
+  assert.equal(parseVoiceNote('Just a normal chat message'), null);
+  assert.equal(parseVoiceNote(''), null);
+});
+
+test('gif messages formatting and parsing handles media urls and optional captions', () => {
+  const gifUrl = 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif';
+  const formattedWithCaption = formatGifMessage(gifUrl, 'Huge congratulations team!');
+  assert.equal(
+    formattedWithCaption,
+    `[gif:${gifUrl}] Huge congratulations team!`
+  );
+
+  const parsedWithCaption = parseGifMessage(formattedWithCaption);
+  assert.ok(parsedWithCaption);
+  assert.equal(parsedWithCaption?.url, gifUrl);
+  assert.equal(parsedWithCaption?.caption, 'Huge congratulations team!');
+
+  const formattedWithoutCaption = formatGifMessage(gifUrl);
+  assert.equal(formattedWithoutCaption, `[gif:${gifUrl}]`);
+  const parsedWithoutCaption = parseGifMessage(formattedWithoutCaption);
+  assert.ok(parsedWithoutCaption);
+  assert.equal(parsedWithoutCaption?.url, gifUrl);
+  assert.equal(parsedWithoutCaption?.caption, '');
+
+  assert.equal(parseGifMessage('Hello world'), null);
+  assert.equal(parseGifMessage(''), null);
+});
+
+test('curated gif catalog filtering matches keywords, categories, and titles', () => {
+  assert.ok(CURATED_GIFS.length >= 10);
+
+  const clapGifs = filterGifs('clap');
+  assert.ok(clapGifs.length > 0);
+  assert.ok(clapGifs.some((g) => g.id === 'gif-applause'));
+
+  const cheersCategory = filterGifs('', 'Cheers');
+  assert.ok(cheersCategory.length >= 2);
+  assert.ok(cheersCategory.every((g) => g.category === 'Cheers'));
+
+  const emptyMatch = filterGifs('nonexistentkeyword123456');
+  assert.equal(emptyMatch.length, 0);
+
+  const allGifs = filterGifs('', 'All');
+  assert.equal(allGifs.length, CURATED_GIFS.length);
+});

@@ -23,12 +23,14 @@ import {
   sanitizeMediaTitle,
   sanitizeUploadedFilenameTitle,
   validatePostInput,
+  type CuratedGif,
 } from '../utils/socialLogic';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
 } from '../services/storage';
 import { Avatar } from './Avatar';
+import { GifPickerModal } from './GifPickerModal';
 
 const DEFAULT_CATEGORY: PostCategory = 'Journal';
 
@@ -72,7 +74,15 @@ export function CreatePostModal({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const handleSelectGif = (gif: CuratedGif) => {
+    setImageUrl(gif.url);
+    setMediaTitle(gif.title);
+    setVideoUrl('');
+    setAudioUrl('');
+  };
   const [cursorPos, setCursorPos] = useState<number>(0);
 
   const allCandidateCreators = useMemo(() => {
@@ -735,19 +745,32 @@ export function CreatePostModal({
 
         {/* Sticky Bottom Studio Bar */}
         <footer className="shrink-0 px-4 sm:px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex items-center justify-between gap-3">
-          <label
-            htmlFor="all-in-one-file-upload"
-            className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-2 cursor-pointer"
-          >
-            <File className="w-4 h-4" aria-hidden="true" />
-            <span>
-              {uploading
-                ? `Uploading${uploadProgress > 0 ? ` ${uploadProgress}%` : '...'}`
-                : hasUploadedFile
-                  ? 'Replace File'
-                  : 'Add File'}
-            </span>
-          </label>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="all-in-one-file-upload"
+              className="min-h-[44px] px-3.5 sm:px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-2 cursor-pointer"
+            >
+              <File className="w-4 h-4" aria-hidden="true" />
+              <span>
+                {uploading
+                  ? `Uploading${uploadProgress > 0 ? ` ${uploadProgress}%` : '...'}`
+                  : hasUploadedFile
+                    ? 'Replace'
+                    : 'Add File'}
+              </span>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => setGifPickerOpen(true)}
+              className="min-h-[44px] px-3 sm:px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <span className="px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-500 font-bold text-[10px]">
+                GIF
+              </span>
+              <span className="hidden xs:inline">Choose GIF</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-2.5">
             <button
@@ -767,6 +790,12 @@ export function CreatePostModal({
           </div>
         </footer>
       </form>
+
+      <GifPickerModal
+        open={gifPickerOpen}
+        onClose={() => setGifPickerOpen(false)}
+        onSelectGif={handleSelectGif}
+      />
     </div>
   );
 }

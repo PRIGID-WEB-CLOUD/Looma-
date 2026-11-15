@@ -180,6 +180,9 @@ export function buildChatPreview(messages: ChatMessage[]): string {
   const sorted = [...messages].sort((a, b) => a.createdAtMs - b.createdAtMs);
   const latest = sorted[sorted.length - 1];
   const text = latest.text.trim();
+  if (parseVoiceNote(text)) return '🎤 Voice message';
+  const gifData = parseGifMessage(text);
+  if (gifData) return gifData.caption ? `🎬 GIF: ${gifData.caption}` : '🎬 GIF';
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
@@ -1368,6 +1371,203 @@ export function deriveMediaDownloadName(
       .slice(0, 48) || `looma-${postId}`;
   return `${safeBase}.${fallbackExt}`;
 }
+
+export interface VoiceNotePayload {
+  url: string;
+  durationSec: number;
+}
+
+export function formatVoiceNote(url: string, durationSec: number = 0): string {
+  return `[voice:${url.trim()}:${Math.max(0, Math.round(durationSec))}]`;
+}
+
+export function parseVoiceNote(text: string): VoiceNotePayload | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[voice:') || !trimmed.endsWith(']')) return null;
+  const inner = trimmed.slice(7, -1).trim();
+  if (!inner) return null;
+  
+  const lastColonIdx = inner.lastIndexOf(':');
+  if (lastColonIdx !== -1) {
+    const potentialDuration = inner.slice(lastColonIdx + 1);
+    if (/^\d+$/.test(potentialDuration)) {
+      const url = inner.slice(0, lastColonIdx).trim();
+      if (url) {
+        return {
+          url,
+          durationSec: parseInt(potentialDuration, 10),
+        };
+      }
+    }
+  }
+
+  return {
+    url: inner,
+    durationSec: 0,
+  };
+}
+
+export interface GifMessagePayload {
+  url: string;
+  caption: string;
+}
+
+export function formatGifMessage(url: string, caption: string = ''): string {
+  const cleanUrl = url.trim();
+  const cleanCap = caption.trim();
+  return cleanCap ? `[gif:${cleanUrl}] ${cleanCap}` : `[gif:${cleanUrl}]`;
+}
+
+export function parseGifMessage(text: string): GifMessagePayload | null {
+  if (!text) return null;
+  const match = text.trim().match(/^\[gif:([^\]]+)\](?:\s*(.*))?$/s);
+  if (!match) return null;
+  return {
+    url: match[1].trim(),
+    caption: (match[2] || '').trim(),
+  };
+}
+
+export interface CuratedGif {
+  id: string;
+  title: string;
+  category: 'Trending' | 'Reactions' | 'Cheers' | 'Love' | 'Laugh' | 'Studio' | 'Travel';
+  url: string;
+  previewUrl: string;
+  keywords: string[];
+}
+
+export const CURATED_GIF_CATEGORIES = [
+  'All',
+  'Trending',
+  'Reactions',
+  'Cheers',
+  'Love',
+  'Laugh',
+  'Studio',
+  'Travel',
+] as const;
+
+export const CURATED_GIFS: CuratedGif[] = [
+  {
+    id: 'gif-applause',
+    title: 'Round of Applause',
+    category: 'Reactions',
+    url: 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/artj92V8o75VPL7AeQ/200w.gif',
+    keywords: ['clap', 'applause', 'bravo', 'congrats', 'cheers'],
+  },
+  {
+    id: 'gif-thumbs-up',
+    title: 'Thumbs Up Approval',
+    category: 'Trending',
+    url: 'https://media.giphy.com/media/26u4cqiYI30juCOGY/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/26u4cqiYI30juCOGY/200w.gif',
+    keywords: ['thumbs', 'up', 'ok', 'yes', 'agree', 'cool'],
+  },
+  {
+    id: 'gif-celebrate',
+    title: 'Confetti Celebration',
+    category: 'Cheers',
+    url: 'https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/200w.gif',
+    keywords: ['party', 'celebrate', 'confetti', 'woo', 'win', 'hooray'],
+  },
+  {
+    id: 'gif-laughing',
+    title: 'Laughing Out Loud',
+    category: 'Laugh',
+    url: 'https://media.giphy.com/media/3o7TKMt1VVNkHV2PaE/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/3o7TKMt1VVNkHV2PaE/200w.gif',
+    keywords: ['laugh', 'lol', 'funny', 'haha', 'rofl'],
+  },
+  {
+    id: 'gif-mindblown',
+    title: 'Mind Blown',
+    category: 'Reactions',
+    url: 'https://media.giphy.com/media/M90mJvfWfd5mbUuULX/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/M90mJvfWfd5mbUuULX/200w.gif',
+    keywords: ['mindblown', 'wow', 'insane', 'shocked', 'explosion'],
+  },
+  {
+    id: 'gif-cheers',
+    title: 'Cheers Toast',
+    category: 'Cheers',
+    url: 'https://media.giphy.com/media/xT0xezQGU5xCDJuCPe/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/xT0xezQGU5xCDJuCPe/200w.gif',
+    keywords: ['toast', 'drinks', 'celebration', 'cheers'],
+  },
+  {
+    id: 'gif-excited',
+    title: 'So Excited',
+    category: 'Trending',
+    url: 'https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/5GoVLqeAOo6PK/200w.gif',
+    keywords: ['happy', 'excited', 'yes', 'hype', 'joy'],
+  },
+  {
+    id: 'gif-dance',
+    title: 'Victory Dance',
+    category: 'Trending',
+    url: 'https://media.giphy.com/media/d2Z4NRCUxsxZBvag/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/d2Z4NRCUxsxZBvag/200w.gif',
+    keywords: ['dance', 'groove', 'vibe', 'happy'],
+  },
+  {
+    id: 'gif-love-heart',
+    title: 'Sending Love',
+    category: 'Love',
+    url: 'https://media.giphy.com/media/l41lI4bYmcsPJX9Go/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/l41lI4bYmcsPJX9Go/200w.gif',
+    keywords: ['love', 'heart', 'hug', 'sweet', 'care'],
+  },
+  {
+    id: 'gif-studio-design',
+    title: 'Studio Craft Focus',
+    category: 'Studio',
+    url: 'https://media.giphy.com/media/26BRv0ThflsHCqDrG/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/26BRv0ThflsHCqDrG/200w.gif',
+    keywords: ['craft', 'design', 'work', 'studio', 'architecture'],
+  },
+  {
+    id: 'gif-travel-adventure',
+    title: 'Alpine Journey',
+    category: 'Travel',
+    url: 'https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/3o7abKhOpu0NwenH3O/200w.gif',
+    keywords: ['travel', 'mountains', 'nature', 'roadtrip', 'adventure'],
+  },
+  {
+    id: 'gif-high-five',
+    title: 'Epic High Five',
+    category: 'Reactions',
+    url: 'https://media.giphy.com/media/111ebonMs90YLu/giphy.gif',
+    previewUrl: 'https://media.giphy.com/media/111ebonMs90YLu/200w.gif',
+    keywords: ['highfive', 'team', 'goodjob', 'buddy', 'support'],
+  },
+];
+
+export function filterGifs(
+  query: string,
+  category: string = 'All'
+): CuratedGif[] {
+  const cleanQ = query.trim().toLowerCase();
+  const cleanCat = category.trim();
+
+  return CURATED_GIFS.filter((gif) => {
+    if (cleanCat !== 'All' && gif.category !== cleanCat) {
+      return false;
+    }
+    if (!cleanQ) return true;
+    return (
+      gif.title.toLowerCase().includes(cleanQ) ||
+      gif.category.toLowerCase().includes(cleanQ) ||
+      gif.keywords.some((kw) => kw.toLowerCase().includes(cleanQ))
+    );
+  });
+}
+
 
 
 
