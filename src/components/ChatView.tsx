@@ -51,6 +51,7 @@ interface ChatViewProps {
   pushEnabled: boolean;
   onlineUserIds: string[];
   communityUsers: UserProfile[];
+  chatUsers?: UserProfile[];
   initialThreadId?: string | null;
   onSubscribeThread: (chatId: string) => () => void;
   onSendMessage: (thread: ChatThread, text: string) => Promise<void>;
@@ -249,6 +250,7 @@ export function ChatView({
   pushEnabled,
   onlineUserIds,
   communityUsers,
+  chatUsers,
   initialThreadId,
   onSubscribeThread,
   onSendMessage,
@@ -303,6 +305,20 @@ export function ChatView({
     ? mutedChatIds.includes(activeThread.id)
     : false;
   const selfOnline = isUserOnline(profile.uid, onlineUserIds);
+  const knownOtherUsers = useMemo(() => {
+    const byUid = new Map<string, UserProfile>();
+    for (const u of chatUsers || []) {
+      if (u.uid && u.uid !== profile.uid) {
+        byUid.set(u.uid, u);
+      }
+    }
+    for (const u of communityUsers) {
+      if (u.uid && u.uid !== profile.uid) {
+        byUid.set(u.uid, u);
+      }
+    }
+    return Array.from(byUid.values());
+  }, [chatUsers, communityUsers, profile.uid]);
   const otherCreators = useMemo(
     () => communityUsers.filter((u) => u.uid !== profile.uid),
     [communityUsers, profile.uid]
@@ -772,7 +788,16 @@ export function ChatView({
                     {activeStatus?.isOnline ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active now</span>
                     ) : (
-                      <span>{activeStatus?.statusLabel || (activeThread.isGroup ? `${activeThread.memberIds.length} members` : `@${activeThread.partnerHandle}`)}</span>
+                      <span>
+                        {activeStatus?.statusLabel ||
+                          (activeThread.isGroup
+                            ? `${activeThread.memberIds.length} members`
+                            : activeThread.partnerHandle
+                              ? `@${activeThread.partnerHandle}`
+                              : activeThread.isParticipantResolved === false
+                                ? 'Resolving profile...'
+                                : 'Direct conversation')}
+                      </span>
                     )}
                   </p>
                 </div>
@@ -822,7 +847,7 @@ export function ChatView({
               profile={profile}
               messages={activeMessages}
               onlineUserIds={onlineUserIds}
-              communityUsers={communityUsers}
+              communityUsers={knownOtherUsers}
               isMuted={activeThreadMuted}
               pushEnabled={pushEnabled}
               onToggleMute={() => onToggleMuteChat(activeThread.id)}
@@ -859,6 +884,25 @@ export function ChatView({
                   const gifData = parseGifMessage(msg.text);
                   const urlMatch = !voiceData && !gifData ? extractFirstUrl(msg.text) : null;
 
+                  const liveSender =
+                    msg.senderId === profile.uid
+                      ? profile
+                      : knownOtherUsers.find((u) => u.uid === msg.senderId);
+                  const resolvedSenderName =
+                    liveSender?.displayName ||
+                    (!activeThread.isGroup &&
+                    msg.senderId === activeThread.partnerUid &&
+                    activeThread.isParticipantResolved
+                      ? activeThread.title
+                      : msg.senderName);
+                  const resolvedSenderAvatar =
+                    liveSender?.avatarUrl ??
+                    (!activeThread.isGroup &&
+                    msg.senderId === activeThread.partnerUid &&
+                    activeThread.isParticipantResolved
+                      ? activeThread.partnerAvatar
+                      : msg.senderAvatar);
+
                   return (
                     <div
                       key={msg.id}
@@ -875,8 +919,8 @@ export function ChatView({
                           <div className="w-7 shrink-0">
                             {isLastInGroup ? (
                               <Avatar
-                                src={msg.senderAvatar}
-                                name={msg.senderName}
+                                src={resolvedSenderAvatar}
+                                name={resolvedSenderName}
                                 size="sm"
                               />
                             ) : (
@@ -893,7 +937,7 @@ export function ChatView({
                         >
                           {!mine && activeThread.isGroup && isLastInGroup && (
                             <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5">
-                              {msg.senderName}
+                              {resolvedSenderName}
                             </p>
                           )}
 
@@ -928,12 +972,18 @@ export function ChatView({
                               <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">
                                 Seen
                               </span>
-                              <div className="w-3.5 h-3.5 rounded-full overflow-hidden ring-1 ring-blue-500/40 shrink-0">
-                                <img
-                                  src={activeThread.partnerAvatar}
-                                  alt={activeThread.title}
-                                  className="w-full h-full object-cover"
-                                />
+                              <div className="w-3.5 h-3.5 rounded-full overflow-hidden ring-1 ring-blue-500/40 shrink-0 bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[8px] font-bold text-slate-700 dark:text-slate-200">
+                                {activeThread.partnerAvatar ? (
+                                  <img
+                                    src={activeThread.partnerAvatar}
+                                    alt={activeThread.title}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <span>
+                                    {(activeThread.title.trim()[0] || '?').toUpperCase()}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ) : (

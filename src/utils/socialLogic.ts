@@ -2,6 +2,7 @@ import type {
   AppNotification,
   ChatMessage,
   ChatThread,
+  DirectChatParticipantResolution,
   Post,
   PostCategory,
   StoryGroup,
@@ -423,7 +424,10 @@ export function getThreadOnlineStatus(
   currentUid: string,
   onlineUserIds: string[]
 ): { isOnline: boolean; onlineCount: number; statusLabel: string } {
-  const otherMembers = thread.memberIds.filter((id) => id !== currentUid);
+  const uniqueMembers = Array.from(
+    new Set((Array.isArray(thread.memberIds) ? thread.memberIds : []).filter(Boolean))
+  );
+  const otherMembers = uniqueMembers.filter((id) => id !== currentUid);
   const onlineOthers = otherMembers.filter((id) => onlineUserIds.includes(id));
 
   if (thread.isGroup) {
@@ -433,7 +437,7 @@ export function getThreadOnlineStatus(
       statusLabel:
         onlineOthers.length > 0
           ? `${onlineOthers.length} online`
-          : thread.partnerHandle,
+          : thread.partnerHandle || `${uniqueMembers.length} members`,
     };
   }
 
@@ -442,6 +446,175 @@ export function getThreadOnlineStatus(
     isOnline: online,
     onlineCount: online ? 1 : 0,
     statusLabel: online ? 'Online' : 'Offline',
+  };
+}
+
+export const DIRECT_CHAT_SHARED_TITLE = 'Direct Chat';
+
+export function createDirectThreadMemberIds(
+  currentUid: string,
+  targetUid: string
+): { valid: boolean; memberIds: string[]; error?: string } {
+  const selfId = (currentUid || '').trim();
+  const otherId = (targetUid || '').trim();
+
+  if (!selfId || !otherId) {
+    return {
+      valid: false,
+      memberIds: [],
+      error: 'Both participant UIDs are required for a direct conversation.',
+    };
+  }
+
+  if (selfId === otherId) {
+    return {
+      valid: false,
+      memberIds: [],
+      error: 'Cannot start a direct conversation with yourself.',
+    };
+  }
+
+  return {
+    valid: true,
+    memberIds: [selfId, otherId],
+  };
+}
+
+export function matchesDirectThreadParticipants(
+  thread: Pick<ChatThread, 'isGroup' | 'memberIds'>,
+  uidA: string,
+  uidB: string
+): boolean {
+  if (thread.isGroup || !uidA || !uidB || uidA === uidB) return false;
+  const unique = Array.from(
+    new Set((Array.isArray(thread.memberIds) ? thread.memberIds : []).filter(Boolean))
+  );
+  return unique.length === 2 && unique.includes(uidA) && unique.includes(uidB);
+}
+
+export function resolveDirectChatParticipant(
+  memberIds: string[],
+  currentUserUid: string,
+  communityUsers: UserProfile[],
+  currentUserProfile?: Pick<UserProfile, 'uid'> | null
+): DirectChatParticipantResolution {
+  const uniqueMembers = Array.from(
+    new Set(
+      (Array.isArray(memberIds) ? memberIds : [])
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
+
+  const selfId = (currentUserUid || '').trim();
+  const otherIds = uniqueMembers.filter(
+    (uid) => uid !== selfId && uid !== currentUserProfile?.uid
+  );
+  const otherParticipantId = otherIds[0] || null;
+  const isValidDirectPair =
+    Boolean(selfId) &&
+    uniqueMembers.includes(selfId) &&
+    uniqueMembers.length === 2 &&
+    otherIds.length === 1;
+
+  if (!otherParticipantId) {
+    return {
+      otherParticipantId: null,
+      participant: null,
+      displayName: '',
+      handle: '',
+      avatarUrl: '',
+      isResolved: false,
+      isValidDirectPair: false,
+    };
+  }
+
+  const matched =
+    communityUsers.find(
+      (u) =>
+        u.uid === otherParticipantId &&
+        u.uid !== selfId &&
+        u.uid !== currentUserProfile?.uid
+    ) || null;
+
+  if (!matched) {
+    return {
+      otherParticipantId,
+      participant: null,
+      displayName: '',
+      handle: '',
+      avatarUrl: '',
+      isResolved: false,
+      isValidDirectPair,
+    };
+  }
+
+  const cleanName = (matched.displayName || '').trim();
+  const cleanHandle = (matched.handle || '').trim();
+  const cleanAvatar = normalizeAssetUrl(matched.avatarUrl || '');
+
+  return {
+    otherParticipantId,
+    participant: {
+      ...matched,
+      avatarUrl: cleanAvatar,
+    },
+    displayName: cleanName,
+    handle: cleanHandle,
+    avatarUrl: cleanAvatar,
+    isResolved: Boolean(cleanName),
+    isValidDirectPair,
+  };
+}
+
+export function resolveChatThreadForViewer(
+  thread: ChatThread,
+  currentUserUid: string,
+  communityUsers: UserProfile[],
+  currentUserProfile?: Pick<UserProfile, 'uid'> | null
+): ChatThread {
+  const uniqueMembers = Array.from(
+    new Set(
+      (Array.isArray(thread.memberIds) ? thread.memberIds : [])
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (thread.isGroup) {
+    const leadOtherUid = uniqueMembers.find((uid) => uid !== currentUserUid);
+    const leadProfile = leadOtherUid
+      ? communityUsers.find(
+          (u) => u.uid === leadOtherUid && u.uid !== currentUserUid
+        )
+      : undefined;
+    return {
+      ...thread,
+      memberIds: uniqueMembers,
+      partnerAvatar:
+        normalizeAssetUrl(leadProfile?.avatarUrl || thread.partnerAvatar || ''),
+      partnerHandle: `${uniqueMembers.length} members`,
+      isParticipantResolved: true,
+    };
+  }
+
+  const resolved = resolveDirectChatParticipant(
+    uniqueMembers,
+    currentUserUid,
+    communityUsers,
+    currentUserProfile
+  );
+
+  return {
+    ...thread,
+    memberIds: uniqueMembers,
+    partnerUid: resolved.otherParticipantId || undefined,
+    isParticipantResolved: resolved.isResolved,
+    title: resolved.isResolved ? resolved.displayName : 'Direct Message',
+    partnerAvatar: resolved.isResolved ? resolved.avatarUrl : '',
+    partnerHandle: resolved.isResolved ? resolved.handle : '',
   };
 }
 

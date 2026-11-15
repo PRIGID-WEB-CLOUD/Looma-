@@ -38,8 +38,11 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { StoryViewerModal } from './components/StoryViewerModal';
 import { TopBar } from './components/TopBar';
 import { BrandLogoModal } from './components/BrandLogoModal';
+import { useInitialization } from './app/initialization';
+import { InitializationScreen } from './app/startup/InitializationScreen';
 
 export default function App() {
+  const { snapshot: initSnapshot } = useInitialization();
   const store = useSocialStore();
   const searchParams =
     typeof window !== 'undefined'
@@ -136,6 +139,7 @@ export default function App() {
   };
 
   const handleOpenDm = async (creator: UserProfile) => {
+    if (creator.uid === store.profile.uid) return;
     const thread = await store.startDirectThread(creator);
     setActiveChatId(thread.id);
     setActiveTab('messages');
@@ -207,6 +211,7 @@ export default function App() {
   };
 
   const handleReplyToStory = async (group: StoryGroup, text: string) => {
+    if (group.authorId === store.profile.uid) return;
     const matchedCreator =
       store.communityUsers.find((u) => u.uid === group.authorId) || {
         uid: group.authorId,
@@ -228,24 +233,19 @@ export default function App() {
 
   if (appStage === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div
-            className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin"
-            aria-hidden="true"
-          />
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
-            Restoring your session...
-          </p>
-        </div>
+      <>
+        <InitializationScreen
+          snapshot={initSnapshot}
+          messageOverride="Restoring your session..."
+        />
         <OfflineIndicator />
-      </div>
+      </>
     );
   }
 
   if (appStage === 'auth' || !store.isAuthorized) {
     return (
-      <>
+      <div className="looma-stage-enter">
         <AuthView
           initialMode={authMode}
           profile={store.profile}
@@ -278,13 +278,13 @@ export default function App() {
           }}
         />
         <OfflineIndicator />
-      </>
+      </div>
     );
   }
 
   if (previewOnboarding || appStage === 'onboarding') {
     return (
-      <>
+      <div className="looma-stage-enter">
         <OnboardingFlow
           profile={store.profile}
           firebaseUser={store.firebaseUser}
@@ -308,7 +308,7 @@ export default function App() {
           }}
         />
         <OfflineIndicator />
-      </>
+      </div>
     );
   }
 
@@ -318,8 +318,8 @@ export default function App() {
     <div
       className={
         isMessagesFullScreen
-          ? 'h-[100dvh] overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors'
-          : 'min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors'
+          ? 'h-[100dvh] overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors looma-stage-enter'
+          : 'min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors looma-stage-enter'
       }
     >
       <TopBar
@@ -565,6 +565,7 @@ export default function App() {
               pushEnabled={store.pushEnabled}
               onlineUserIds={store.onlineUserIds}
               communityUsers={store.communityUsers}
+              chatUsers={store.allKnownChatUsers}
               initialThreadId={activeChatId}
               onSubscribeThread={store.subscribeChatMessages}
               onSendMessage={store.sendChatMessage}

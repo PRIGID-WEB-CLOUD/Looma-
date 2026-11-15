@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -80,16 +80,20 @@ import {
   canUseAutostart,
   computeConnections,
   computeOtherUserConnections,
+  createDirectThreadMemberIds,
   createGroupThreadRecord,
+  DIRECT_CHAT_SHARED_TITLE,
   extractMentions,
   formatChatPushPayload,
   formatVoiceNote,
   groupStoriesByAuthor,
   isAuthorizedSession,
+  matchesDirectThreadParticipants,
   normalizeAssetUrl,
   POST_CATEGORIES,
   promoteGroupAdminState,
   removeGroupParticipantState,
+  resolveChatThreadForViewer,
   resolvePublicProfile,
   sanitizeHandle,
   sanitizeMediaTitle,
@@ -380,7 +384,7 @@ export function useSocialStore() {
   );
   const hydratedRemotePostIdsRef = useRef<Set<string>>(new Set());
 
-  const [threads, setThreads] = useState<ChatThread[]>(() => {
+  const [rawThreads, setRawThreads] = useState<ChatThread[]>(() => {
     const stored = stripDemoThreads(
       readStorage<ChatThread[]>(STORAGE_KEYS.CHATS, [])
     );
@@ -390,10 +394,9 @@ export function useSocialStore() {
         {
           id: 'chat_sophia_direct',
           isGroup: false,
-          title: 'Sophia Chen',
-          partnerHandle: 'sophia.studio',
-          partnerAvatar:
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          title: DIRECT_CHAT_SHARED_TITLE,
+          partnerHandle: '',
+          partnerAvatar: '',
           memberIds: [profile.uid, 'creator_sophia'],
           adminIds: [profile.uid, 'creator_sophia'],
           lastMessageText: '🎤 Voice message',
@@ -405,6 +408,9 @@ export function useSocialStore() {
     }
     return [];
   });
+  const [fetchedChatUsers, setFetchedChatUsers] = useState<
+    Record<string, UserProfile>
+  >({});
   const [messagesByChat, setMessagesByChat] = useState<
     Record<string, ChatMessage[]>
   >(() => {
@@ -473,8 +479,35 @@ export function useSocialStore() {
   const profileRef = useRef<UserProfile>(profile);
   const privateSettingsRef = useRef<UserPrivateSettings>(privateSettings);
   const mutedChatIdsRef = useRef<string[]>(mutedChatIds);
+  const allKnownChatUsers = useMemo(() => {
+    const byUid = new Map<string, UserProfile>();
+    for (const u of Object.values(fetchedChatUsers)) {
+      if (u.uid && u.uid !== profile.uid) {
+        byUid.set(u.uid, u);
+      }
+    }
+    for (const u of communityUsers) {
+      if (u.uid && u.uid !== profile.uid) {
+        byUid.set(u.uid, u);
+      }
+    }
+    return Array.from(byUid.values());
+  }, [communityUsers, fetchedChatUsers, profile.uid]);
+
+  const threads = useMemo(
+    () =>
+      rawThreads
+        .map((t) =>
+          resolveChatThreadForViewer(t, profile.uid, allKnownChatUsers, profile)
+        )
+        .sort((a, b) => b.updatedAtMs - a.updatedAtMs),
+    [allKnownChatUsers, profile, rawThreads]
+  );
+
   const threadsRef = useRef<ChatThread[]>(threads);
   const communityUsersRef = useRef<UserProfile[]>(communityUsers);
+  const allKnownChatUsersRef = useRef<UserProfile[]>(allKnownChatUsers);
+  const attemptedChatUserFetchRef = useRef<Set<string>>(new Set());
   const initialChatsSyncedRef = useRef(false);
   const notifiedChatStampsRef = useRef<Set<string>>(new Set());
   const leftChatIdsRef = useRef<Set<string>>(new Set());
@@ -511,6 +544,10 @@ export function useSocialStore() {
   useEffect(() => {
     communityUsersRef.current = communityUsers;
   }, [communityUsers]);
+
+  useEffect(() => {
+    allKnownChatUsersRef.current = allKnownChatUsers;
+  }, [allKnownChatUsers]);
 
   // Sync dark mode class on <html>
   useEffect(() => {
@@ -553,7 +590,7 @@ export function useSocialStore() {
       writeStorage(STORAGE_KEYS.LIKED_IDS, likedPostIds);
       writeStorage(STORAGE_KEYS.BOOKMARK_IDS, bookmarkedPostIds);
       writeStorage(STORAGE_KEYS.FOLLOWED_IDS, followedUserIds);
-      writeStorage(STORAGE_KEYS.CHATS, threads);
+      writeStorage(STORAGE_KEYS.CHATS, rawThreads);
       writeStorage(STORAGE_KEYS.MESSAGES, messagesByChat);
       writeStorage(STORAGE_KEYS.NOTIFICATIONS, notifications);
       writeStorage(STORAGE_KEYS.STORIES, localStories);
@@ -564,7 +601,7 @@ export function useSocialStore() {
     likedPostIds,
     bookmarkedPostIds,
     followedUserIds,
-    threads,
+    rawThreads,
     messagesByChat,
     notifications,
     localStories,
@@ -670,17 +707,25 @@ export function useSocialStore() {
           payload.thread.memberIds.includes(profileRef.current.uid) &&
           !leftChatIdsRef.current.has(payload.thread.id)
         ) {
-          setThreads((prev) =>
-            prev.some((t) => t.id === payload.thread.id)
+          const normalizedThread: ChatThread = payload.thread.isGroup
+            ? payload.thread
+            : {
+                ...payload.thread,
+                title: DIRECT_CHAT_SHARED_TITLE,
+                partnerAvatar: '',
+                partnerHandle: '',
+              };
+          setRawThreads((prev) =>
+            prev.some((t) => t.id === normalizedThread.id)
               ? prev
-              : [payload.thread, ...prev]
+              : [normalizedThread, ...prev]
           );
         }
       } else if (payload.type === 'chat:thread_updated') {
         const stillMember = payload.thread.memberIds.includes(
           profileRef.current.uid
         );
-        setThreads((prev) => {
+        setRawThreads((prev) => {
           if (!stillMember) {
             return prev.filter((t) => t.id !== payload.thread.id);
           }
@@ -704,7 +749,7 @@ export function useSocialStore() {
         const matchedThread = threadsRef.current.find(
           (t) => t.id === payload.threadId
         );
-        setThreads((prev) =>
+        setRawThreads((prev) =>
           prev
             .map((t) =>
               t.id === payload.threadId
@@ -1028,24 +1073,26 @@ export function useSocialStore() {
       (snapshot) => {
         const mapped: ChatThread[] = snapshot.docs.map((docSnap) => {
           const d = docSnap.data();
-          const memberIds = Array.isArray(d.memberIds) ? d.memberIds : [];
+          const memberIds: string[] = Array.isArray(d.memberIds)
+            ? Array.from(
+                new Set(
+                  d.memberIds
+                    .filter((id: unknown): id is string => typeof id === 'string')
+                    .map((id: string) => id.trim())
+                    .filter(Boolean)
+                )
+              )
+            : [];
           const isGroup = Boolean(d.isGroup);
           const adminIds = Array.isArray(d.adminIds) ? d.adminIds : undefined;
-          const partnerUid =
-            memberIds.find((id: string) => id !== firebaseUser.uid) || memberIds[0];
-          const partnerProfile = communityUsersRef.current.find(
-            (u) => u.uid === partnerUid
-          );
           return {
             id: d.id || docSnap.id,
-            title: d.title,
+            title: isGroup ? String(d.title || 'Group Chat') : DIRECT_CHAT_SHARED_TITLE,
             isGroup,
             memberIds,
             ...(adminIds ? { adminIds } : {}),
-            partnerAvatar: partnerProfile?.avatarUrl || '',
-            partnerHandle: isGroup
-              ? `${memberIds.length} members`
-              : partnerProfile?.handle || 'direct',
+            partnerAvatar: '',
+            partnerHandle: isGroup ? `${memberIds.length} members` : '',
             lastMessageText: d.lastMessageText || '',
             lastMessageSenderId: d.lastMessageSenderId || '',
             createdAtMs: timestampToMs(d.createdAt),
@@ -1057,24 +1104,36 @@ export function useSocialStore() {
           for (const change of snapshot.docChanges()) {
             if (change.type === 'added' || change.type === 'modified') {
               const d = change.doc.data();
+              const chatId = d.id || change.doc.id;
               const senderId = String(d.lastMessageSenderId || '');
               const text = String(d.lastMessageText || '');
               const updatedAtMs = timestampToMs(d.updatedAt);
               if (senderId && senderId !== firebaseUser.uid && text) {
-                const senderProfile = communityUsersRef.current.find(
-                  (u) => u.uid === senderId
+                const senderProfile = allKnownChatUsersRef.current.find(
+                  (u) => u.uid === senderId && u.uid !== firebaseUser.uid
                 );
+                const resolvedForNotif = mapped.find((t) => t.id === chatId);
+                const viewerThread = resolvedForNotif
+                  ? resolveChatThreadForViewer(
+                      resolvedForNotif,
+                      firebaseUser.uid,
+                      allKnownChatUsersRef.current,
+                      profileRef.current
+                    )
+                  : {
+                      id: chatId,
+                      title: Boolean(d.isGroup)
+                        ? String(d.title || 'Looma Chat')
+                        : senderProfile?.displayName || 'Direct Message',
+                      isGroup: Boolean(d.isGroup),
+                    };
                 notifyIncomingChatMessage({
-                  thread: {
-                    id: d.id || change.doc.id,
-                    title: d.title || 'Looma Chat',
-                    isGroup: Boolean(d.isGroup),
-                  },
+                  thread: viewerThread,
                   senderId,
                   senderName: senderProfile?.displayName || 'Community Member',
                   senderAvatar: senderProfile?.avatarUrl || '',
                   text,
-                  dedupeKey: `thread:${d.id || change.doc.id}:${senderId}:${text}:${updatedAtMs}`,
+                  dedupeKey: `thread:${chatId}:${senderId}:${text}:${updatedAtMs}`,
                 });
               }
             }
@@ -1082,7 +1141,7 @@ export function useSocialStore() {
         }
         initialChatsSyncedRef.current = true;
 
-        setThreads(
+        setRawThreads(
           stripDemoThreads(mapped).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
         );
       },
@@ -1150,12 +1209,13 @@ export function useSocialStore() {
       }
     );
 
-    let cancelled = false;
-    getDocs(
-      query(collection(db, 'users'), where('onboardingCompleted', '==', true))
-    )
-      .then((snapshot) => {
-        if (cancelled) return;
+    const usersQuery = query(
+      collection(db, 'users'),
+      where('onboardingCompleted', '==', true)
+    );
+    const unsubCommunityUsers = onSnapshot(
+      usersQuery,
+      (snapshot) => {
         const remoteMembers: UserProfile[] = snapshot.docs
           .map((docSnap) => {
             const d = docSnap.data();
@@ -1178,11 +1238,12 @@ export function useSocialStore() {
             (u) => u.uid !== firebaseUser.uid && !isDemoUserId(u.uid)
           );
         setCommunityUsers(remoteMembers);
-      })
-      .catch((err) => {
+      },
+      (err) => {
         if (isTransientFirestoreError(err)) return;
         handleFirestoreError(err, OperationType.LIST, 'users');
-      });
+      }
+    );
 
     const storiesQuery = query(
       collection(db, 'stories'),
@@ -1351,13 +1412,13 @@ export function useSocialStore() {
     const presenceInterval = window.setInterval(syncOwnPresence, 45_000);
 
     return () => {
-      cancelled = true;
       window.clearInterval(presenceInterval);
       unsubOwnProfile();
       unsubPosts();
       unsubChats();
       unsubNotifs();
       unsubBookmarks();
+      unsubCommunityUsers();
       unsubStories();
       unsubFollowing();
       unsubFollowers();
@@ -1365,6 +1426,65 @@ export function useSocialStore() {
       unsubCalls();
     };
   }, [authReady, firebaseUser]);
+
+  // Hydrate individual chat participant profiles that may not be in communityUsers yet
+  useEffect(() => {
+    if (!authReady || !firebaseUser) return;
+    const knownIds = new Set(allKnownChatUsers.map((u) => u.uid));
+    const missingIds = new Set<string>();
+    for (const thread of rawThreads) {
+      for (const uid of thread.memberIds) {
+        if (
+          uid &&
+          uid !== firebaseUser.uid &&
+          uid !== profile.uid &&
+          !knownIds.has(uid) &&
+          !attemptedChatUserFetchRef.current.has(uid) &&
+          !isDemoUserId(uid)
+        ) {
+          missingIds.add(uid);
+        }
+      }
+    }
+    if (missingIds.size === 0) return;
+
+    let cancelled = false;
+    for (const uid of missingIds) {
+      attemptedChatUserFetchRef.current.add(uid);
+    }
+
+    Promise.all(
+      Array.from(missingIds).map(async (uid) => {
+        try {
+          const snap = await readDocResilient(doc(db, 'users', uid));
+          if (cancelled || !snap || !snap.exists()) return;
+          const d = snap.data();
+          const hydrated: UserProfile = {
+            uid: d.uid || snap.id,
+            displayName: d.displayName || 'Looma Member',
+            handle: d.handle || sanitizeHandle(uid),
+            bio: d.bio || '',
+            avatarUrl: normalizeAssetUrl(d.avatarUrl || ''),
+            location: d.location || '',
+            interests: Array.isArray(d.interests) ? d.interests : [],
+            followersCount: Number(d.followersCount || 0),
+            followingCount: Number(d.followingCount || 0),
+            onboardingCompleted: Boolean(d.onboardingCompleted),
+            createdAtMs: timestampToMs(d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          };
+          setFetchedChatUsers((prev) => ({ ...prev, [hydrated.uid]: hydrated }));
+        } catch {
+          // Allow future retry on transient read failures
+          attemptedChatUserFetchRef.current.delete(uid);
+        }
+      })
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allKnownChatUsers, authReady, firebaseUser, profile.uid, rawThreads]);
 
   // Hydrate likes & comments for Firestore remote posts on load/reload
   useEffect(() => {
@@ -1563,6 +1683,10 @@ export function useSocialStore() {
     setAuthError(null);
     setIncomingCallInvite(null);
     setCallSession(null);
+    setRawThreads([]);
+    setMessagesByChat({});
+    setFetchedChatUsers({});
+    attemptedChatUserFetchRef.current.clear();
     writeStorage(STORAGE_KEYS.SESSION_ACTIVE, false);
     const resetProfile = createInitialMemberProfile({
       onboardingCompleted: false,
@@ -1631,8 +1755,10 @@ export function useSocialStore() {
     setCallSession(null);
     setLocalPosts([]);
     setLocalStories([]);
-    setThreads([]);
+    setRawThreads([]);
     setMessagesByChat({});
+    setFetchedChatUsers({});
+    attemptedChatUserFetchRef.current.clear();
     setNotifications([]);
     const resetProfile = createInitialMemberProfile({
       onboardingCompleted: false,
@@ -2293,7 +2419,7 @@ export function useSocialStore() {
         ...prev,
         [thread.id]: [...(prev[thread.id] || []), newMsg],
       }));
-      setThreads((prev) =>
+      setRawThreads((prev) =>
         prev
           .map((t) =>
             t.id === thread.id
@@ -2323,7 +2449,7 @@ export function useSocialStore() {
           if (!threadSnap || !threadSnap.exists()) {
             batch.set(threadRef, {
               id: thread.id,
-              title: thread.title,
+              title: thread.isGroup ? thread.title : DIRECT_CHAT_SHARED_TITLE,
               isGroup: thread.isGroup,
               memberIds,
               lastMessageText: trimmed,
@@ -2368,39 +2494,58 @@ export function useSocialStore() {
   const startDirectThread = useCallback(
     async (creator: UserProfile): Promise<ChatThread> => {
       requireAuthorized();
-      const existing = threads.find(
-        (t) => !t.isGroup && t.memberIds.includes(creator.uid)
+      const pairCheck = createDirectThreadMemberIds(profile.uid, creator.uid);
+      if (!pairCheck.valid) {
+        throw new Error(
+          pairCheck.error || 'Cannot start a direct conversation with yourself.'
+        );
+      }
+
+      setFetchedChatUsers((prev) => ({
+        ...prev,
+        [creator.uid]: creator,
+      }));
+
+      const existing = threads.find((t) =>
+        matchesDirectThreadParticipants(t, profile.uid, creator.uid)
       );
-      if (existing) return existing;
+      if (existing) {
+        return resolveChatThreadForViewer(
+          existing,
+          profile.uid,
+          [creator, ...allKnownChatUsers],
+          profile
+        );
+      }
 
       const chatId = makeSafeId('chat');
       const now = Date.now();
-      const newThread: ChatThread = {
+      const sharedThread: ChatThread = {
         id: chatId,
-        title: creator.displayName,
+        title: DIRECT_CHAT_SHARED_TITLE,
         isGroup: false,
-        memberIds: [profile.uid, creator.uid],
-        partnerAvatar: creator.avatarUrl,
-        partnerHandle: creator.handle,
+        memberIds: pairCheck.memberIds,
+        partnerAvatar: '',
+        partnerHandle: '',
         lastMessageText: 'Started a new conversation',
         lastMessageSenderId: profile.uid,
         createdAtMs: now,
         updatedAtMs: now,
       };
-      setThreads((prev) => [newThread, ...prev]);
+      setRawThreads((prev) => [sharedThread, ...prev]);
       broadcastRef.current?.postMessage({
         type: 'chat:thread_created',
-        thread: newThread,
+        thread: sharedThread,
       });
 
       if (firebaseUser) {
         try {
           await setDoc(doc(db, 'chats', chatId), {
             id: chatId,
-            title: newThread.title,
+            title: DIRECT_CHAT_SHARED_TITLE,
             isGroup: false,
-            memberIds: newThread.memberIds,
-            lastMessageText: newThread.lastMessageText,
+            memberIds: pairCheck.memberIds,
+            lastMessageText: sharedThread.lastMessageText,
             lastMessageSenderId: firebaseUser.uid,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -2409,9 +2554,14 @@ export function useSocialStore() {
           handleFirestoreError(err, OperationType.CREATE, `chats/${chatId}`);
         }
       }
-      return newThread;
+      return resolveChatThreadForViewer(
+        sharedThread,
+        profile.uid,
+        [creator, ...allKnownChatUsers],
+        profile
+      );
     },
-    [firebaseUser, profile.uid, requireAuthorized, threads]
+    [allKnownChatUsers, firebaseUser, profile, requireAuthorized, threads]
   );
 
   const createGroupThread = useCallback(
@@ -2453,7 +2603,7 @@ export function useSocialStore() {
         nowMs: now,
       });
 
-      setThreads((prev) => [newThread, ...prev]);
+      setRawThreads((prev) => [newThread, ...prev]);
       broadcastRef.current?.postMessage({
         type: 'chat:thread_created',
         thread: newThread,
@@ -2558,7 +2708,7 @@ export function useSocialStore() {
         return target;
       }
 
-      setThreads((prev) =>
+      setRawThreads((prev) =>
         prev
           .map((t) => (t.id === chatId ? result.thread : t))
           .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
@@ -2620,9 +2770,9 @@ export function useSocialStore() {
 
       if (result.removedSelf) {
         leftChatIdsRef.current.add(chatId);
-        setThreads((prev) => prev.filter((t) => t.id !== chatId));
+        setRawThreads((prev) => prev.filter((t) => t.id !== chatId));
       } else {
-        setThreads((prev) =>
+        setRawThreads((prev) =>
           prev
             .map((t) => (t.id === chatId ? result.thread : t))
             .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
@@ -2671,7 +2821,7 @@ export function useSocialStore() {
         updatedAtMs: Date.now(),
       };
 
-      setThreads((prev) =>
+      setRawThreads((prev) =>
         prev
           .map((t) => (t.id === chatId ? updated : t))
           .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
@@ -2692,7 +2842,7 @@ export function useSocialStore() {
       const target = threads.find((t) => t.id === chatId);
       if (!target || !target.isGroup) return null;
 
-      const pool = [profile, ...communityUsers];
+      const pool = [profile, ...allKnownChatUsers];
       const member = pool.find((u) => u.uid === targetUid);
       const targetName = member?.displayName || targetUid;
       const result = promoteGroupAdminState(
@@ -2705,7 +2855,7 @@ export function useSocialStore() {
         throw new Error(result.error);
       }
 
-      setThreads((prev) =>
+      setRawThreads((prev) =>
         prev
           .map((t) => (t.id === chatId ? result.thread : t))
           .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
@@ -2717,7 +2867,7 @@ export function useSocialStore() {
       await persistGroupThreadUpdate(result.thread);
       return result.thread;
     },
-    [communityUsers, persistGroupThreadUpdate, profile, requireAuthorized, threads]
+    [allKnownChatUsers, persistGroupThreadUpdate, profile, requireAuthorized, threads]
   );
 
   const toggleMuteChat = useCallback((chatId: string) => {
@@ -3012,13 +3162,19 @@ export function useSocialStore() {
   const startCall = useCallback(
     async (thread: ChatThread, isAudioOnly: boolean) => {
       requireAuthorized();
+      const resolvedThread = resolveChatThreadForViewer(
+        thread,
+        profile.uid,
+        allKnownChatUsersRef.current,
+        profile
+      );
       const callId = makeSafeId('call');
       const uniqueMembers = Array.from(
-        new Set([profile.uid, ...thread.memberIds].filter(Boolean))
+        new Set([profile.uid, ...resolvedThread.memberIds].filter(Boolean))
       ).slice(0, 10);
 
       const participants: CallParticipant[] = uniqueMembers.map((uid) => {
-        const u = communityUsersRef.current.find((member) => member.uid === uid);
+        const u = allKnownChatUsersRef.current.find((member) => member.uid === uid);
         return {
           uid,
           name:
@@ -3035,8 +3191,8 @@ export function useSocialStore() {
       if (firebaseUser) {
         await setDoc(doc(db, 'calls', callId), {
           id: callId,
-          chatId: thread.id,
-          title: thread.title,
+          chatId: resolvedThread.id,
+          title: resolvedThread.title,
           callerId: firebaseUser.uid,
           callerName: profile.displayName,
           callerAvatar: profile.avatarUrl,
@@ -3050,8 +3206,8 @@ export function useSocialStore() {
 
       setCallSession({
         callId,
-        chatId: thread.id,
-        title: thread.title,
+        chatId: resolvedThread.id,
+        title: resolvedThread.title,
         callerId: profile.uid,
         callerName: profile.displayName,
         callerAvatar: profile.avatarUrl,
@@ -3065,7 +3221,7 @@ export function useSocialStore() {
         startedAtMs: Date.now(),
       });
     },
-    [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid, requireAuthorized]
+    [firebaseUser, profile, requireAuthorized]
   );
 
   const startInstantCall = useCallback(
@@ -3414,6 +3570,7 @@ export function useSocialStore() {
     followedUserIds,
     followerUserIds,
     communityUsers,
+    allKnownChatUsers,
     connections,
     toggleFollowUser,
     fetchPublicUserProfile,

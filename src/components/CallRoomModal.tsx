@@ -23,6 +23,7 @@ import {
   formatRenegotiatePayload,
   formatSubscribeTracksPayload,
   formatTracksClosePayload,
+  validateIceServersConfig,
 } from '../utils/callsLogic';
 import { Avatar } from './Avatar';
 
@@ -385,27 +386,67 @@ export function CallRoomModal({
           throw new Error('WebRTC RTCPeerConnection is not supported in this browser.');
         }
 
+        const iceValidation = validateIceServersConfig(data.iceServers);
+        if (!iceValidation.valid) {
+          throw new Error(
+            iceValidation.error ||
+              'Server returned invalid ICE/TURN server configuration.'
+          );
+        }
+
         const pc = new RTCPeerConnection({
-          iceServers:
-            Array.isArray(data.iceServers) && data.iceServers.length > 0
-              ? data.iceServers
-              : [{ urls: 'stun:stun.cloudflare.com:3478' }],
+          iceServers: iceValidation.iceServers,
         });
         peerConn = pc;
         peerConnRef.current = pc;
 
-        pc.onconnectionstatechange = () => {
+        let iceRestartCount = 0;
+
+        const handleConnectionRecovery = (stateLabel: string) => {
           if (cancelled) return;
-          if (pc.connectionState === 'connected') {
+          if (stateLabel === 'connected' || stateLabel === 'completed') {
+            iceRestartCount = 0;
             setCfStatus('connected');
             setCfError(null);
-          } else if (pc.connectionState === 'disconnected') {
+          } else if (stateLabel === 'disconnected') {
             setCfStatus('reconnecting');
-            setCfError('Connection interrupted. Attempting to reconnect...');
-          } else if (pc.connectionState === 'failed') {
-            setCfStatus('error');
-            setCfError('WebRTC peer connection failed. Check network or TURN settings.');
+            setCfError('Connection interrupted. Attempting ICE reconnection...');
+            if (iceRestartCount < 2 && typeof pc.restartIce === 'function') {
+              iceRestartCount += 1;
+              try {
+                pc.restartIce();
+              } catch {
+                // Ignore restartIce errors on closing connections
+              }
+            }
+          } else if (stateLabel === 'failed') {
+            if (iceRestartCount < 1 && typeof pc.restartIce === 'function') {
+              iceRestartCount += 1;
+              setCfStatus('reconnecting');
+              setCfError('Network path failed. Restarting ICE connection...');
+              try {
+                pc.restartIce();
+              } catch {
+                setCfStatus('error');
+                setCfError(
+                  'WebRTC peer connection failed. Check network or TURN credentials.'
+                );
+              }
+            } else {
+              setCfStatus('error');
+              setCfError(
+                'WebRTC peer connection failed. Check network or TURN credentials.'
+              );
+            }
           }
+        };
+
+        pc.onconnectionstatechange = () => {
+          handleConnectionRecovery(pc.connectionState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          handleConnectionRecovery(pc.iceConnectionState);
         };
 
         pc.ontrack = (event) => {

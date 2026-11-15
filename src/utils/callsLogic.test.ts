@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   parseCallsConfig,
   parseIceServersConfig,
+  parseTurnKeyConfig,
+  validateIceServersConfig,
+  generateCloudflareTurnCredentials,
+  resolveCallsIceServers,
   isValidCallsSessionId,
   isValidCallRoomId,
   validateCallsTracksPayload,
@@ -253,4 +257,181 @@ test('Calls ID & signaling payload validators reject invalid IDs, missing SDP at
   assert.equal(validateCallsClosePayload({ tracks: [{ mid: '0' }] }).valid, true);
   assert.equal(validateCallsClosePayload({ tracks: [] }).valid, false);
 });
+
+test('parseTurnKeyConfig detects missing, partial, and complete Cloudflare TURN keys without leaking tokens', () => {
+  const none = parseTurnKeyConfig({});
+  assert.equal(none.configured, false);
+  assert.equal(none.partial, false);
+  assert.equal(none.missingField, null);
+
+  const missingToken = parseTurnKeyConfig({ CLOUDFLARE_TURN_KEY_ID: 'turn_key_1' });
+  assert.equal(missingToken.configured, false);
+  assert.equal(missingToken.partial, true);
+  assert.equal(missingToken.missingField, 'CLOUDFLARE_TURN_KEY_TOKEN');
+
+  const missingId = parseTurnKeyConfig({ CLOUDFLARE_TURN_KEY_TOKEN: 'turn_tok_1' });
+  assert.equal(missingId.configured, false);
+  assert.equal(missingId.partial, true);
+  assert.equal(missingId.missingField, 'CLOUDFLARE_TURN_KEY_ID');
+
+  const full = parseTurnKeyConfig({
+    CLOUDFLARE_TURN_KEY_ID: ' "turn_key_abc" ',
+    CLOUDFLARE_TURN_KEY_TOKEN: ' "turn_secret_xyz" ',
+  });
+  assert.equal(full.configured, true);
+  assert.equal(full.partial, false);
+  assert.equal(full.turnKeyId, 'turn_key_abc');
+  assert.equal(full.turnKeyToken, 'turn_secret_xyz');
+});
+
+test('parseIceServersConfig never emits unauthenticated TURN URLs when TURN keys are set', () => {
+  const cfEnv = parseIceServersConfig({
+    CLOUDFLARE_TURN_KEY_ID: 'turn_key_abc',
+    CLOUDFLARE_TURN_KEY_TOKEN: 'turn_secret_xyz',
+  });
+  assert.equal(cfEnv.iceServers.length, 1);
+  assert.equal(cfEnv.iceServers[0].urls, 'stun:stun.cloudflare.com:3478');
+  assert.equal(cfEnv.hasTurnConfigured, false);
+
+  const unauthStatic = parseIceServersConfig({
+    TURN_URLS: 'turn:turn.looma.dev:3478',
+  });
+  assert.equal(unauthStatic.iceServers.length, 1);
+  assert.equal(unauthStatic.hasTurnConfigured, false);
+});
+
+test('validateIceServersConfig validates STUN + authenticated TURN and rejects missing TURN credentials', () => {
+  const validStun = validateIceServersConfig([{ urls: 'stun:stun.cloudflare.com:3478' }]);
+  assert.equal(validStun.valid, true);
+  assert.equal(validStun.hasStun, true);
+  assert.equal(validStun.hasTurn, false);
+
+  const validTurn = validateIceServersConfig([
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'],
+      username: 'temp_u_123',
+      credential: 'temp_p_456',
+    },
+  ]);
+  assert.equal(validTurn.valid, true);
+  assert.equal(validTurn.hasStun, true);
+  assert.equal(validTurn.hasTurn, true);
+
+  const missingCreds = validateIceServersConfig([
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'turn:turn.cloudflare.com:3478?transport=udp' },
+  ]);
+  assert.equal(missingCreds.valid, false);
+  assert.match(missingCreds.error || '', /username or credential/i);
+
+  const emptyConfig = validateIceServersConfig([]);
+  assert.equal(emptyConfig.valid, false);
+});
+
+test('generateCloudflareTurnCredentials and resolveCallsIceServers generate authenticated ICE servers and preserve STUN', async () => {
+  let capturedUrl = '';
+  let capturedAuth = '';
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedAuth = String((init?.headers as Record<string, string>)?.Authorization || '');
+    return new Response(
+      JSON.stringify({
+        iceServers: [
+          {
+            urls: [
+              'turn:turn.cloudflare.com:3478?transport=udp',
+              'turns:turn.cloudflare.com:5349?transport=tcp',
+            ],
+            username: 'cf_temp_user_abc',
+            credential: 'cf_temp_pass_xyz',
+          },
+        ],
+      }),
+      { status: 201, headers: { 'Content-Type': 'application/json' } }
+    );
+  }) as typeof fetch;
+
+  const resolved = await resolveCallsIceServers({
+    env: {
+      CLOUDFLARE_TURN_KEY_ID: 'cf_turn_key_id',
+      CLOUDFLARE_TURN_KEY_TOKEN: 'cf_turn_key_token_secret',
+    },
+    fetcher: mockFetch,
+  });
+
+  assert.equal(
+    capturedUrl,
+    'https://rtc.live.cloudflare.com/v1/turn/keys/cf_turn_key_id/credentials/generate-ice-servers'
+  );
+  assert.equal(capturedAuth, 'Bearer cf_turn_key_token_secret');
+  assert.equal(resolved.source, 'cloudflare-turn');
+  assert.equal(resolved.hasTurnConfigured, true);
+  assert.equal(resolved.iceServers[0].urls, 'stun:stun.cloudflare.com:3478');
+  assert.equal(resolved.iceServers[1].username, 'cf_temp_user_abc');
+  assert.equal(resolved.iceServers[1].credential, 'cf_temp_pass_xyz');
+});
+
+test('resolveCallsIceServers rejects missing TURN key ID, missing TURN token, and failed API responses cleanly', async () => {
+  await assert.rejects(
+    () =>
+      resolveCallsIceServers({
+        env: { CLOUDFLARE_TURN_KEY_ID: 'only_key_id' },
+      }),
+    /missing CLOUDFLARE_TURN_KEY_TOKEN/i
+  );
+
+  await assert.rejects(
+    () =>
+      resolveCallsIceServers({
+        env: { CLOUDFLARE_TURN_KEY_TOKEN: 'only_secret_token_never_leak' },
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /missing CLOUDFLARE_TURN_KEY_ID/i);
+      assert.equal(err.message.includes('only_secret_token_never_leak'), false);
+      return true;
+    }
+  );
+
+  const failingFetch = (async () =>
+    new Response(
+      JSON.stringify({ errorDescription: 'Invalid TURN key token' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    () =>
+      generateCloudflareTurnCredentials({
+        turnKeyId: 'k1',
+        turnKeyToken: 'super_secret_turn_token',
+        fetcher: failingFetch,
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /Invalid TURN key token/i);
+      assert.equal(err.message.includes('super_secret_turn_token'), false);
+      return true;
+    }
+  );
+
+  const unauthPayloadFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        iceServers: [{ urls: 'turn:turn.cloudflare.com:3478' }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    () =>
+      generateCloudflareTurnCredentials({
+        turnKeyId: 'k1',
+        turnKeyToken: 't1',
+        fetcher: unauthPayloadFetch,
+      }),
+    /username or credential/i
+  );
+});
+
 

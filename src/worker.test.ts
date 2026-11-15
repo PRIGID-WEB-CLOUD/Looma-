@@ -642,3 +642,222 @@ test('Worker API routes enforce Firebase auth, CORS, secret isolation, R2 media 
     clearJwkCacheForTests();
   }
 });
+
+test('Worker /api/calls/ice-servers and /api/calls/sessions/new (new + cached) issue authenticated Cloudflare TURN credentials and fail closed on missing/broken TURN config', async () => {
+  clearJwkCacheForTests();
+  const aliceAuth = await setupAuthFixture('alice_uid', true);
+  const originalFetch = globalThis.fetch;
+  let turnGenCalls = 0;
+  let cfSessionCalls = 0;
+  let failTurnApi = false;
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url.includes('googleapis.com/service_accounts/v1/jwk/securetoken')) {
+      return new Response(JSON.stringify({ keys: [aliceAuth.publicJwk] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=300' },
+      });
+    }
+
+    if (url.includes('identitytoolkit.googleapis.com/v1/accounts:lookup')) {
+      return new Response(
+        JSON.stringify({
+          users: [{ localId: 'alice_uid', email: 'alice@looma.app', emailVerified: true, disabled: false }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (url.includes('firestore.googleapis.com/v1/projects/')) {
+      if (url.endsWith('/documents/calls/call_turn_room_1')) {
+        return new Response(
+          JSON.stringify({
+            fields: {
+              status: { stringValue: 'active' },
+              memberIds: { arrayValue: { values: [{ stringValue: 'alice_uid' }] } },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ error: { status: 'NOT_FOUND' } }), { status: 404 });
+    }
+
+    if (url === 'https://rtc.live.cloudflare.com/v1/turn/keys/cf_turn_key_1/credentials/generate-ice-servers') {
+      turnGenCalls += 1;
+      if (failTurnApi) {
+        return new Response(JSON.stringify({ errorDescription: 'TURN key quota exceeded' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          iceServers: [
+            {
+              urls: [
+                'turn:turn.cloudflare.com:3478?transport=udp',
+                'turns:turn.cloudflare.com:5349?transport=tcp',
+              ],
+              username: `dyn_turn_user_${turnGenCalls}`,
+              credential: `dyn_turn_cred_${turnGenCalls}`,
+            },
+          ],
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (url === 'https://rtc.live.cloudflare.com/v1/apps/cf_app_turn/sessions/new') {
+      cfSessionCalls += 1;
+      return new Response(JSON.stringify({ sessionId: `cf_turn_sess_${cfSessionCalls}` }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return originalFetch(input);
+  }) as typeof fetch;
+
+  try {
+    const app = createWorkerApp();
+    const baseEnv: WorkerEnv = {
+      ASSETS: createMockAssets(),
+      FIREBASE_PROJECT_ID: aliceAuth.projectId,
+      FIREBASE_API_KEY: 'firebase-test-key',
+      FIREBASE_DATABASE_ID: 'ai-studio-test',
+      CLOUDFLARE_CALLS_APP_ID: 'cf_app_turn',
+      CLOUDFLARE_CALLS_APP_TOKEN: 'cf_calls_secret_token',
+      CLOUDFLARE_TURN_KEY_ID: 'cf_turn_key_1',
+      CLOUDFLARE_TURN_KEY_TOKEN: 'cf_turn_secret_token_never_expose',
+      CALLS_STATE_SECRET: 'calls-hmac-secret-test',
+      ALLOWED_ORIGINS: 'https://looma.prigidcollection.workers.dev',
+    };
+
+    // Status exposes boolean only, never TURN token
+    const statusRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/status'),
+      baseEnv
+    );
+    assert.equal(statusRes.status, 200);
+    const statusBody = await statusRes.text();
+    assert.equal(statusBody.includes('cf_turn_secret_token_never_expose'), false);
+    const parsedStatus = JSON.parse(statusBody) as { configured: boolean; hasTurnConfigured: boolean };
+    assert.equal(parsedStatus.configured, true);
+    assert.equal(parsedStatus.hasTurnConfigured, true);
+
+    // /api/calls/ice-servers returns STUN + authenticated TURN credentials
+    const iceRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/ice-servers', {
+        headers: { Authorization: `Bearer ${aliceAuth.token}` },
+      }),
+      baseEnv
+    );
+    assert.equal(iceRes.status, 200);
+    const iceJson = (await iceRes.json()) as { iceServers: RTCIceServer[]; hasTurnConfigured: boolean };
+    assert.equal(iceJson.hasTurnConfigured, true);
+    assert.equal(iceJson.iceServers[0].urls, 'stun:stun.cloudflare.com:3478');
+    assert.equal(Boolean(iceJson.iceServers[1].username), true);
+    assert.equal(Boolean(iceJson.iceServers[1].credential), true);
+
+    // /api/calls/sessions/new returns authenticated TURN credentials on new session
+    const sess1Res = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/sessions/new', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${aliceAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ callId: 'call_turn_room_1', idempotencyKey: 'turn_idem_1' }),
+      }),
+      baseEnv
+    );
+    assert.equal(sess1Res.status, 201);
+    const sess1Json = (await sess1Res.json()) as {
+      sessionId: string;
+      sessionToken: string;
+      iceServers: RTCIceServer[];
+      hasTurnConfigured: boolean;
+    };
+    assert.equal(sess1Json.hasTurnConfigured, true);
+    assert.equal(sess1Json.iceServers[0].urls, 'stun:stun.cloudflare.com:3478');
+    assert.equal(Boolean(sess1Json.iceServers[1].username), true);
+    assert.equal(Boolean(sess1Json.iceServers[1].credential), true);
+
+    // Cached session retry (200) also includes authenticated TURN credentials
+    const sess2Res = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/sessions/new', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${aliceAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ callId: 'call_turn_room_1', idempotencyKey: 'turn_idem_1' }),
+      }),
+      baseEnv
+    );
+    assert.equal(sess2Res.status, 200);
+    assert.equal(cfSessionCalls, 1);
+    const sess2Json = (await sess2Res.json()) as {
+      sessionId: string;
+      iceServers: RTCIceServer[];
+      hasTurnConfigured: boolean;
+    };
+    assert.equal(sess2Json.sessionId, sess1Json.sessionId);
+    assert.equal(sess2Json.hasTurnConfigured, true);
+    assert.equal(sess2Json.iceServers[1].username, sess1Json.iceServers[1].username);
+    assert.equal(sess2Json.iceServers[1].credential, sess1Json.iceServers[1].credential);
+
+    // Missing TURN token -> actionable 502 error
+    const missingTokenRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/sessions/new', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${aliceAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ callId: 'call_turn_room_1', idempotencyKey: 'turn_idem_missing_tok' }),
+      }),
+      { ...baseEnv, CLOUDFLARE_TURN_KEY_TOKEN: '' }
+    );
+    assert.equal(missingTokenRes.status, 502);
+    const missingTokenErr = (await missingTokenRes.json()) as { error: string };
+    assert.match(missingTokenErr.error, /CLOUDFLARE_TURN_KEY_TOKEN/i);
+
+    // Missing TURN key ID -> actionable 502 error without exposing token
+    const missingKeyIdRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/ice-servers', {
+        headers: { Authorization: `Bearer ${aliceAuth.token}` },
+      }),
+      { ...baseEnv, CLOUDFLARE_TURN_KEY_ID: '' }
+    );
+    assert.equal(missingKeyIdRes.status, 502);
+    const missingKeyIdText = await missingKeyIdRes.text();
+    assert.match(missingKeyIdText, /CLOUDFLARE_TURN_KEY_ID/i);
+    assert.equal(missingKeyIdText.includes('cf_turn_secret_token_never_expose'), false);
+
+    // Failed Cloudflare TURN credential API response -> actionable 502 error (no unauthenticated TURN fallback)
+    failTurnApi = true;
+    const failedTurnRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/calls/sessions/new', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${aliceAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ callId: 'call_turn_room_1', idempotencyKey: 'turn_idem_failed_api' }),
+      }),
+      baseEnv
+    );
+    assert.equal(failedTurnRes.status, 502);
+    const failedTurnText = await failedTurnRes.text();
+    assert.match(failedTurnText, /TURN key quota exceeded/i);
+    assert.equal(failedTurnText.includes('cf_turn_secret_token_never_expose'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearJwkCacheForTests();
+  }
+});
+

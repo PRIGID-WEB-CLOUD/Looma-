@@ -8,6 +8,8 @@ import {
   computeConnections,
   computeOtherUserConnections,
   countUnreadNotifications,
+  createDirectThreadMemberIds,
+  DIRECT_CHAT_SHARED_TITLE,
   extractFirstUrl,
   filterUsersByQuery,
   findAccountByHandle,
@@ -16,10 +18,13 @@ import {
   groupStoriesByAuthor,
   isAuthorizedSession,
   isUserOnline,
+  matchesDirectThreadParticipants,
   normalizeAssetUrl,
   paginateFeed,
   parseRichUrl,
   resolveAppStage,
+  resolveChatThreadForViewer,
+  resolveDirectChatParticipant,
   resolvePublicProfile,
   sanitizeHandle,
   isOpaqueMediaIdentifier,
@@ -1057,3 +1062,125 @@ test('curated gif catalog filtering matches keywords, categories, and titles', (
   const allGifs = filterGifs('', 'All');
   assert.equal(allGifs.length, CURATED_GIFS.length);
 });
+
+test('DM participant identity mapping resolves each viewer to the other participant without self-leak or fabricated fallbacks', () => {
+  const mkProfile = (
+    uid: string,
+    displayName: string,
+    handle: string,
+    avatarUrl: string
+  ): UserProfile => ({
+    uid,
+    displayName,
+    handle,
+    bio: `${displayName} bio`,
+    avatarUrl,
+    location: 'Studio',
+    interests: [],
+    followersCount: 0,
+    followingCount: 0,
+    onboardingCompleted: true,
+    createdAtMs: 100,
+    updatedAtMs: 100,
+  });
+
+  const userA = mkProfile('uid_a', 'Alice Monroe', 'alice.monroe', '/images/alice.jpg');
+  const userB = mkProfile('uid_b', 'Blake Foster', 'blake.foster', '/images/blake.jpg');
+
+  // Self-DM prevention & strict 2-member invariant
+  const selfAttempt = createDirectThreadMemberIds('uid_a', 'uid_a');
+  assert.equal(selfAttempt.valid, false);
+  assert.deepEqual(selfAttempt.memberIds, []);
+
+  const missingTargetAttempt = createDirectThreadMemberIds('uid_a', '');
+  assert.equal(missingTargetAttempt.valid, false);
+
+  const validPair = createDirectThreadMemberIds('uid_a', 'uid_b');
+  assert.equal(validPair.valid, true);
+  assert.deepEqual(validPair.memberIds, ['uid_a', 'uid_b']);
+
+  // Shared Firestore conversation record intentionally stores neutral shared title (like a real reload from Firestore)
+  const sharedPersistedDoc: ChatThread = {
+    id: 'chat_ab',
+    title: userA.displayName, // even if legacy/stale Firestore doc saved creator's name!
+    isGroup: false,
+    memberIds: ['uid_a', 'uid_b'],
+    adminIds: ['uid_a', 'uid_b'],
+    partnerAvatar: userA.avatarUrl,
+    partnerHandle: userA.handle,
+    lastMessageText: 'Hello there',
+    lastMessageSenderId: 'uid_a',
+    createdAtMs: 1000,
+    updatedAtMs: 2000,
+  };
+
+  assert.equal(matchesDirectThreadParticipants(sharedPersistedDoc, 'uid_a', 'uid_b'), true);
+  assert.equal(matchesDirectThreadParticipants(sharedPersistedDoc, 'uid_b', 'uid_a'), true);
+  assert.equal(matchesDirectThreadParticipants(sharedPersistedDoc, 'uid_a', 'uid_a'), false);
+  assert.equal(DIRECT_CHAT_SHARED_TITLE, 'Direct Chat');
+
+  // Test A & B: Account A sees Account B; Account B sees Account A (ignoring stale shared title/avatar/handle)
+  const viewForA = resolveChatThreadForViewer(sharedPersistedDoc, 'uid_a', [userB], userA);
+  assert.equal(viewForA.partnerUid, 'uid_b');
+  assert.equal(viewForA.title, 'Blake Foster');
+  assert.equal(viewForA.partnerHandle, 'blake.foster');
+  assert.equal(viewForA.partnerAvatar, '/images/blake.jpg');
+  assert.equal(viewForA.isParticipantResolved, true);
+
+  const viewForB = resolveChatThreadForViewer(sharedPersistedDoc, 'uid_b', [userA], userB);
+  assert.equal(viewForB.partnerUid, 'uid_a');
+  assert.equal(viewForB.title, 'Alice Monroe');
+  assert.equal(viewForB.partnerHandle, 'alice.monroe');
+  assert.equal(viewForB.partnerAvatar, '/images/alice.jpg');
+  assert.equal(viewForB.isParticipantResolved, true);
+
+  // Test C: Offline/refresh empty communityUsers never falls back to memberIds[0] or self profile, and never fabricates handle/avatar
+  const unresolvedForB = resolveChatThreadForViewer(
+    { ...sharedPersistedDoc, memberIds: ['uid_b', 'uid_a'] },
+    'uid_b',
+    [userB], // only self is present in list!
+    userB
+  );
+  assert.equal(unresolvedForB.partnerUid, 'uid_a');
+  assert.equal(unresolvedForB.isParticipantResolved, false);
+  assert.equal(unresolvedForB.title, 'Direct Message');
+  assert.equal(unresolvedForB.partnerHandle, '');
+  assert.equal(unresolvedForB.partnerAvatar, '');
+
+  // Test D: Delayed profile load recalculates cleanly
+  const delayedResolvedForB = resolveChatThreadForViewer(
+    unresolvedForB,
+    'uid_b',
+    [userB, userA],
+    userB
+  );
+  assert.equal(delayedResolvedForB.isParticipantResolved, true);
+  assert.equal(delayedResolvedForB.title, 'Alice Monroe');
+  assert.equal(delayedResolvedForB.partnerHandle, 'alice.monroe');
+
+  // Test E: Malformed / self-only memberIds never resolve self
+  const malformedDirect = resolveDirectChatParticipant(['uid_a'], 'uid_a', [userA, userB], userA);
+  assert.equal(malformedDirect.otherParticipantId, null);
+  assert.equal(malformedDirect.participant, null);
+  assert.equal(malformedDirect.isValidDirectPair, false);
+
+  // Test F: Group chats preserve group title and member count
+  const groupThread: ChatThread = {
+    id: 'grp_ab',
+    title: 'Design Crit',
+    isGroup: true,
+    memberIds: ['uid_a', 'uid_b'],
+    adminIds: ['uid_a'],
+    partnerAvatar: '',
+    partnerHandle: '2 members',
+    lastMessageText: 'Welcome',
+    lastMessageSenderId: 'uid_a',
+    createdAtMs: 1000,
+    updatedAtMs: 2000,
+  };
+  const resolvedGroup = resolveChatThreadForViewer(groupThread, 'uid_a', [userB], userA);
+  assert.equal(resolvedGroup.title, 'Design Crit');
+  assert.equal(resolvedGroup.partnerHandle, '2 members');
+  assert.equal(resolvedGroup.partnerAvatar, '/images/blake.jpg');
+});
+

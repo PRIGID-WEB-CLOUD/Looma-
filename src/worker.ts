@@ -60,6 +60,9 @@ import {
   isValidCallsSessionId,
   parseCallsConfig,
   parseIceServersConfig,
+  parseTurnKeyConfig,
+  resolveCallsIceServers,
+  validateIceServersConfig,
   validateCallsClosePayload,
   validateCallsRenegotiatePayload,
   validateCallsTracksPayload,
@@ -140,7 +143,14 @@ const rateLimiter = new InMemoryRateLimiter();
 const consumedUploadTickets = new Map<string, number>();
 const recentCallSessionCache = new Map<
   string,
-  { sessionId: string; sessionToken: string; expiresAtMs: number }
+  {
+    sessionId: string;
+    sessionToken: string;
+    iceServers: RTCIceServer[];
+    hasTurnConfigured: boolean;
+    iceExpiresAtMs: number;
+    expiresAtMs: number;
+  }
 >();
 
 function getFirebaseSettings(env: WorkerEnv) {
@@ -1040,47 +1050,30 @@ export function createWorkerApp() {
   // --- Cloudflare Calls / WebRTC SFU Endpoints (Protected & Scoped) ---
   app.get('/api/calls/status', (c) => {
     const parsed = parseCallsConfig(c.env);
-    const ice = parseIceServersConfig(c.env);
+    const turnKeyStatus = parseTurnKeyConfig(c.env);
+    const staticIce = parseIceServersConfig(c.env);
     return c.json({
       provider: 'cloudflare-calls',
       configured: parsed.configured,
-      hasTurnConfigured: ice.hasTurnConfigured,
+      hasTurnConfigured: turnKeyStatus.configured || staticIce.hasTurnConfigured,
     });
   });
 
   app.get('/api/calls/ice-servers', requireVerifiedAuth, async (c) => {
-    const turnKeyId = (c.env.CLOUDFLARE_TURN_KEY_ID || '').trim().replace(/^["']|["']$/g, '');
-    const turnKeyToken = (c.env.CLOUDFLARE_TURN_KEY_TOKEN || '').trim().replace(/^["']|["']$/g, '');
-
-    if (turnKeyId && turnKeyToken && !turnKeyId.startsWith('MY_')) {
-      try {
-        const turnRes = await fetch(
-          `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${turnKeyToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ ttl: 86400 }),
-          }
-        );
-        if (turnRes.ok) {
-          const data = (await turnRes.json()) as { iceServers?: RTCIceServer[] };
-          if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
-            return c.json({
-              iceServers: data.iceServers,
-              hasTurnConfigured: true,
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch Cloudflare TURN ice-servers:', err);
-      }
+    try {
+      const ice = await resolveCallsIceServers({ env: c.env });
+      return c.json({
+        iceServers: ice.iceServers,
+        hasTurnConfigured: ice.hasTurnConfigured,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Failed to generate TURN ICE server credentials.';
+      console.error('Failed to resolve ICE servers:', message);
+      return c.json({ error: message }, 502);
     }
-
-    const ice = parseIceServersConfig(c.env);
-    return c.json(ice);
   });
 
   app.post('/api/calls/sessions/new', requireVerifiedAuth, async (c) => {
@@ -1130,17 +1123,61 @@ export function createWorkerApp() {
         : '';
     const dedupeKey = `${authUser.uid}:${callId}:${idemSuffix}`;
     const existing = recentCallSessionCache.get(dedupeKey);
-    const ice = parseIceServersConfig(c.env);
-    if (idemSuffix && existing && existing.expiresAtMs > Date.now()) {
-      return c.json(
-        {
-          sessionId: existing.sessionId,
-          sessionToken: existing.sessionToken,
-          iceServers: ice.iceServers,
-          hasTurnConfigured: ice.hasTurnConfigured,
-        },
-        200
-      );
+    const nowMs = Date.now();
+
+    if (idemSuffix && existing && existing.expiresAtMs > nowMs) {
+      const cachedIceCheck = validateIceServersConfig(existing.iceServers);
+      if (existing.iceExpiresAtMs > nowMs && cachedIceCheck.valid) {
+        return c.json(
+          {
+            sessionId: existing.sessionId,
+            sessionToken: existing.sessionToken,
+            callId,
+            iceServers: cachedIceCheck.iceServers,
+            hasTurnConfigured: existing.hasTurnConfigured,
+          },
+          200
+        );
+      }
+
+      try {
+        const refreshedIce = await resolveCallsIceServers({ env: c.env });
+        recentCallSessionCache.set(dedupeKey, {
+          ...existing,
+          iceServers: refreshedIce.iceServers,
+          hasTurnConfigured: refreshedIce.hasTurnConfigured,
+          iceExpiresAtMs: Date.now() + 30_000,
+        });
+        return c.json(
+          {
+            sessionId: existing.sessionId,
+            sessionToken: existing.sessionToken,
+            callId,
+            iceServers: refreshedIce.iceServers,
+            hasTurnConfigured: refreshedIce.hasTurnConfigured,
+          },
+          200
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Failed to generate TURN ICE server credentials.';
+        console.error('Failed to refresh TURN credentials for cached call session:', message);
+        return c.json({ error: message }, 502);
+      }
+    }
+
+    let ice: { iceServers: RTCIceServer[]; hasTurnConfigured: boolean };
+    try {
+      ice = await resolveCallsIceServers({ env: c.env });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Failed to generate TURN ICE server credentials.';
+      console.error('Failed to resolve TURN credentials for new call session:', message);
+      return c.json({ error: message }, 502);
     }
 
     try {
@@ -1169,10 +1206,14 @@ export function createWorkerApp() {
       );
 
       if (idemSuffix) {
+        const cacheUntil = Date.now() + 30_000;
         recentCallSessionCache.set(dedupeKey, {
           sessionId: data.sessionId,
           sessionToken,
-          expiresAtMs: Date.now() + 30_000,
+          iceServers: ice.iceServers,
+          hasTurnConfigured: ice.hasTurnConfigured,
+          iceExpiresAtMs: cacheUntil,
+          expiresAtMs: cacheUntil,
         });
       }
 

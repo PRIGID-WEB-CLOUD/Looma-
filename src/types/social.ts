@@ -79,14 +79,26 @@ export interface Post {
   updatedAtMs: number;
 }
 
+export interface DirectChatParticipantResolution {
+  otherParticipantId: string | null;
+  participant: UserProfile | null;
+  displayName: string;
+  handle: string;
+  avatarUrl: string;
+  isResolved: boolean;
+  isValidDirectPair: boolean;
+}
+
 export interface ChatThread {
   id: string;
   title: string;
   isGroup: boolean;
   memberIds: string[];
   adminIds?: string[];
+  partnerUid?: string;
   partnerAvatar: string;
   partnerHandle: string;
+  isParticipantResolved?: boolean;
   lastMessageText: string;
   lastMessageSenderId: string;
   createdAtMs: number;
