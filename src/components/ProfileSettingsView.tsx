@@ -38,6 +38,9 @@ interface ProfileSettingsViewProps {
   onLogout: () => Promise<void>;
   onDeleteAccount?: () => Promise<void>;
   onOpenLegal?: (docId: LegalDocId) => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
+  onOpenLanding?: () => void;
   onUpdateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   onUpdatePrivateSettings: (
     updates: Partial<UserPrivateSettings>
@@ -106,6 +109,9 @@ export function ProfileSettingsView({
   onLogout,
   onDeleteAccount,
   onOpenLegal,
+  isAdmin = false,
+  onOpenAdmin,
+  onOpenLanding,
   onUpdateProfile,
   onUpdatePrivateSettings,
   onBack,
@@ -725,6 +731,36 @@ export function ProfileSettingsView({
                 >
                   Community Guidelines
                 </button>
+              </div>
+            </div>
+          )}
+
+          {(onOpenAdmin || onOpenLanding) && (
+            <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  Workspace Surfaces
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold">
+                {onOpenLanding && (
+                  <button
+                    type="button"
+                    onClick={onOpenLanding}
+                    className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    Public Overview
+                  </button>
+                )}
+                {isAdmin && onOpenAdmin && (
+                  <button
+                    type="button"
+                    onClick={onOpenAdmin}
+                    className="min-h-[36px] px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  >
+                    Open Admin Console
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bell, LogOut, MessageSquare, Moon, Settings, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
   ConnectionsTab,
@@ -24,6 +24,26 @@ import {
   type AccountConsentState,
   type LegalDocId,
 } from './utils/legalLogic';
+import {
+  getTabRoutePath,
+  resolveRouteAccess,
+} from './utils/workspaceAccess';
+import {
+  LandingPageView,
+  readStoredAccessInquiries,
+  saveStoredAccessInquiries,
+  type AccessInquiry,
+} from './landingpage';
+import {
+  AdminView,
+  readAdminModerationState,
+  saveAdminModerationState,
+  toggleHiddenPostId,
+  toggleRestrictedMemberUid,
+  updateAccessInquiryStatus,
+  useAdminRole,
+  type AdminModerationState,
+} from './admin';
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
@@ -61,6 +81,18 @@ export default function App() {
   const initialAuthMode: AuthMode =
     authQuery === 'signup' ? 'signup' : 'signin';
 
+  const [routeLocation, setRouteLocation] = useState<{
+    pathname: string;
+    search: string;
+  }>(() =>
+    typeof window !== 'undefined'
+      ? {
+          pathname: window.location.pathname || '/',
+          search: window.location.search || '',
+        }
+      : { pathname: '/', search: '' }
+  );
+
   const [activeTab, setActiveTab] = useState<TabId>('feed');
   const [connectionsTab, setConnectionsTab] =
     useState<ConnectionsTab>('followers');
@@ -75,6 +107,16 @@ export default function App() {
       : null
   );
   const legalReturnPathRef = useRef<string>('/');
+  const pendingProtectedPathRef = useRef<string | null>(null);
+  const [protectedRedirectNotice, setProtectedRedirectNotice] = useState<
+    string | null
+  >(null);
+  const [accessInquiries, setAccessInquiries] = useState<AccessInquiry[]>(() =>
+    readStoredAccessInquiries()
+  );
+  const [adminModeration, setAdminModeration] = useState<AdminModerationState>(
+    () => readAdminModerationState()
+  );
   const [previewOnboarding, setPreviewOnboarding] =
     useState<boolean>(onboardingParam);
   const [publicProfileReturnTab, setPublicProfileReturnTab] = useState<
@@ -106,17 +148,98 @@ export default function App() {
     store.profile.onboardingCompleted,
     store.authReady
   );
+  const adminAuth = useAdminRole({
+    isAuthorized: store.isAuthorized,
+    firebaseUser: store.firebaseUser,
+    isLocalAutostart: store.isLocalAutostart,
+  });
+
+  const navigateToPath = (rawTargetPath: string, replace = false) => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(rawTargetPath, window.location.origin);
+    if (store.isLocalAutostart && !url.searchParams.has('autostart')) {
+      url.searchParams.set('autostart', '1');
+    }
+    const nextPath = url.pathname || '/';
+    const nextSearch = url.search || '';
+    const full = `${nextPath}${nextSearch}`;
+    if (replace) {
+      window.history.replaceState({}, '', full);
+    } else {
+      window.history.pushState({}, '', full);
+    }
+    setRouteLocation({ pathname: nextPath, search: nextSearch });
+    setActiveLegalDoc(parseLegalRoute(nextPath, nextSearch));
+  };
+
+  const selectWorkspaceTab = (tab: TabId) => {
+    setActiveTab(tab);
+    if (tab !== 'public-profile') {
+      navigateToPath(getTabRoutePath(tab));
+    }
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onPopState = () => {
-      setActiveLegalDoc(
-        parseLegalRoute(window.location.pathname, window.location.search)
-      );
+      const nextPath = window.location.pathname || '/';
+      const nextSearch = window.location.search || '';
+      setRouteLocation({ pathname: nextPath, search: nextSearch });
+      setActiveLegalDoc(parseLegalRoute(nextPath, nextSearch));
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  const routeAccess = useMemo(
+    () =>
+      resolveRouteAccess({
+        pathname: routeLocation.pathname,
+        search: routeLocation.search,
+        isAuthorized: store.isAuthorized,
+        onboardingCompleted: store.profile.onboardingCompleted,
+        authReady: store.authReady,
+      }),
+    [
+      routeLocation.pathname,
+      routeLocation.search,
+      store.authReady,
+      store.isAuthorized,
+      store.profile.onboardingCompleted,
+    ]
+  );
+
+  // Enforce Protected Workspace Redirect: unauthenticated visitors hitting /feed, /messages, /settings, /admin, etc. are moved to /auth cleanly
+  useEffect(() => {
+    if (routeAccess.surface === 'auth' && routeAccess.protectedNotice) {
+      pendingProtectedPathRef.current = routeAccess.returnToPath || '/feed';
+      setProtectedRedirectNotice(routeAccess.protectedNotice);
+      if (routeLocation.pathname !== '/auth') {
+        navigateToPath('/auth', true);
+      }
+    } else if (routeAccess.surface !== 'auth' && store.isAuthorized) {
+      setProtectedRedirectNotice(null);
+    }
+  }, [
+    routeAccess.protectedNotice,
+    routeAccess.returnToPath,
+    routeAccess.surface,
+    routeLocation.pathname,
+    store.isAuthorized,
+  ]);
+
+  // Keep workspace activeTab aligned when navigating via URL (/feed, /messages, /settings, etc.)
+  useEffect(() => {
+    if (routeAccess.surface === 'workspace' && routeAccess.tab) {
+      setActiveTab(routeAccess.tab);
+    }
+  }, [routeAccess.surface, routeAccess.tab]);
+
+  const visiblePosts = useMemo(() => {
+    if (adminModeration.hiddenPostIds.length === 0) return store.posts;
+    const hiddenSet = new Set(adminModeration.hiddenPostIds);
+    return store.posts.filter((p) => !hiddenSet.has(p.id));
+  }, [adminModeration.hiddenPostIds, store.posts]);
 
   const openLegalDocument = (docId: LegalDocId) => {
     if (typeof window !== 'undefined') {
@@ -128,9 +251,8 @@ export default function App() {
         legalReturnPathRef.current =
           `${window.location.pathname}${window.location.search}` || '/';
       }
-      window.history.pushState({}, '', getLegalRoutePath(docId));
     }
-    setActiveLegalDoc(docId);
+    navigateToPath(getLegalRoutePath(docId));
   };
 
   const closeLegalDocument = () => {
@@ -141,14 +263,47 @@ export default function App() {
       );
       if (currentLegal) {
         const target = legalReturnPathRef.current || '/';
-        window.history.pushState({}, '', target);
+        navigateToPath(target);
+        return;
       }
     }
     setActiveLegalDoc(null);
   };
 
+  const handleOpenAuthPage = (mode: AuthMode = 'signin', notice: string | null = null) => {
+    setAuthMode(mode);
+    setProtectedRedirectNotice(notice);
+    navigateToPath(mode === 'signup' ? '/auth?mode=signup' : '/auth');
+  };
+
+  const handleNavigateProtectedPath = (
+    targetPath: '/feed' | '/messages' | '/settings' | '/admin'
+  ) => {
+    if (!store.isAuthorized) {
+      const access = resolveRouteAccess({
+        pathname: targetPath,
+        isAuthorized: false,
+        onboardingCompleted: false,
+        authReady: true,
+      });
+      pendingProtectedPathRef.current = targetPath;
+      handleOpenAuthPage('signin', access.protectedNotice || null);
+      return;
+    }
+    navigateToPath(targetPath);
+  };
+
+  const navigateAfterAuthentication = () => {
+    const target = pendingProtectedPathRef.current || '/feed';
+    pendingProtectedPathRef.current = null;
+    setProtectedRedirectNotice(null);
+    navigateToPath(target, true);
+  };
+
   const handleLogout = async () => {
     await store.logout();
+    pendingProtectedPathRef.current = null;
+    setProtectedRedirectNotice(null);
     setPreviewOnboarding(false);
     setAuthMode('signin');
     setActiveTab('feed');
@@ -160,6 +315,7 @@ export default function App() {
     setComposerOpen(false);
     setAddStoryOpen(false);
     setActiveStoryAuthorId(null);
+    navigateToPath('/auth', true);
   };
 
   const handleOpenMention = (handle: string) => {
@@ -322,16 +478,56 @@ export default function App() {
     );
   }
 
-  if (appStage === 'auth' || !store.isAuthorized) {
+  if (routeAccess.surface === 'landing') {
+    return (
+      <>
+        <LandingPageView
+          theme={store.theme}
+          isAuthorized={store.isAuthorized}
+          isAdmin={adminAuth.isAdmin}
+          userDisplayName={store.profile.displayName}
+          onSetTheme={store.setThemeExplicit}
+          onNavigateToAuth={(mode = 'signin') => handleOpenAuthPage(mode, null)}
+          onNavigateToProtectedPath={handleNavigateProtectedPath}
+          onOpenLegal={openLegalDocument}
+          onSubmitAccessInquiry={(record) => {
+            setAccessInquiries((prev) => {
+              const next = [record, ...prev];
+              saveStoredAccessInquiries(next);
+              return next;
+            });
+          }}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
+  if (appStage === 'auth' || !store.isAuthorized || routeAccess.surface === 'auth') {
     return (
       <div className="looma-stage-enter">
         <AuthView
           initialMode={authMode}
           mode={authMode}
-          onModeChange={setAuthMode}
+          onModeChange={(nextMode) => {
+            setAuthMode(nextMode);
+            if (routeLocation.pathname === '/auth') {
+              navigateToPath(
+                nextMode === 'signup' ? '/auth?mode=signup' : '/auth',
+                true
+              );
+            }
+          }}
           consent={signupConsent}
           onConsentChange={setSignupConsent}
           onOpenLegal={openLegalDocument}
+          protectedRedirectNotice={
+            protectedRedirectNotice || routeAccess.protectedNotice || null
+          }
+          onBackToLanding={() => {
+            setProtectedRedirectNotice(null);
+            navigateToPath('/landing');
+          }}
           profile={store.profile}
           firebaseUser={store.firebaseUser}
           authLoading={store.authLoading}
@@ -340,25 +536,25 @@ export default function App() {
           onSetTheme={store.setThemeExplicit}
           onLoginGoogle={async (options) => {
             await store.loginWithGoogle(options);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
           onLoginApple={async (options) => {
             await store.loginWithApple(options);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
           onLoginEmail={async (email, pass) => {
             await store.loginWithEmail(email, pass);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
           onSignupEmail={async (email, pass, name, consent) => {
             await store.signupWithEmail(email, pass, name, consent);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
           onResendVerification={store.resendEmailVerificationLink}
           onCheckVerified={store.refreshVerificationStatus}
           onLogout={handleLogout}
           onContinueAuthenticated={() => {
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
         />
         <OfflineIndicator />
@@ -383,16 +579,81 @@ export default function App() {
           onSkip={async () => {
             await store.completeOnboarding({});
             setPreviewOnboarding(false);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
           onComplete={async (data) => {
             await store.completeOnboarding(data);
             setPreviewOnboarding(false);
-            setActiveTab('feed');
+            navigateAfterAuthentication();
           }}
         />
         <OfflineIndicator />
       </div>
+    );
+  }
+
+  if (routeAccess.surface === 'admin') {
+    return (
+      <>
+        <AdminView
+          theme={store.theme}
+          adminAuth={adminAuth}
+          currentProfile={store.profile}
+          accountEmail={store.firebaseUser?.email || null}
+          isLocalAutostart={store.isLocalAutostart}
+          communityUsers={store.communityUsers}
+          posts={store.posts}
+          storyGroups={store.storyGroups}
+          onlineUserIds={store.onlineUserIds}
+          moderation={adminModeration}
+          inquiries={accessInquiries}
+          onSetTheme={store.setThemeExplicit}
+          onBackToWorkspace={() => selectWorkspaceTab('feed')}
+          onOpenAuth={() => handleOpenAuthPage('signin', null)}
+          onOpenPublicProfile={(uid) => {
+            selectWorkspaceTab('feed');
+            void handleOpenPublicProfile(uid);
+          }}
+          onToggleHidePost={(postId) => {
+            setAdminModeration((prev) => {
+              const next: AdminModerationState = {
+                ...prev,
+                hiddenPostIds: toggleHiddenPostId(prev.hiddenPostIds, postId),
+              };
+              saveAdminModerationState(next);
+              return next;
+            });
+          }}
+          onDeletePost={async (postId) => {
+            const target = store.posts.find((p) => p.id === postId);
+            if (target) {
+              await store.deletePost(target);
+            }
+          }}
+          onToggleRestrictMember={(uid) => {
+            setAdminModeration((prev) => {
+              const next: AdminModerationState = {
+                ...prev,
+                restrictedUids: toggleRestrictedMemberUid(
+                  prev.restrictedUids,
+                  uid,
+                  store.profile.uid
+                ),
+              };
+              saveAdminModerationState(next);
+              return next;
+            });
+          }}
+          onUpdateInquiryStatus={(id, status) => {
+            setAccessInquiries((prev) => {
+              const next = updateAccessInquiryStatus(prev, id, status);
+              saveStoredAccessInquiries(next);
+              return next;
+            });
+          }}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
@@ -408,7 +669,7 @@ export default function App() {
     >
       <TopBar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectWorkspaceTab}
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
@@ -534,7 +795,7 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('settings')}
+              onClick={() => selectWorkspaceTab('settings')}
               className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === 'settings'
                   ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
@@ -546,6 +807,19 @@ export default function App() {
                 <span>Profile Settings</span>
               </span>
             </button>
+
+            {adminAuth.isAdmin && (
+              <button
+                type="button"
+                onClick={() => navigateToPath('/admin')}
+                className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span>Admin Console</span>
+                </span>
+              </button>
+            )}
 
             <PWAInstallButton />
 
@@ -572,7 +846,7 @@ export default function App() {
           {activeTab === 'feed' && (
             <FeedView
               profile={store.profile}
-              posts={store.posts}
+              posts={visiblePosts}
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -762,6 +1036,9 @@ export default function App() {
               onEnablePush={store.enablePushNotifications}
               onLogout={handleLogout}
               onOpenLegal={openLegalDocument}
+              isAdmin={adminAuth.isAdmin}
+              onOpenAdmin={() => navigateToPath('/admin')}
+              onOpenLanding={() => navigateToPath('/landing')}
               onDeleteAccount={async () => {
                 await store.deleteAccount();
                 setPreviewOnboarding(false);
@@ -772,10 +1049,11 @@ export default function App() {
                 setSelectedPublicProfile(null);
                 setConnectionsOwner(null);
                 setRemoteOtherConnections(null);
+                navigateToPath('/auth', true);
               }}
               onUpdateProfile={store.updateProfile}
               onUpdatePrivateSettings={store.updatePrivateSettings}
-              onBack={() => setActiveTab('profile')}
+              onBack={() => selectWorkspaceTab('profile')}
             />
           )}
         </div>
@@ -906,7 +1184,7 @@ export default function App() {
 
       <MobileBottomNav
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectWorkspaceTab}
         unreadNotifications={unreadCount}
       />
 

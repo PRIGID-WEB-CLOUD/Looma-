@@ -57,6 +57,8 @@ interface AuthViewProps {
   onCheckVerified?: () => Promise<boolean>;
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
+  protectedRedirectNotice?: string | null;
+  onBackToLanding?: () => void;
 }
 
 function GoogleMark() {
@@ -111,6 +113,8 @@ export function AuthView({
   onCheckVerified,
   onLogout,
   onContinueAuthenticated,
+  protectedRedirectNotice = null,
+  onBackToLanding,
 }: AuthViewProps) {
   const [internalMode, setInternalMode] = useState<AuthMode>(initialMode);
   const [useEmailForm, setUseEmailForm] = useState(false);
@@ -388,20 +392,31 @@ export function AuthView({
         <div className="max-w-6xl mx-auto h-full flex items-center justify-between gap-4">
           <LoomaLogo />
 
-          <button
-            type="button"
-            onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label={
-              theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
-            }
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4" aria-hidden="true" />
-            ) : (
-              <Moon className="w-4 h-4" aria-hidden="true" />
+          <div className="flex items-center gap-2.5 shrink-0">
+            {onBackToLanding && (
+              <button
+                type="button"
+                onClick={onBackToLanding}
+                className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Overview
+              </button>
             )}
-          </button>
+            <button
+              type="button"
+              onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label={
+                theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
+              }
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4" aria-hidden="true" />
+              ) : (
+                <Moon className="w-4 h-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -512,6 +527,17 @@ export function AuthView({
                   : 'Create your Looma member profile to get started.'}
               </p>
             </div>
+
+            {protectedRedirectNotice && !displayError && (
+              <div
+                role="status"
+                data-testid="protected-workspace-redirect-banner"
+                className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/70 bg-blue-50/80 dark:bg-blue-950/40 text-xs sm:text-sm text-blue-900 dark:text-blue-200 flex items-start gap-2.5"
+              >
+                <Lock className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>{protectedRedirectNotice}</span>
+              </div>
+            )}
 
             {displayError && (
               <div
@@ -827,7 +853,7 @@ export function AuthView({
                       Protected Workspace Access
                     </p>
                     <p className="mt-0.5">
-                      Feed posts, direct messages, and profile settings are restricted to authenticated members.
+                      Feed posts, direct messages, and profile settings are restricted to authenticated members from the auth page.
                     </p>
                   </div>
                 </div>
