@@ -1,5 +1,48 @@
 import { Hono, type Context, type Next } from 'hono';
-import type { Fetcher, R2Bucket } from '@cloudflare/workers-types';
+
+export interface Fetcher {
+  fetch(input: RequestInfo | URL | Request, init?: RequestInit): Promise<Response>;
+}
+
+export interface R2ObjectMetadata {
+  key: string;
+  size: number;
+  etag?: string;
+  httpEtag?: string;
+  uploaded: Date;
+  httpMetadata?: {
+    contentType?: string;
+    cacheControl?: string;
+  };
+  customMetadata?: Record<string, string>;
+}
+
+export interface R2ObjectBody extends R2ObjectMetadata {
+  body?: ReadableStream | null;
+}
+
+export interface R2Objects {
+  objects: R2ObjectMetadata[];
+}
+
+export interface R2Bucket {
+  head(key: string): Promise<R2ObjectMetadata | null>;
+  get(
+    key: string,
+    options?: { range?: { offset?: number; length?: number } }
+  ): Promise<R2ObjectBody | null>;
+  put(
+    key: string,
+    value: ArrayBuffer | Uint8Array | ReadableStream | string | null | Blob,
+    options?: {
+      httpMetadata?: { contentType?: string; cacheControl?: string };
+      customMetadata?: Record<string, string>;
+    }
+  ): Promise<R2ObjectMetadata | unknown>;
+  delete(keys: string | string[]): Promise<void>;
+  list(options?: { prefix?: string; limit?: number }): Promise<R2Objects>;
+}
+
 import firebaseAppletConfig from '../firebase-applet-config.json' with { type: 'json' };
 import {
   InMemoryRateLimiter,

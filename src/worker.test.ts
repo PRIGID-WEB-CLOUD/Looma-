@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Fetcher, R2Bucket } from '@cloudflare/workers-types';
-import { createWorkerApp, type WorkerEnv } from './worker';
+import { createWorkerApp, type Fetcher, type R2Bucket, type WorkerEnv } from './worker';
 import { clearJwkCacheForTests, uint8ArrayToBase64Url } from './utils/authLogic';
 
 interface StoredObject {
