@@ -86,6 +86,7 @@ import {
   DIRECT_CHAT_SHARED_TITLE,
   extractHashtags,
   extractMentions,
+  formatCallMessage,
   formatChatPushPayload,
   formatMissedCallMessage,
   formatVoiceNote,
@@ -107,6 +108,11 @@ import {
   toggleFollowState,
   validateGroupChatInput,
 } from '../utils/socialLogic';
+import {
+  reconcileCallSessionWithPeers,
+  reconcileCallSessionWithRemoteStatus,
+  shouldPeerJoinActivateCall,
+} from '../utils/callsLogic';
 import { extractStorageKeyFromUrl } from '../utils/storageLogic';
 import {
   createTermsConsentRecord,
@@ -1415,6 +1421,12 @@ export function useSocialStore() {
             if (callSessionRef.current?.callId === callId) {
               setCallSession(null);
             }
+            continue;
+          }
+          if (status === 'active' && callSessionRef.current?.callId === callId) {
+            setCallSession((prev) =>
+              reconcileCallSessionWithRemoteStatus(prev, callId, status)
+            );
             continue;
           }
           if (
@@ -3407,6 +3419,68 @@ export function useSocialStore() {
     callSessionRef.current = callSession;
   }, [callSession]);
 
+  const persistCallChatEventMessage = useCallback(
+    async (chatId: string, fallbackMemberIds: string[], messageText: string) => {
+      if (!firebaseUser || !chatId || chatId.startsWith('room_')) return;
+      const safeName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
+      const safeFallback = Array.from(
+        new Set([firebaseUser.uid, ...fallbackMemberIds].filter(Boolean))
+      ).slice(0, 10);
+      const threadRef = doc(db, 'chats', chatId);
+      const threadSnap = await readDocResilient(threadRef).catch(() => null);
+      const batch = writeBatch(db);
+      let syncedMemberIds = safeFallback;
+      if (!threadSnap || !threadSnap.exists()) {
+        const localThread = threadsRef.current.find((t) => t.id === chatId);
+        const safeThreadTitle =
+          (localThread?.isGroup ? localThread.title : DIRECT_CHAT_SHARED_TITLE)
+            .trim()
+            .slice(0, 80) || DIRECT_CHAT_SHARED_TITLE;
+        batch.set(threadRef, {
+          id: chatId,
+          title: safeThreadTitle,
+          isGroup: Boolean(localThread?.isGroup),
+          memberIds: syncedMemberIds,
+          ...(localThread?.isGroup
+            ? {
+                adminIds: localThread.adminIds?.length
+                  ? localThread.adminIds
+                  : [firebaseUser.uid],
+              }
+            : {}),
+          lastMessageText: messageText.slice(0, 400),
+          lastMessageSenderId: firebaseUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        const remoteData = threadSnap.data();
+        if (Array.isArray(remoteData.memberIds) && remoteData.memberIds.length > 0) {
+          syncedMemberIds = remoteData.memberIds;
+        }
+        batch.update(threadRef, {
+          lastMessageText: messageText.slice(0, 400),
+          lastMessageSenderId: firebaseUser.uid,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      const eventMsgId = makeSafeId('msg_call');
+      batch.set(doc(db, 'chats', chatId, 'messages', eventMsgId), {
+        id: eventMsgId,
+        chatId,
+        senderId: firebaseUser.uid,
+        senderName: safeName,
+        senderAvatar: profile.avatarUrl,
+        text: messageText.slice(0, 1000),
+        memberIds: syncedMemberIds,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+    },
+    [firebaseUser, profile.avatarUrl, profile.displayName]
+  );
+
   const startCall = useCallback(
     async (thread: ChatThread, isAudioOnly: boolean) => {
       requireAuthorized();
@@ -3417,6 +3491,10 @@ export function useSocialStore() {
         profile
       );
       const callId = makeSafeId('call');
+      const safeTitle =
+        (resolvedThread.title || 'Looma Call').trim().slice(0, 80) || 'Looma Call';
+      const safeCallerName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
       const uniqueMembers = Array.from(
         new Set([profile.uid, ...resolvedThread.memberIds].filter(Boolean))
       ).slice(0, 10);
@@ -3427,7 +3505,7 @@ export function useSocialStore() {
           uid,
           name:
             uid === profile.uid
-              ? profile.displayName
+              ? safeCallerName
               : u?.displayName || 'Participant',
           avatar: uid === profile.uid ? profile.avatarUrl : u?.avatarUrl || '',
           isMuted: false,
@@ -3437,40 +3515,36 @@ export function useSocialStore() {
       });
 
       if (firebaseUser) {
-        const callMsgId = makeSafeId('msg_call');
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'calls', callId), {
+        await setDoc(doc(db, 'calls', callId), {
           id: callId,
           chatId: resolvedThread.id,
-          title: resolvedThread.title,
+          title: safeTitle,
           callerId: firebaseUser.uid,
-          callerName: profile.displayName,
+          callerName: safeCallerName,
           callerAvatar: profile.avatarUrl,
           isAudioOnly,
           status: 'ringing',
           memberIds: uniqueMembers,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+        }).catch((err) => {
+          console.warn('Failed to create call room in Firestore:', err);
         });
-        batch.set(doc(db, 'chats', resolvedThread.id, 'messages', callMsgId), {
-          id: callMsgId,
-          chatId: resolvedThread.id,
-          senderId: firebaseUser.uid,
-          senderName: profile.displayName,
-          senderAvatar: profile.avatarUrl,
-          text: `[call:${callId}:${isAudioOnly ? 'voice' : 'video'}:${resolvedThread.title}]`,
-          memberIds: uniqueMembers,
-          createdAt: serverTimestamp(),
-        });
-        await batch.commit().catch(() => {});
+
+        const callInviteMsg = formatCallMessage(callId, isAudioOnly, safeTitle);
+        void persistCallChatEventMessage(
+          resolvedThread.id,
+          uniqueMembers,
+          callInviteMsg
+        ).catch(() => {});
       }
 
       setCallSession({
         callId,
         chatId: resolvedThread.id,
-        title: resolvedThread.title,
+        title: safeTitle,
         callerId: profile.uid,
-        callerName: profile.displayName,
+        callerName: safeCallerName,
         callerAvatar: profile.avatarUrl,
         isAudioOnly,
         active: true,
@@ -3482,7 +3556,7 @@ export function useSocialStore() {
         startedAtMs: Date.now(),
       });
     },
-    [firebaseUser, profile, requireAuthorized]
+    [firebaseUser, persistCallChatEventMessage, profile, requireAuthorized]
   );
 
   const startInstantCall = useCallback(
@@ -3490,30 +3564,35 @@ export function useSocialStore() {
       requireAuthorized();
       const callId = makeSafeId('call');
       const roomChatId = makeSafeId('room');
+      const safeTitle = title.trim().slice(0, 80) || 'Studio Live Room';
+      const safeCallerName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
       const memberIds = [profile.uid];
 
       if (firebaseUser) {
         await setDoc(doc(db, 'calls', callId), {
           id: callId,
           chatId: roomChatId,
-          title: title.trim().slice(0, 80) || 'Studio Live Room',
+          title: safeTitle,
           callerId: firebaseUser.uid,
-          callerName: profile.displayName,
+          callerName: safeCallerName,
           callerAvatar: profile.avatarUrl,
           isAudioOnly,
           status: 'ringing',
           memberIds,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+        }).catch((err) => {
+          console.warn('Failed to create instant call room in Firestore:', err);
         });
       }
 
       setCallSession({
         callId,
         chatId: roomChatId,
-        title,
+        title: safeTitle,
         callerId: profile.uid,
-        callerName: profile.displayName,
+        callerName: safeCallerName,
         callerAvatar: profile.avatarUrl,
         isAudioOnly,
         active: true,
@@ -3524,7 +3603,7 @@ export function useSocialStore() {
         participants: [
           {
             uid: profile.uid,
-            name: profile.displayName,
+            name: safeCallerName,
             avatar: profile.avatarUrl || '',
             isMuted: false,
             isVideoOff: isAudioOnly,
@@ -3549,13 +3628,15 @@ export function useSocialStore() {
     async (invite: IncomingCallInvite) => {
       requireAuthorized();
       setIncomingCallInvite(null);
+      const safeDisplayName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
       const participants: CallParticipant[] = invite.memberIds.map((uid) => {
         const u = communityUsersRef.current.find((member) => member.uid === uid);
         return {
           uid,
           name:
             uid === profile.uid
-              ? profile.displayName
+              ? safeDisplayName
               : uid === invite.callerId
                 ? invite.callerName
                 : u?.displayName || 'Participant',
@@ -3567,7 +3648,8 @@ export function useSocialStore() {
                 : u?.avatarUrl || '',
           isMuted: false,
           isVideoOff: invite.isAudioOnly,
-          connectionState: 'joined',
+          connectionState:
+            uid === profile.uid || uid === invite.callerId ? 'joined' : 'invited',
         };
       });
 
@@ -3580,7 +3662,7 @@ export function useSocialStore() {
         batch.set(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
           callId: invite.callId,
           uid: firebaseUser.uid,
-          displayName: profile.displayName,
+          displayName: safeDisplayName,
           avatarUrl: profile.avatarUrl,
           cfSessionId: '',
           audioTrackName: '',
@@ -3620,11 +3702,12 @@ export function useSocialStore() {
       declinedCallIdsRef.current.add(invite.callId);
       setIncomingCallInvite(null);
       if (firebaseUser) {
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
+        const safeDisplayName =
+          (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
+        await setDoc(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
           callId: invite.callId,
           uid: firebaseUser.uid,
-          displayName: profile.displayName,
+          displayName: safeDisplayName,
           avatarUrl: profile.avatarUrl,
           cfSessionId: '',
           audioTrackName: '',
@@ -3635,38 +3718,30 @@ export function useSocialStore() {
           state: 'declined',
           memberIds: invite.memberIds,
           updatedAt: serverTimestamp(),
-        });
-        batch.update(doc(db, 'calls', invite.callId), {
-          status: 'ended',
-          updatedAt: serverTimestamp(),
-        });
-        if (invite.chatId) {
-          const missedMsgId = makeSafeId('msg_missed');
-          const missedText = formatMissedCallMessage(
-            invite.callId,
-            invite.isAudioOnly,
-            invite.title
-          );
-          batch.set(doc(db, 'chats', invite.chatId, 'messages', missedMsgId), {
-            id: missedMsgId,
-            chatId: invite.chatId,
-            senderId: firebaseUser.uid,
-            senderName: profile.displayName,
-            senderAvatar: profile.avatarUrl,
-            text: missedText,
-            memberIds: invite.memberIds,
-            createdAt: serverTimestamp(),
-          });
-          batch.update(doc(db, 'chats', invite.chatId), {
-            lastMessageText: missedText.slice(0, 400),
-            lastMessageSenderId: firebaseUser.uid,
+        }).catch(() => {});
+
+        if (invite.memberIds.length <= 2) {
+          await updateDoc(doc(db, 'calls', invite.callId), {
+            status: 'ended',
             updatedAt: serverTimestamp(),
-          });
+          }).catch(() => {});
+
+          if (invite.chatId) {
+            const missedText = formatMissedCallMessage(
+              invite.callId,
+              invite.isAudioOnly,
+              invite.title
+            );
+            await persistCallChatEventMessage(
+              invite.chatId,
+              invite.memberIds,
+              missedText
+            ).catch(() => {});
+          }
         }
-        await batch.commit().catch(() => {});
       }
     },
-    [firebaseUser, profile.avatarUrl, profile.displayName]
+    [firebaseUser, persistCallChatEventMessage, profile.avatarUrl, profile.displayName]
   );
 
   const publishCallPeerSession = useCallback(
@@ -3684,6 +3759,8 @@ export function useSocialStore() {
     ) => {
       if (!firebaseUser || !callId) return;
       const session = callSessionRef.current;
+      const safeDisplayName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
       const memberIds =
         session?.participants.map((p) => p.uid).filter(Boolean) || [firebaseUser.uid];
       const safeMemberIds = memberIds.includes(firebaseUser.uid)
@@ -3693,7 +3770,7 @@ export function useSocialStore() {
       await setDoc(doc(db, 'calls', callId, 'peers', firebaseUser.uid), {
         callId,
         uid: firebaseUser.uid,
-        displayName: profile.displayName,
+        displayName: safeDisplayName,
         avatarUrl: profile.avatarUrl,
         cfSessionId: payload.cfSessionId.slice(0, 128),
         audioTrackName: (payload.audioTrackName || '').slice(0, 64),
@@ -3706,7 +3783,15 @@ export function useSocialStore() {
         updatedAt: serverTimestamp(),
       }).catch(() => {});
 
-      if (payload.state === 'joined' && session?.status === 'ringing') {
+      if (
+        shouldPeerJoinActivateCall({
+          callerId: session?.callerId || firebaseUser.uid,
+          actorUid: firebaseUser.uid,
+          participantCount: safeMemberIds.length,
+          currentStatus: session?.status,
+          peerState: payload.state,
+        })
+      ) {
         await updateDoc(doc(db, 'calls', callId), {
           status: 'active',
           updatedAt: serverTimestamp(),
@@ -3743,18 +3828,9 @@ export function useSocialStore() {
             };
           });
           onPeers(peers);
-          setCallSession((prev) => {
-            if (!prev || prev.callId !== callId) return prev;
-            const byUid = new Map(prev.participants.map((p) => [p.uid, p]));
-            for (const p of peers) {
-              const existing = byUid.get(p.uid);
-              byUid.set(p.uid, existing ? { ...existing, ...p } : p);
-            }
-            return {
-              ...prev,
-              participants: Array.from(byUid.values()),
-            };
-          });
+          setCallSession((prev) =>
+            reconcileCallSessionWithPeers(prev, callId, firebaseUser.uid, peers)
+          );
         },
         () => {}
       );
@@ -3782,6 +3858,8 @@ export function useSocialStore() {
       : '';
 
     if (firebaseUser) {
+      const safeDisplayName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
       const memberIds = active.participants.map((p) => p.uid);
       const safeMembers = memberIds.includes(firebaseUser.uid)
         ? memberIds
@@ -3789,7 +3867,7 @@ export function useSocialStore() {
       setDoc(doc(db, 'calls', active.callId, 'peers', firebaseUser.uid), {
         callId: active.callId,
         uid: firebaseUser.uid,
-        displayName: profile.displayName,
+        displayName: safeDisplayName,
         avatarUrl: profile.avatarUrl,
         cfSessionId: '',
         audioTrackName: '',
@@ -3810,24 +3888,11 @@ export function useSocialStore() {
       }
 
       if (shouldLogMissed && missedText) {
-        const missedMsgId = makeSafeId('msg_missed');
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'chats', active.chatId, 'messages', missedMsgId), {
-          id: missedMsgId,
-          chatId: active.chatId,
-          senderId: firebaseUser.uid,
-          senderName: profile.displayName,
-          senderAvatar: profile.avatarUrl,
-          text: missedText,
-          memberIds: safeMembers.slice(0, 10),
-          createdAt: serverTimestamp(),
-        });
-        batch.update(doc(db, 'chats', active.chatId), {
-          lastMessageText: missedText.slice(0, 400),
-          lastMessageSenderId: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-        });
-        batch.commit().catch(() => {});
+        void persistCallChatEventMessage(
+          active.chatId,
+          safeMembers,
+          missedText
+        ).catch(() => {});
       }
     } else if (shouldLogMissed && missedText) {
       const now = Date.now();
@@ -3860,7 +3925,7 @@ export function useSocialStore() {
         )
       );
     }
-  }, [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid]);
+  }, [firebaseUser, persistCallChatEventMessage, profile.avatarUrl, profile.displayName, profile.uid]);
 
   const toggleCallMute = useCallback(() => {
     setCallSession((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));

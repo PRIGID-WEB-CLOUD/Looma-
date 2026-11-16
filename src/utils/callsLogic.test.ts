@@ -23,6 +23,9 @@ import {
   collectPendingRemoteTrackSubscriptions,
   mergePeerSignalingUpdate,
   buildPeerTrackSubscriptionKey,
+  shouldPeerJoinActivateCall,
+  reconcileCallSessionWithRemoteStatus,
+  reconcileCallSessionWithPeers,
   CLOUDFLARE_CALLS_API_BASE,
 } from './callsLogic';
 
@@ -36,12 +39,20 @@ test('parseCallsConfig correctly detects missing or configured Cloudflare Calls 
   assert.equal(partial.appId, 'app_123');
 
   const full = parseCallsConfig({
-    CLOUDFLARE_CALLS_APP_ID: ' "test_app_id_001" ',
-    CLOUDFLARE_CALLS_APP_TOKEN: ' "test_app_token_secret_001" ',
+    CLOUDFLARE_CALLS_APP_ID: ' " test_app_id_001 " ',
+    CLOUDFLARE_CALLS_APP_TOKEN: ' " test_app_token_secret_001 " ',
   });
   assert.equal(full.configured, true);
   assert.equal(full.appId, 'test_app_id_001');
   assert.equal(full.config?.appToken, 'test_app_token_secret_001');
+
+  const placeholder = parseCallsConfig({
+    CLOUDFLARE_CALLS_APP_ID: ' "MY_CALLS_APP_ID" ',
+    CLOUDFLARE_CALLS_APP_TOKEN: ' "MY_CALLS_APP_TOKEN" ',
+  });
+  assert.equal(placeholder.configured, false);
+  assert.equal(placeholder.appId, null);
+  assert.equal(placeholder.config, null);
 });
 
 test('buildCloudflareCallsUrl builds standard Cloudflare SFU endpoint URL', () => {
@@ -433,5 +444,107 @@ test('resolveCallsIceServers rejects missing TURN key ID, missing TURN token, an
     /username or credential/i
   );
 });
+
+test('call ringing and active state reconciliation preserves ringing for caller and activates when callee accepts or joins', () => {
+  // Caller publishing their own SFU tracks must NOT kill ringing for multi-party calls
+  assert.equal(
+    shouldPeerJoinActivateCall({
+      callerId: 'caller_1',
+      actorUid: 'caller_1',
+      participantCount: 2,
+      currentStatus: 'ringing',
+      peerState: 'joined',
+    }),
+    false
+  );
+
+  // Callee joining DOES activate a ringing call; solo room also activates
+  assert.equal(
+    shouldPeerJoinActivateCall({
+      callerId: 'caller_1',
+      actorUid: 'callee_2',
+      participantCount: 2,
+      currentStatus: 'ringing',
+      peerState: 'joined',
+    }),
+    true
+  );
+  assert.equal(
+    shouldPeerJoinActivateCall({
+      callerId: 'caller_1',
+      actorUid: 'caller_1',
+      participantCount: 1,
+      currentStatus: 'ringing',
+      peerState: 'joined',
+    }),
+    true
+  );
+
+  const initialSession = {
+    callId: 'call_1',
+    chatId: 'chat_1',
+    title: 'Maya Lin',
+    callerId: 'caller_1',
+    callerName: 'Alex',
+    callerAvatar: '',
+    isAudioOnly: false,
+    active: true,
+    status: 'ringing' as const,
+    isMuted: false,
+    isVideoOff: false,
+    isScreenSharing: false,
+    participants: [
+      {
+        uid: 'caller_1',
+        name: 'Alex',
+        avatar: '',
+        isMuted: false,
+        isVideoOff: false,
+        connectionState: 'joined' as const,
+      },
+      {
+        uid: 'callee_2',
+        name: 'Maya Lin',
+        avatar: '',
+        isMuted: false,
+        isVideoOff: false,
+        connectionState: 'invited' as const,
+      },
+    ],
+    startedAtMs: 1000,
+  };
+
+  // Remote status becoming active transitions caller session from ringing -> active and resets timer start
+  const activated = reconcileCallSessionWithRemoteStatus(initialSession, 'call_1', 'active', 5000);
+  assert.equal(activated?.status, 'active');
+  assert.equal(activated?.startedAtMs, 5000);
+
+  // Remote status becoming ended clears active call session
+  assert.equal(reconcileCallSessionWithRemoteStatus(activated, 'call_1', 'ended', 6000), null);
+
+  // Peer subcollection reporting remote joined peer also transitions ringing -> active
+  const peerActivated = reconcileCallSessionWithPeers(
+    initialSession,
+    'call_1',
+    'caller_1',
+    [
+      {
+        uid: 'callee_2',
+        name: 'Maya Lin',
+        avatar: '',
+        isMuted: false,
+        isVideoOff: false,
+        connectionState: 'joined',
+        cfSessionId: 'sess_callee_2',
+        audioTrackName: 'audio-callee_2',
+      },
+    ],
+    7500
+  );
+  assert.equal(peerActivated?.status, 'active');
+  assert.equal(peerActivated?.startedAtMs, 7500);
+  assert.equal(peerActivated?.participants.find((p) => p.uid === 'callee_2')?.cfSessionId, 'sess_callee_2');
+});
+
 
 

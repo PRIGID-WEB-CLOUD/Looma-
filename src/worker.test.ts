@@ -861,3 +861,56 @@ test('Worker /api/calls/ice-servers and /api/calls/sessions/new (new + cached) i
   }
 });
 
+test('Worker status endpoints reject MY_* placeholders and accept quoted env values with inner whitespace', async () => {
+  const app = createWorkerApp();
+
+  const placeholderRes = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/api/calls/status'),
+    {
+      CLOUDFLARE_CALLS_APP_ID: ' "MY_CALLS_APP_ID" ',
+      CLOUDFLARE_CALLS_APP_TOKEN: ' "MY_CALLS_APP_TOKEN" ',
+      CLOUDFLARE_TURN_KEY_ID: 'MY_TURN_ID',
+      CLOUDFLARE_TURN_KEY_TOKEN: 'MY_TURN_TOKEN',
+    }
+  );
+  assert.equal(placeholderRes.status, 200);
+  assert.deepEqual(await placeholderRes.json(), {
+    provider: 'cloudflare-calls',
+    configured: false,
+    hasTurnConfigured: false,
+  });
+
+  const paddedCallsRes = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/api/calls/status'),
+    {
+      CLOUDFLARE_CALLS_APP_ID: ' " cf_app_id_padded " ',
+      CLOUDFLARE_CALLS_APP_TOKEN: ' " cf_app_tok_padded " ',
+      CLOUDFLARE_TURN_KEY_ID: ' " cf_turn_id_padded " ',
+      CLOUDFLARE_TURN_KEY_TOKEN: ' " cf_turn_tok_padded " ',
+    }
+  );
+  assert.equal(paddedCallsRes.status, 200);
+  assert.deepEqual(await paddedCallsRes.json(), {
+    provider: 'cloudflare-calls',
+    configured: true,
+    hasTurnConfigured: true,
+  });
+
+  const r2FallbackStatusRes = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/api/storage/status'),
+    {
+      R2_BUCKET: createMockR2Bucket(),
+      R2_PUBLIC_URL: ' "MY_PUBLIC_URL" ',
+      CLOUDFLARE_R2_PUBLIC_DOMAIN: ' " https://pub-test-domain.r2.dev/ " ',
+    }
+  );
+  assert.equal(r2FallbackStatusRes.status, 200);
+  assert.deepEqual(await r2FallbackStatusRes.json(), {
+    provider: 'cloudflare-r2',
+    configured: true,
+    mode: 'r2-binding',
+    publicUrlConfigured: true,
+  });
+});
+
+

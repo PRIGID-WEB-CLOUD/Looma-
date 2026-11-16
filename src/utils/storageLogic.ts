@@ -84,6 +84,15 @@ function firstConfiguredValue(
   return '';
 }
 
+export function resolveConfiguredR2PublicUrl(env: R2EnvInput): string {
+  const candidate = firstConfiguredValue(
+    env.R2_PUBLIC_URL,
+    env.CLOUDFLARE_R2_PUBLIC_DOMAIN,
+    env.CLOUDFLARE_R2_PUBLIC_URL
+  );
+  return normalizePublicBaseUrl(candidate);
+}
+
 export function parseR2Config(env: R2EnvInput): R2ConfigParseResult {
   const missing: string[] = [];
   const accountId = firstConfiguredValue(
@@ -108,11 +117,7 @@ export function parseR2Config(env: R2EnvInput): R2ConfigParseResult {
   if (!secretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
   if (!bucketName) missing.push('R2_BUCKET_NAME');
 
-  const publicUrl = normalizePublicBaseUrl(
-    env.R2_PUBLIC_URL ||
-      env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
-      env.CLOUDFLARE_R2_PUBLIC_URL
-  );
+  const publicUrl = resolveConfiguredR2PublicUrl(env);
 
   if (missing.length > 0) {
     return {

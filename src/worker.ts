@@ -54,6 +54,7 @@ import {
 } from './utils/authLogic.ts';
 import {
   buildCloudflareCallsUrl,
+  cleanCallsEnvValue,
   extractCallsErrorMessage,
   formatCallsHeaders,
   isValidCallRoomId,
@@ -76,6 +77,7 @@ import {
   normalizeStorageFolder,
   parseHttpRangeHeader,
   parseR2Config,
+  resolveConfiguredR2PublicUrl,
   resolveStorageCacheControl,
   resolveStoragePublicUrl,
   sniffMediaSignature,
@@ -166,12 +168,14 @@ function getFirebaseSettings(env: WorkerEnv) {
 }
 
 async function deriveHmacSecret(env: WorkerEnv, domain: string): Promise<string> {
-  const configured = (env.CALLS_STATE_SECRET || '').trim();
-  if (configured && !configured.startsWith('MY_')) {
+  const configured = cleanCallsEnvValue(env.CALLS_STATE_SECRET);
+  if (configured) {
     return `${domain}:${configured}`;
   }
-  const callsSecret = (env.CLOUDFLARE_CALLS_APP_TOKEN || '').trim();
-  const r2Secret = (env.R2_SECRET_ACCESS_KEY || env.CLOUDFLARE_SECRET_ACCESS_KEY || '').trim();
+  const callsSecret = cleanCallsEnvValue(env.CLOUDFLARE_CALLS_APP_TOKEN);
+  const r2Secret = cleanCallsEnvValue(
+    env.R2_SECRET_ACCESS_KEY || env.CLOUDFLARE_SECRET_ACCESS_KEY
+  );
   const seed = `${domain}:${callsSecret}:${r2Secret}:${getFirebaseSettings(env).projectId}`;
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(seed));
   return Array.from(new Uint8Array(digest))
@@ -349,9 +353,9 @@ export function createWorkerApp() {
 
     const reqOrigin = c.req.header('origin');
     const configuredOrigins = [
-      c.env.ALLOWED_ORIGINS || '',
-      c.env.PUBLIC_APP_URL || '',
-      c.env.APP_URL || '',
+      cleanCallsEnvValue(c.env.ALLOWED_ORIGINS),
+      cleanCallsEnvValue(c.env.PUBLIC_APP_URL),
+      cleanCallsEnvValue(c.env.APP_URL),
     ]
       .filter(Boolean)
       .join(',');
@@ -427,9 +431,7 @@ export function createWorkerApp() {
     const configured = hasNativeBinding || s3Parsed.configured;
     const publicUrl = resolveStoragePublicUrl(
       'probe',
-      c.env.R2_PUBLIC_URL ||
-        c.env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
-        c.env.CLOUDFLARE_R2_PUBLIC_URL
+      resolveConfiguredR2PublicUrl(c.env)
     );
 
     return c.json({
@@ -518,10 +520,7 @@ export function createWorkerApp() {
       generateCryptoTokenHex(8)
     );
     const cacheControl = resolveStorageCacheControl(folder);
-    const publicBase =
-      c.env.R2_PUBLIC_URL ||
-      c.env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
-      c.env.CLOUDFLARE_R2_PUBLIC_URL;
+    const publicBase = resolveConfiguredR2PublicUrl(c.env);
 
     if (c.env.R2_BUCKET) {
       try {
@@ -939,10 +938,7 @@ export function createWorkerApp() {
   app.get('/api/storage/list', requireVerifiedAuth, async (c) => {
     const authUser = c.get('authUser');
     const prefix = `uploads/${authUser.uid}/`;
-    const publicBase =
-      c.env.R2_PUBLIC_URL ||
-      c.env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
-      c.env.CLOUDFLARE_R2_PUBLIC_URL;
+    const publicBase = resolveConfiguredR2PublicUrl(c.env);
 
     if (c.env.R2_BUCKET) {
       try {

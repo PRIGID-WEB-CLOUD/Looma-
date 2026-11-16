@@ -15,6 +15,7 @@ import {
   normalizeStorageFolder,
   parseHttpRangeHeader,
   parseR2Config,
+  resolveConfiguredR2PublicUrl,
   resolveStorageCacheControl,
   resolveStoragePublicUrl,
   sniffMediaSignature,
@@ -63,6 +64,21 @@ test('parseR2Config detects missing vars and builds Cloudflare R2 S3 endpoint wh
   assert.equal(cloudflareAliases.config?.endpoint, 'https://cf_acct_999.r2.cloudflarestorage.com');
   assert.equal(cloudflareAliases.config?.publicUrl, 'https://pub-example.r2.dev');
   assert.equal(cloudflareAliases.publicUrlConfigured, true);
+
+  assert.equal(
+    resolveConfiguredR2PublicUrl({
+      R2_PUBLIC_URL: '   ',
+      CLOUDFLARE_R2_PUBLIC_DOMAIN: ' " https://pub-fallback.r2.dev/ " ',
+    }),
+    'https://pub-fallback.r2.dev'
+  );
+  assert.equal(
+    resolveConfiguredR2PublicUrl({
+      R2_PUBLIC_URL: ' "MY_R2_PUBLIC_URL" ',
+      CLOUDFLARE_R2_PUBLIC_DOMAIN: 'https://pub-fallback.r2.dev',
+    }),
+    'https://pub-fallback.r2.dev'
+  );
 });
 
 test('classifyUploadMime validates allowed media types and rejects SVG/executables', () => {

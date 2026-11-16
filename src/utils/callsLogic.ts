@@ -1,4 +1,4 @@
-import type { CallParticipant } from '../types/social';
+import type { CallParticipant, CallSession } from '../types/social';
 
 export interface CallsEnvInput {
   CLOUDFLARE_CALLS_APP_ID?: string;
@@ -19,8 +19,8 @@ export interface CallsConfigParseResult {
 export const CLOUDFLARE_CALLS_API_BASE = 'https://rtc.live.cloudflare.com/v1/apps';
 
 export function parseCallsConfig(env: CallsEnvInput): CallsConfigParseResult {
-  const appId = (env.CLOUDFLARE_CALLS_APP_ID || '').trim().replace(/^["']|["']$/g, '');
-  const appToken = (env.CLOUDFLARE_CALLS_APP_TOKEN || '').trim().replace(/^["']|["']$/g, '');
+  const appId = cleanCallsEnvValue(env.CLOUDFLARE_CALLS_APP_ID);
+  const appToken = cleanCallsEnvValue(env.CLOUDFLARE_CALLS_APP_TOKEN);
 
   if (!appId || !appToken) {
     return {
@@ -270,6 +270,68 @@ export function mergePeerSignalingUpdate(
   );
 }
 
+export function shouldPeerJoinActivateCall(params: {
+  callerId: string;
+  actorUid: string;
+  participantCount: number;
+  currentStatus?: CallSession['status'];
+  peerState: 'joined' | 'declined' | 'left';
+}): boolean {
+  if (params.peerState !== 'joined' || params.currentStatus !== 'ringing') {
+    return false;
+  }
+  return params.actorUid !== params.callerId || params.participantCount <= 1;
+}
+
+export function reconcileCallSessionWithRemoteStatus(
+  session: CallSession | null,
+  callId: string,
+  remoteStatus: string,
+  nowMs: number = Date.now()
+): CallSession | null {
+  if (!session || session.callId !== callId) return session;
+  if (remoteStatus === 'ended') return null;
+  if (remoteStatus === 'active' && session.status !== 'active') {
+    return {
+      ...session,
+      status: 'active',
+      startedAtMs: nowMs,
+    };
+  }
+  return session;
+}
+
+export function reconcileCallSessionWithPeers(
+  session: CallSession | null,
+  callId: string,
+  selfUid: string,
+  peers: CallParticipant[],
+  nowMs: number = Date.now()
+): CallSession | null {
+  if (!session || session.callId !== callId) return session;
+  const byUid = new Map(session.participants.map((p) => [p.uid, p]));
+  for (const p of peers) {
+    const existing = byUid.get(p.uid);
+    byUid.set(p.uid, existing ? { ...existing, ...p } : p);
+  }
+  const nextParticipants = Array.from(byUid.values());
+  const hasRemoteJoined = nextParticipants.some(
+    (p) => p.uid !== selfUid && p.connectionState === 'joined'
+  );
+  const nextStatus =
+    session.status === 'ringing' && hasRemoteJoined ? 'active' : session.status;
+
+  return {
+    ...session,
+    status: nextStatus,
+    startedAtMs:
+      nextStatus === 'active' && session.status === 'ringing'
+        ? nowMs
+        : session.startedAtMs,
+    participants: nextParticipants,
+  };
+}
+
 export interface IceServerConfigInput {
   TURN_URLS?: string;
   TURN_USERNAME?: string;
@@ -291,8 +353,23 @@ export interface TurnKeyConfigResult {
 }
 
 export function cleanCallsEnvValue(value?: string): string {
-  const trimmed = (value || '').trim().replace(/^["']|["']$/g, '');
-  return !trimmed || trimmed.startsWith('MY_') ? '' : trimmed;
+  if (!value) return '';
+  let cleaned = value.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (
+    !cleaned ||
+    cleaned.startsWith('MY_') ||
+    cleaned === 'changeme' ||
+    cleaned === 'replace-me'
+  ) {
+    return '';
+  }
+  return cleaned;
 }
 
 export function parseTurnKeyConfig(env: IceServerConfigInput): TurnKeyConfigResult {
