@@ -8,12 +8,12 @@ import {
   ShieldCheck,
   Sun,
 } from 'lucide-react';
-import heroWorkspaceImg from '../assets/images/hero_looma_workspace_1794784020527.jpg';
-import landingGalleryImg from '../assets/images/landing_community_gallery_1794784021354.jpg';
-import landingAtriumImg from '../assets/images/landing_private_atrium_1794784021462.jpg';
-import { LoomaLogo } from '../components/LoomaLogo';
-import type { ThemeMode } from '../types/social';
-import type { LegalDocId } from '../utils/legalLogic';
+import heroWorkspaceImg from '../src/assets/images/hero_looma_workspace_1794784020527.jpg';
+import landingGalleryImg from '../src/assets/images/landing_community_gallery_1794784021354.jpg';
+import landingAtriumImg from '../src/assets/images/landing_private_atrium_1794784021462.jpg';
+import { LoomaLogo } from '../src/components/LoomaLogo';
+import type { ThemeMode } from '../src/types/social';
+import type { LegalDocId } from '../src/utils/legalLogic';
 import {
   createAccessInquiryRecord,
   LANDING_CAPABILITIES,

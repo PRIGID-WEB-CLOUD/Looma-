@@ -1,4 +1,4 @@
-import type { Post, PostCategory, StoryGroup, UserProfile } from '../types/social';
+import type { Post, PostCategory, StoryGroup, UserProfile } from '../src/types/social';
 
 export interface AdminAccessInquiry {
   id: string;

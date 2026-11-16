@@ -15,10 +15,10 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { Avatar } from '../components/Avatar';
-import { LoomaLogo } from '../components/LoomaLogo';
-import type { Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../types/social';
-import { formatRelativeTime, POST_CATEGORIES } from '../utils/socialLogic';
+import { Avatar } from '../src/components/Avatar';
+import { LoomaLogo } from '../src/components/LoomaLogo';
+import type { Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
+import { formatRelativeTime, POST_CATEGORIES } from '../src/utils/socialLogic';
 import {
   ADMIN_EMAILS,
   computeWorkspaceMetrics,

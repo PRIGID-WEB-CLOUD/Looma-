@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Post, UserProfile } from '../types/social';
+import type { Post, UserProfile } from '../src/types/social';
 import {
   computeWorkspaceMetrics,
   filterAdminMembers,

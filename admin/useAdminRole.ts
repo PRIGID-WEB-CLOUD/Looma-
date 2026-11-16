@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { db } from '../src/services/firebase';
 import {
   resolveAdminAuthorization,
   type AdminAuthorizationResult,
