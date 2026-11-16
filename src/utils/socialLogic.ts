@@ -160,6 +160,13 @@ export function countUnreadNotifications(
   return notifications.reduce((acc, item) => acc + (item.read ? 0 : 1), 0);
 }
 
+export function deleteNotificationItem(
+  notifications: AppNotification[],
+  notificationId: string
+): AppNotification[] {
+  return notifications.filter((item) => item.id !== notificationId);
+}
+
 export function formatRelativeTime(
   timestampMs: number,
   nowMs: number = Date.now()
@@ -190,6 +197,14 @@ export function formatLastMessageSnippet(
       return `🎬 GIF: ${gifData.caption}`;
     }
     return '🎬 GIF';
+  }
+  const callData = parseCallMessage(clean);
+  if (callData || clean.startsWith('[call:') || clean.startsWith('call:')) {
+    return callData?.isAudioOnly ? '📞 Voice call' : '📹 Video call';
+  }
+  const missedCallData = parseMissedCallMessage(clean);
+  if (missedCallData || clean.startsWith('[missed-call:') || clean.startsWith('missed-call:')) {
+    return missedCallData?.isAudioOnly ? '📞 Missed voice call' : '📹 Missed video call';
   }
   return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
 }
@@ -235,18 +250,33 @@ export function resolvePublicProfile(
 export function toggleFollowState(
   followedIds: string[],
   targetUid: string,
-  currentFollowingCount: number
+  currentFollowingCount: number,
+  currentUid?: string
 ): { followedIds: string[]; isFollowing: boolean; followingCount: number } {
-  const already = followedIds.includes(targetUid);
+  const cleanTarget = (targetUid || '').trim();
+  const cleanSelf = (currentUid || '').trim();
+  const sanitizedFollowed = cleanSelf
+    ? followedIds.filter((id) => id !== cleanSelf)
+    : followedIds;
+
+  if (!cleanTarget || (cleanSelf && cleanTarget === cleanSelf)) {
+    return {
+      followedIds: sanitizedFollowed,
+      isFollowing: false,
+      followingCount: Math.max(0, cleanSelf ? sanitizedFollowed.length : currentFollowingCount),
+    };
+  }
+
+  const already = sanitizedFollowed.includes(cleanTarget);
   if (already) {
     return {
-      followedIds: followedIds.filter((id) => id !== targetUid),
+      followedIds: sanitizedFollowed.filter((id) => id !== cleanTarget),
       isFollowing: false,
       followingCount: Math.max(0, currentFollowingCount - 1),
     };
   }
   return {
-    followedIds: [...followedIds, targetUid],
+    followedIds: [...sanitizedFollowed, cleanTarget],
     isFollowing: true,
     followingCount: currentFollowingCount + 1,
   };
@@ -1002,14 +1032,39 @@ export const POPULAR_HASHTAGS: string[] = [
   'zurich',
 ];
 
+export function normalizeHashtag(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^#+/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 40);
+}
+
+export function mergeSavedHashtags(
+  existing: string[],
+  incoming: string[]
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [...incoming, ...existing]) {
+    const clean = normalizeHashtag(raw);
+    if (clean && !seen.has(clean)) {
+      seen.add(clean);
+      result.push(clean);
+    }
+  }
+  return result;
+}
+
 export function extractHashtags(text: string): string[] {
   if (!text) return [];
   const regex = /(?:^|\s)#([a-zA-Z0-9_]+)/g;
   const matches: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = regex.exec(text)) !== null) {
-    const tag = m[1].toLowerCase();
-    if (!matches.includes(tag)) {
+    const tag = normalizeHashtag(m[1]);
+    if (tag && !matches.includes(tag)) {
       matches.push(tag);
     }
   }
@@ -1140,11 +1195,40 @@ export function filterHashtags(
   query: string,
   availableTags: string[] = POPULAR_HASHTAGS
 ): string[] {
-  const clean = query.trim().toLowerCase().replace(/^#/, '');
-  const combined = Array.from(new Set([...availableTags, ...POPULAR_HASHTAGS]));
+  const clean = normalizeHashtag(query);
+  const combined = mergeSavedHashtags(POPULAR_HASHTAGS, availableTags);
   return combined
-    .filter((tag) => (!clean ? true : tag.toLowerCase().includes(clean)))
-    .slice(0, 6);
+    .filter((tag) => (!clean ? true : tag.includes(clean)))
+    .slice(0, 8);
+}
+
+export function formatSharedPostMessage(post: Post): string {
+  const cleanCaption = post.caption.trim();
+  const titleHint = sanitizeMediaTitle(post.mediaTitle);
+  const summary = cleanCaption
+    ? cleanCaption.length > 180
+      ? `${cleanCaption.slice(0, 177).trimEnd()}...`
+      : cleanCaption
+    : titleHint || post.linkUrl?.trim() || `${post.category} post`;
+  return `Shared post from ${post.authorName} (@${post.authorHandle}): "${summary}"`;
+}
+
+export function buildPostSharePayload(post: Post, originUrl: string = ''): {
+  title: string;
+  text: string;
+  url: string;
+} {
+  const cleanCaption = post.caption.trim();
+  const text = cleanCaption
+    ? `${post.authorName} (@${post.authorHandle}): "${cleanCaption.slice(0, 200)}"`
+    : `${post.authorName} (@${post.authorHandle}) shared a ${post.category.toLowerCase()} post on Looma.`;
+  const base = originUrl ? originUrl.replace(/\/+$/, '') : '';
+  const url = base ? `${base}/feed?post=${encodeURIComponent(post.id)}` : `/feed?post=${encodeURIComponent(post.id)}`;
+  return {
+    title: `${post.authorName} on Looma`,
+    text,
+    url,
+  };
 }
 
 export const MAX_GROUP_MEMBERS = 10;
@@ -1679,6 +1763,70 @@ export function parseGifMessage(text: string): GifMessagePayload | null {
   }
 
   return null;
+}
+
+export interface CallMessagePayload {
+  callId: string;
+  isAudioOnly: boolean;
+  title: string;
+}
+
+export function formatCallMessage(
+  callId: string,
+  isAudioOnly: boolean,
+  title: string = 'Looma Call'
+): string {
+  return `[call:${callId.trim()}:${isAudioOnly ? 'voice' : 'video'}:${title.trim()}]`;
+}
+
+export function parseCallMessage(text: string): CallMessagePayload | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const clean = trimmed.replace(/^[\[]+|[\]]+$/g, '');
+  if (!clean.startsWith('call:')) return null;
+  const parts = clean.slice(5).split(':');
+  if (parts.length < 2) return null;
+  const callId = parts[0].trim();
+  const mode = parts[1].trim().toLowerCase();
+  const title = parts.slice(2).join(':').trim() || 'Looma Call';
+  if (!callId) return null;
+  return {
+    callId,
+    isAudioOnly: mode === 'voice' || mode === 'audio',
+    title,
+  };
+}
+
+export interface MissedCallMessagePayload {
+  callId: string;
+  isAudioOnly: boolean;
+  title: string;
+}
+
+export function formatMissedCallMessage(
+  callId: string,
+  isAudioOnly: boolean,
+  title: string = 'Looma Call'
+): string {
+  return `[missed-call:${callId.trim()}:${isAudioOnly ? 'voice' : 'video'}:${title.trim()}]`;
+}
+
+export function parseMissedCallMessage(text: string): MissedCallMessagePayload | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const clean = trimmed.replace(/^[\[]+|[\]]+$/g, '');
+  if (!clean.startsWith('missed-call:')) return null;
+  const parts = clean.slice(12).split(':');
+  if (parts.length < 2) return null;
+  const callId = parts[0].trim();
+  const mode = parts[1].trim().toLowerCase();
+  const title = parts.slice(2).join(':').trim() || 'Looma Call';
+  if (!callId) return null;
+  return {
+    callId,
+    isAudioOnly: mode === 'voice' || mode === 'audio',
+    title,
+  };
 }
 
 export interface CuratedGif {

@@ -1,4 +1,4 @@
-import { Bell, CheckCheck } from 'lucide-react';
+import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import type { AppNotification, UserProfile } from '../types/social';
 import { formatRelativeTime } from '../utils/socialLogic';
 import type { PushPermissionState } from '../services/notifications';
@@ -11,6 +11,8 @@ interface NotificationsViewProps {
   onEnablePush: () => Promise<PushPermissionState>;
   onMarkRead: (id: string) => void;
   onMarkAllRead: () => void;
+  onDeleteNotification: (id: string) => Promise<void> | void;
+  onClearAllNotifications?: () => Promise<void> | void;
 }
 
 export function NotificationsView({
@@ -20,6 +22,8 @@ export function NotificationsView({
   onEnablePush,
   onMarkRead,
   onMarkAllRead,
+  onDeleteNotification,
+  onClearAllNotifications,
 }: NotificationsViewProps) {
   return (
     <section
@@ -60,6 +64,16 @@ export function NotificationsView({
             <CheckCheck className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Mark all read</span>
           </button>
+          {notifications.length > 0 && onClearAllNotifications && (
+            <button
+              type="button"
+              onClick={() => onClearAllNotifications()}
+              className="min-h-[40px] px-3.5 rounded-xl border border-red-200 dark:border-red-900/60 text-xs font-medium text-red-600 dark:text-red-400 flex items-center gap-1.5 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Clear all</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -71,40 +85,54 @@ export function NotificationsView({
           </div>
         ) : (
           notifications.map((notif) => (
-            <button
+            <div
               key={notif.id}
-              type="button"
-              onClick={() => onMarkRead(notif.id)}
-              className={`w-full p-4 flex items-start gap-3.5 text-left transition-colors cursor-pointer ${
+              data-testid={`notification-item-${notif.id}`}
+              className={`p-4 flex items-start gap-3 transition-colors ${
                 notif.read
                   ? 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                   : 'bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-50 dark:hover:bg-blue-950/30'
               }`}
             >
-              <Avatar
-                src={notif.actorAvatar}
-                name={notif.actorName}
-                size="md"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {notif.title}
+              <button
+                type="button"
+                onClick={() => onMarkRead(notif.id)}
+                className="flex-1 min-w-0 flex items-start gap-3.5 text-left cursor-pointer"
+              >
+                <Avatar
+                  src={notif.actorAvatar}
+                  name={notif.actorName}
+                  size="md"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {notif.title}
+                    </p>
+                    <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+                      {formatRelativeTime(notif.createdAtMs)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    {notif.body}
                   </p>
-                  <span className="text-xs text-slate-400 shrink-0 tabular-nums">
-                    {formatRelativeTime(notif.createdAtMs)}
-                  </span>
                 </div>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  {notif.body}
-                </p>
-              </div>
-              {!notif.read && (
-                <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 shrink-0">
-                  Unread
-                </span>
-              )}
-            </button>
+                {!notif.read && (
+                  <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 shrink-0">
+                    Unread
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onDeleteNotification(notif.id)}
+                aria-label={`Delete activity: ${notif.title}`}
+                className="min-h-[36px] min-w-[36px] rounded-xl flex items-center justify-center text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer shrink-0"
+              >
+                <Trash2 className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
           ))
         )}
       </div>

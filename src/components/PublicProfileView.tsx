@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, MapPin, MessageSquare, Phone, UserCheck, UserPlus, Users, Video } from 'lucide-react';
-import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
+import type { ChatThread, ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
 import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaGalleryGrid } from './MediaGalleryGrid';
@@ -20,6 +20,7 @@ interface PublicProfileViewProps {
   likedPostIds: string[];
   bookmarkedPostIds: string[];
   commentsByPost: Record<string, PostComment[]>;
+  shareThreads?: ChatThread[];
   backLabel?: string;
   onToggleFollow: (uid: string) => void;
   onMessage: (creator: UserProfile) => void;
@@ -31,6 +32,8 @@ interface PublicProfileViewProps {
   onAddComment: (post: Post, text: string) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
+  onShareToStory?: (post: Post) => Promise<unknown> | void;
+  onShareToChat?: (thread: ChatThread, post: Post) => Promise<void>;
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
 }
@@ -47,6 +50,7 @@ export function PublicProfileView({
   likedPostIds,
   bookmarkedPostIds,
   commentsByPost,
+  shareThreads = [],
   backLabel = 'Back to Feed',
   onToggleFollow,
   onMessage,
@@ -58,11 +62,14 @@ export function PublicProfileView({
   onAddComment,
   onDeletePost,
   onDeleteComment,
+  onShareToStory,
+  onShareToChat,
   onSelectHashtag,
   onMentionClick,
 }: PublicProfileViewProps) {
   const [subTab, setSubTab] = useState<'posts' | 'media'>('posts');
   const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
+  const isSelf = Boolean(currentUserId) && creator.uid === currentUserId;
   const creatorPosts = posts.filter((p) => p.authorId === creator.uid);
   const creatorMediaEntries = useMemo(() => filterMediaPosts(creatorPosts), [creatorPosts]);
   const displayedFollowers =
@@ -142,58 +149,62 @@ export function PublicProfileView({
               <span>Connections</span>
             </button>
 
-            <button
-              type="button"
-              aria-pressed={isFollowing}
-              onClick={() => onToggleFollow(creator.uid)}
-              className={`min-h-[42px] px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
-                isFollowing
-                  ? 'border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
-                  : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white'
-              }`}
-            >
-              {isFollowing ? (
-                <>
-                  <UserCheck className="w-4 h-4" aria-hidden="true" />
-                  <span>Following</span>
-                </>
-              ) : (
-                <>
-                  <UserPlus className="w-4 h-4" aria-hidden="true" />
-                  <span>Follow</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onMessage(creator)}
-              className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <MessageSquare className="w-4 h-4" aria-hidden="true" />
-              <span>Message</span>
-            </button>
-
-            {onStartCallWithUser && (
+            {!isSelf && (
               <>
                 <button
                   type="button"
-                  onClick={() => onStartCallWithUser(creator, true)}
-                  aria-label={`Audio call with ${creator.displayName}`}
-                  className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  aria-pressed={isFollowing}
+                  onClick={() => onToggleFollow(creator.uid)}
+                  className={`min-h-[42px] px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    isFollowing
+                      ? 'border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
+                      : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white'
+                  }`}
                 >
-                  <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-                  <span>Audio</span>
+                  {isFollowing ? (
+                    <>
+                      <UserCheck className="w-4 h-4" aria-hidden="true" />
+                      <span>Following</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" aria-hidden="true" />
+                      <span>Follow</span>
+                    </>
+                  )}
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => onStartCallWithUser(creator, false)}
-                  aria-label={`Video call with ${creator.displayName}`}
-                  className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  onClick={() => onMessage(creator)}
+                  className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
-                  <Video className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Video</span>
+                  <MessageSquare className="w-4 h-4" aria-hidden="true" />
+                  <span>Message</span>
                 </button>
+
+                {onStartCallWithUser && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onStartCallWithUser(creator, true)}
+                      aria-label={`Audio call with ${creator.displayName}`}
+                      className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                      <span>Audio</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onStartCallWithUser(creator, false)}
+                      aria-label={`Video call with ${creator.displayName}`}
+                      className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Video className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                      <span>Video</span>
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -299,11 +310,14 @@ export function PublicProfileView({
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}
+              shareThreads={shareThreads}
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
+              onShareToStory={onShareToStory}
+              onShareToChat={onShareToChat}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}
               onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}

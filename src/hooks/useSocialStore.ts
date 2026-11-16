@@ -82,14 +82,20 @@ import {
   computeOtherUserConnections,
   createDirectThreadMemberIds,
   createGroupThreadRecord,
+  deleteNotificationItem,
   DIRECT_CHAT_SHARED_TITLE,
+  extractHashtags,
   extractMentions,
   formatChatPushPayload,
+  formatMissedCallMessage,
   formatVoiceNote,
   groupStoriesByAuthor,
   isAuthorizedSession,
   matchesDirectThreadParticipants,
+  mergeSavedHashtags,
   normalizeAssetUrl,
+  normalizeHashtag,
+  POPULAR_HASHTAGS,
   POST_CATEGORIES,
   promoteGroupAdminState,
   removeGroupParticipantState,
@@ -127,6 +133,7 @@ const STORAGE_KEYS = {
   MESSAGES: 'looma_messages_v1',
   MUTED_CHATS: 'looma_muted_chats_v1',
   NOTIFICATIONS: 'looma_notifications_v1',
+  HASHTAGS: 'looma_saved_hashtags_v1',
   THEME: 'looma_theme_v1',
   PUSH_ENABLED: 'looma_push_enabled_v1',
   TERMS_CONSENT: 'looma_terms_consent_v1',
@@ -327,12 +334,12 @@ export function useSocialStore() {
   );
   const [followedUserIds, setFollowedUserIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.FOLLOWED_IDS, []).filter(
-      (id) => !isDemoUserId(id)
+      (id) => !isDemoUserId(id) && id !== profile.uid
     )
   );
   const [followerUserIds, setFollowerUserIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.FOLLOWER_IDS, []).filter(
-      (id) => !isDemoUserId(id)
+      (id) => !isDemoUserId(id) && id !== profile.uid
     )
   );
   const hasRemoteFollowingRef = useRef(false);
@@ -478,6 +485,9 @@ export function useSocialStore() {
       readStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, [])
     )
   );
+  const [savedHashtags, setSavedHashtags] = useState<string[]>(() =>
+    mergeSavedHashtags([], readStorage<string[]>(STORAGE_KEYS.HASHTAGS, []))
+  );
 
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -607,6 +617,7 @@ export function useSocialStore() {
       writeStorage(STORAGE_KEYS.MESSAGES, messagesByChat);
       writeStorage(STORAGE_KEYS.NOTIFICATIONS, notifications);
       writeStorage(STORAGE_KEYS.STORIES, localStories);
+      writeStorage(STORAGE_KEYS.HASHTAGS, savedHashtags);
     }
     writeStorage(STORAGE_KEYS.VIEWED_STORIES, viewedStoryIds);
   }, [
@@ -618,6 +629,7 @@ export function useSocialStore() {
     messagesByChat,
     notifications,
     localStories,
+    savedHashtags,
     viewedStoryIds,
     firebaseUser,
   ]);
@@ -1200,7 +1212,7 @@ export function useSocialStore() {
             createdAtMs: timestampToMs(d.createdAt),
           };
         });
-        if (mapped.length > 0) {
+        if (!snapshot.metadata.fromCache || mapped.length > 0) {
           setNotifications(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
         }
       },
@@ -1308,7 +1320,9 @@ export function useSocialStore() {
     const unsubFollowing = onSnapshot(
       followingRef,
       (snapshot) => {
-        const remoteIds = snapshot.docs.map((d) => d.id);
+        const remoteIds = snapshot.docs
+          .map((d) => d.id)
+          .filter((id) => Boolean(id) && id !== firebaseUser.uid);
         if (remoteIds.length > 0) {
           hasRemoteFollowingRef.current = true;
           setFollowedUserIds(remoteIds);
@@ -1335,10 +1349,14 @@ export function useSocialStore() {
     const unsubFollowers = onSnapshot(
       followersRef,
       (snapshot) => {
-        const remoteFollowerIds = snapshot.docs.map((d) => d.id);
+        const remoteFollowerIds = snapshot.docs
+          .map((d) => d.id)
+          .filter((id) => Boolean(id) && id !== firebaseUser.uid);
         if (remoteFollowerIds.length > 0) {
           setFollowerUserIds((prev) => {
-            const merged = Array.from(new Set([...remoteFollowerIds, ...prev]));
+            const merged = Array.from(
+              new Set([...remoteFollowerIds, ...prev])
+            ).filter((id) => id !== firebaseUser.uid);
             writeStorage(STORAGE_KEYS.FOLLOWER_IDS, merged);
             return merged;
           });
@@ -1437,6 +1455,29 @@ export function useSocialStore() {
     syncOwnPresence();
     const presenceInterval = window.setInterval(syncOwnPresence, 45_000);
 
+    const hashtagsQuery = query(
+      collection(db, 'hashtags'),
+      where('tag', '!=', '')
+    );
+    const unsubHashtags = onSnapshot(
+      hashtagsQuery,
+      (snapshot) => {
+        const remoteTags = snapshot.docs
+          .map((d) => String(d.data().tag || d.id || ''))
+          .filter(Boolean);
+        if (remoteTags.length > 0) {
+          setSavedHashtags((prev) => {
+            const next = mergeSavedHashtags(prev, remoteTags);
+            writeStorage(STORAGE_KEYS.HASHTAGS, next);
+            return next;
+          });
+        }
+      },
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+      }
+    );
+
     return () => {
       window.clearInterval(presenceInterval);
       unsubOwnProfile();
@@ -1450,6 +1491,7 @@ export function useSocialStore() {
       unsubFollowers();
       unsubPresence();
       unsubCalls();
+      unsubHashtags();
     };
   }, [authReady, firebaseUser]);
 
@@ -2075,6 +2117,61 @@ export function useSocialStore() {
     [profile.avatarUrl, profile.uid, triggerNotification, updateProfile]
   );
 
+  const saveHashtag = useCallback(
+    async (rawTag: string) => {
+      const cleanTag = normalizeHashtag(rawTag);
+      if (!cleanTag) return;
+      const alreadyExists =
+        POPULAR_HASHTAGS.includes(cleanTag) || savedHashtags.includes(cleanTag);
+      if (alreadyExists) return;
+
+      setSavedHashtags((prev) => {
+        const next = mergeSavedHashtags(prev, [cleanTag]);
+        writeStorage(STORAGE_KEYS.HASHTAGS, next);
+        return next;
+      });
+
+      if (firebaseUser) {
+        await setDoc(doc(db, 'hashtags', cleanTag), {
+          tag: cleanTag,
+          createdBy: firebaseUser.uid,
+          createdAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    },
+    [firebaseUser, savedHashtags]
+  );
+
+  const saveHashtagsFromText = useCallback(
+    async (text: string) => {
+      const extracted = extractHashtags(text);
+      if (extracted.length === 0) return;
+      const newTags = extracted.filter(
+        (tag) => !POPULAR_HASHTAGS.includes(tag) && !savedHashtags.includes(tag)
+      );
+      if (newTags.length === 0) return;
+
+      setSavedHashtags((prev) => {
+        const next = mergeSavedHashtags(prev, newTags);
+        writeStorage(STORAGE_KEYS.HASHTAGS, next);
+        return next;
+      });
+
+      if (firebaseUser) {
+        await Promise.all(
+          newTags.map((tag) =>
+            setDoc(doc(db, 'hashtags', tag), {
+              tag,
+              createdBy: firebaseUser.uid,
+              createdAt: serverTimestamp(),
+            }).catch(() => {})
+          )
+        );
+      }
+    },
+    [firebaseUser, savedHashtags]
+  );
+
   const createPost = useCallback(
     async (
       caption: string,
@@ -2143,6 +2240,8 @@ export function useSocialStore() {
         broadcastRef.current?.postMessage({ type: 'post:new', post: newPost });
       }
 
+      void saveHashtagsFromText(newPost.caption);
+
       await triggerNotification({
         actorId: profile.uid,
         actorName: profile.displayName,
@@ -2170,7 +2269,7 @@ export function useSocialStore() {
 
       return newPost;
     },
-    [firebaseUser, profile, triggerNotification]
+    [firebaseUser, profile, requireAuthorized, saveHashtagsFromText, triggerNotification]
   );
 
   const toggleLike = useCallback(
@@ -2993,11 +3092,12 @@ export function useSocialStore() {
   const toggleFollowUser = useCallback(
     (targetUid: string) => {
       if (!isAuthorized) return;
-      if (!targetUid || targetUid === profile.uid) return;
+      if (!targetUid || targetUid === profile.uid || targetUid === firebaseUser?.uid) return;
       const result = toggleFollowState(
         followedUserIds,
         targetUid,
-        followedUserIds.length
+        followedUserIds.length,
+        profile.uid
       );
       hasRemoteFollowingRef.current = true;
       setFollowedUserIds(result.followedIds);
@@ -3051,7 +3151,7 @@ export function useSocialStore() {
         }).catch(() => {});
       }
     },
-    [firebaseUser, followedUserIds, profile.uid]
+    [firebaseUser, followedUserIds, isAuthorized, profile.uid]
   );
 
   const fetchOtherUserConnections = useCallback(
@@ -3151,6 +3251,57 @@ export function useSocialStore() {
           );
         });
       batch.commit().catch(() => {});
+    }
+  }, [firebaseUser, notifications]);
+
+  const deleteNotification = useCallback(
+    async (notificationId: string) => {
+      if (!notificationId) return;
+      setNotifications((prev) => {
+        const next = deleteNotificationItem(prev, notificationId);
+        if (!firebaseUser) {
+          writeStorage(STORAGE_KEYS.NOTIFICATIONS, next);
+        }
+        return next;
+      });
+      if (firebaseUser) {
+        const path = `users/${firebaseUser.uid}/notifications/${notificationId}`;
+        try {
+          await deleteDoc(
+            doc(db, 'users', firebaseUser.uid, 'notifications', notificationId)
+          );
+        } catch (err) {
+          if (!isTransientFirestoreError(err)) {
+            handleFirestoreError(err, OperationType.DELETE, path);
+          }
+        }
+      }
+    },
+    [firebaseUser]
+  );
+
+  const clearAllNotifications = useCallback(async () => {
+    const existing = notifications;
+    setNotifications([]);
+    if (!firebaseUser) {
+      writeStorage(STORAGE_KEYS.NOTIFICATIONS, []);
+      return;
+    }
+    if (existing.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      existing.forEach((n) => {
+        batch.delete(doc(db, 'users', firebaseUser.uid, 'notifications', n.id));
+      });
+      await batch.commit();
+    } catch (err) {
+      if (!isTransientFirestoreError(err)) {
+        handleFirestoreError(
+          err,
+          OperationType.DELETE,
+          `users/${firebaseUser.uid}/notifications`
+        );
+      }
     }
   }, [firebaseUser, notifications]);
 
@@ -3416,15 +3567,32 @@ export function useSocialStore() {
                 : u?.avatarUrl || '',
           isMuted: false,
           isVideoOff: invite.isAudioOnly,
-          connectionState: uid === profile.uid || uid === invite.callerId ? 'joined' : 'invited',
+          connectionState: 'joined',
         };
       });
 
       if (firebaseUser) {
-        await updateDoc(doc(db, 'calls', invite.callId), {
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'calls', invite.callId), {
           status: 'active',
           updatedAt: serverTimestamp(),
-        }).catch(() => {});
+        });
+        batch.set(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
+          callId: invite.callId,
+          uid: firebaseUser.uid,
+          displayName: profile.displayName,
+          avatarUrl: profile.avatarUrl,
+          cfSessionId: '',
+          audioTrackName: '',
+          videoTrackName: '',
+          isMuted: false,
+          isVideoOff: invite.isAudioOnly,
+          isScreenSharing: false,
+          state: 'joined',
+          memberIds: invite.memberIds,
+          updatedAt: serverTimestamp(),
+        });
+        await batch.commit().catch(() => {});
       }
 
       setCallSession({
@@ -3452,7 +3620,8 @@ export function useSocialStore() {
       declinedCallIdsRef.current.add(invite.callId);
       setIncomingCallInvite(null);
       if (firebaseUser) {
-        await setDoc(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'calls', invite.callId, 'peers', firebaseUser.uid), {
           callId: invite.callId,
           uid: firebaseUser.uid,
           displayName: profile.displayName,
@@ -3466,13 +3635,35 @@ export function useSocialStore() {
           state: 'declined',
           memberIds: invite.memberIds,
           updatedAt: serverTimestamp(),
-        }).catch(() => {});
-        if (invite.memberIds.length <= 2) {
-          await updateDoc(doc(db, 'calls', invite.callId), {
-            status: 'ended',
+        });
+        batch.update(doc(db, 'calls', invite.callId), {
+          status: 'ended',
+          updatedAt: serverTimestamp(),
+        });
+        if (invite.chatId) {
+          const missedMsgId = makeSafeId('msg_missed');
+          const missedText = formatMissedCallMessage(
+            invite.callId,
+            invite.isAudioOnly,
+            invite.title
+          );
+          batch.set(doc(db, 'chats', invite.chatId, 'messages', missedMsgId), {
+            id: missedMsgId,
+            chatId: invite.chatId,
+            senderId: firebaseUser.uid,
+            senderName: profile.displayName,
+            senderAvatar: profile.avatarUrl,
+            text: missedText,
+            memberIds: invite.memberIds,
+            createdAt: serverTimestamp(),
+          });
+          batch.update(doc(db, 'chats', invite.chatId), {
+            lastMessageText: missedText.slice(0, 400),
+            lastMessageSenderId: firebaseUser.uid,
             updatedAt: serverTimestamp(),
-          }).catch(() => {});
+          });
         }
+        await batch.commit().catch(() => {});
       }
     },
     [firebaseUser, profile.avatarUrl, profile.displayName]
@@ -3574,7 +3765,23 @@ export function useSocialStore() {
   const endCall = useCallback(() => {
     const active = callSessionRef.current;
     setCallSession(null);
-    if (firebaseUser && active?.callId) {
+    if (!active?.callId) return;
+
+    const otherJoined = active.participants.some(
+      (p) => p.uid !== profile.uid && p.connectionState === 'joined'
+    );
+    const shouldLogMissed =
+      active.callerId === profile.uid &&
+      active.status === 'ringing' &&
+      !otherJoined &&
+      active.participants.length > 1 &&
+      Boolean(active.chatId);
+
+    const missedText = shouldLogMissed
+      ? formatMissedCallMessage(active.callId, active.isAudioOnly, active.title)
+      : '';
+
+    if (firebaseUser) {
       const memberIds = active.participants.map((p) => p.uid);
       const safeMembers = memberIds.includes(firebaseUser.uid)
         ? memberIds
@@ -3595,17 +3802,65 @@ export function useSocialStore() {
         updatedAt: serverTimestamp(),
       }).catch(() => {});
 
-      const otherJoined = active.participants.some(
-        (p) => p.uid !== firebaseUser.uid && p.connectionState === 'joined'
-      );
       if (active.callerId === firebaseUser.uid || !otherJoined) {
         updateDoc(doc(db, 'calls', active.callId), {
           status: 'ended',
           updatedAt: serverTimestamp(),
         }).catch(() => {});
       }
+
+      if (shouldLogMissed && missedText) {
+        const missedMsgId = makeSafeId('msg_missed');
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'chats', active.chatId, 'messages', missedMsgId), {
+          id: missedMsgId,
+          chatId: active.chatId,
+          senderId: firebaseUser.uid,
+          senderName: profile.displayName,
+          senderAvatar: profile.avatarUrl,
+          text: missedText,
+          memberIds: safeMembers.slice(0, 10),
+          createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'chats', active.chatId), {
+          lastMessageText: missedText.slice(0, 400),
+          lastMessageSenderId: firebaseUser.uid,
+          updatedAt: serverTimestamp(),
+        });
+        batch.commit().catch(() => {});
+      }
+    } else if (shouldLogMissed && missedText) {
+      const now = Date.now();
+      const missedMsg: ChatMessage = {
+        id: makeSafeId('msg_missed'),
+        chatId: active.chatId,
+        senderId: profile.uid,
+        senderName: profile.displayName,
+        senderAvatar: profile.avatarUrl,
+        text: missedText,
+        memberIds: Array.from(
+          new Set([profile.uid, ...active.participants.map((p) => p.uid)])
+        ),
+        createdAtMs: now,
+      };
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [active.chatId]: [...(prev[active.chatId] || []), missedMsg],
+      }));
+      setRawThreads((prev) =>
+        prev.map((t) =>
+          t.id === active.chatId
+            ? {
+                ...t,
+                lastMessageText: missedText,
+                lastMessageSenderId: profile.uid,
+                updatedAtMs: now,
+              }
+            : t
+        )
+      );
     }
-  }, [firebaseUser, profile.avatarUrl, profile.displayName]);
+  }, [firebaseUser, profile.avatarUrl, profile.displayName, profile.uid]);
 
   const toggleCallMute = useCallback(() => {
     setCallSession((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
@@ -3709,6 +3964,10 @@ export function useSocialStore() {
     triggerNotification,
     markNotificationRead,
     markAllNotificationsRead,
+    deleteNotification,
+    clearAllNotifications,
+    savedHashtags,
+    saveHashtag,
     callSession,
     incomingCallInvite,
     startCall,

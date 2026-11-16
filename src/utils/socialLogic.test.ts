@@ -65,6 +65,13 @@ import {
   formatLastMessageSnippet,
   filterGifs,
   CURATED_GIFS,
+  deleteNotificationItem,
+  normalizeHashtag,
+  mergeSavedHashtags,
+  formatSharedPostMessage,
+  buildPostSharePayload,
+  formatMissedCallMessage,
+  parseMissedCallMessage,
 } from './socialLogic';
 import type {
   AppNotification,
@@ -1257,5 +1264,98 @@ test('DM participant identity mapping resolves each viewer to the other particip
   assert.equal(resolvedGroup.title, 'Design Crit');
   assert.equal(resolvedGroup.partnerHandle, '2 members');
   assert.equal(resolvedGroup.partnerAvatar, '/images/blake.jpg');
+});
+
+test('toggleFollowState blocks self-following and strips accidental self ID', () => {
+  const selfAttempt = toggleFollowState(['creator_maya'], 'uid_me', 1, 'uid_me');
+  assert.equal(selfAttempt.isFollowing, false);
+  assert.deepEqual(selfAttempt.followedIds, ['creator_maya']);
+  assert.equal(selfAttempt.followingCount, 1);
+
+  const accidentalSelfCleaned = toggleFollowState(['uid_me', 'creator_maya'], 'uid_me', 2, 'uid_me');
+  assert.equal(accidentalSelfCleaned.isFollowing, false);
+  assert.deepEqual(accidentalSelfCleaned.followedIds, ['creator_maya']);
+  assert.equal(accidentalSelfCleaned.followingCount, 1);
+
+  const validOther = toggleFollowState(['creator_maya'], 'creator_kenji', 1, 'uid_me');
+  assert.equal(validOther.isFollowing, true);
+  assert.deepEqual(validOther.followedIds, ['creator_maya', 'creator_kenji']);
+  assert.equal(validOther.followingCount, 2);
+});
+
+test('deleteNotificationItem removes the specified notification cleanly', () => {
+  const items: AppNotification[] = [
+    {
+      id: 'n1',
+      recipientId: 'u1',
+      actorId: 'u2',
+      actorName: 'Kenji',
+      actorAvatar: '',
+      type: 'like',
+      title: 'New like',
+      body: 'Liked your post',
+      targetPostId: 'p1',
+      read: false,
+      createdAtMs: 100,
+    },
+    {
+      id: 'n2',
+      recipientId: 'u1',
+      actorId: 'u3',
+      actorName: 'Maya',
+      actorAvatar: '',
+      type: 'follow',
+      title: 'New follower',
+      body: 'Followed you',
+      targetPostId: '',
+      read: true,
+      createdAtMs: 200,
+    },
+  ];
+  const remaining = deleteNotificationItem(items, 'n1');
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].id, 'n2');
+  assert.equal(deleteNotificationItem(remaining, 'nonexistent').length, 1);
+});
+
+test('normalizeHashtag, mergeSavedHashtags, and filterHashtags persist and suggest newly created tags', () => {
+  assert.equal(normalizeHashtag(' #MyCustom_Tag! '), 'mycustom_tag');
+  assert.equal(normalizeHashtag('#'), '');
+
+  const merged = mergeSavedHashtags(['architecture', 'MyCustomTag'], ['#custom_two', 'ARCHITECTURE']);
+  assert.deepEqual(merged, ['custom_two', 'architecture', 'mycustomtag']);
+
+  const suggestions = filterHashtags('mycust', merged);
+  assert.equal(suggestions[0], 'mycustomtag');
+  assert.equal(suggestions.includes('architecture'), false);
+});
+
+test('formatSharedPostMessage, buildPostSharePayload, and missed call message formatting/parsing work reliably', () => {
+  const post: Post = {
+    ...makePost(1, 'Architecture'),
+    authorName: 'Maya Lin',
+    authorHandle: 'maya.lin',
+    caption: 'Timber pavilion study in Kyoto',
+  };
+  const chatShare = formatSharedPostMessage(post);
+  assert.equal(
+    chatShare,
+    'Shared post from Maya Lin (@maya.lin): "Timber pavilion study in Kyoto"'
+  );
+
+  const sharePayload = buildPostSharePayload(post, 'https://looma.app/');
+  assert.equal(sharePayload.title, 'Maya Lin on Looma');
+  assert.equal(sharePayload.url, 'https://looma.app/feed?post=post_1');
+  assert.ok(sharePayload.text.includes('Timber pavilion study in Kyoto'));
+
+  const encodedMissed = formatMissedCallMessage('call_123', true, 'Maya Lin');
+  assert.equal(encodedMissed, '[missed-call:call_123:voice:Maya Lin]');
+  const parsedMissed = parseMissedCallMessage(encodedMissed);
+  assert.deepEqual(parsedMissed, {
+    callId: 'call_123',
+    isAudioOnly: true,
+    title: 'Maya Lin',
+  });
+  assert.equal(formatLastMessageSnippet(encodedMissed), '📞 Missed voice call');
 });
 

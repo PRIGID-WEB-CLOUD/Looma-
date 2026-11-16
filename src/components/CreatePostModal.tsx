@@ -14,11 +14,15 @@ import {
 import type { PostCategory, UserProfile } from '../types/social';
 import {
   extractFirstUrl,
+  extractHashtags,
   filterCreatorsForMention,
   filterHashtags,
   getHashtagQueryAtCursor,
   getMentionQueryAtCursor,
+  mergeSavedHashtags,
+  normalizeHashtag,
   parseRichUrl,
+  POPULAR_HASHTAGS,
   POST_CATEGORIES,
   sanitizeMediaTitle,
   sanitizeUploadedFilenameTitle,
@@ -45,6 +49,8 @@ interface CreatePostModalProps {
   open: boolean;
   profile: UserProfile;
   communityUsers?: UserProfile[];
+  savedHashtags?: string[];
+  onSaveHashtag?: (tag: string) => Promise<void> | void;
   onClose: () => void;
   onCreatePost: (
     caption: string,
@@ -58,6 +64,8 @@ export function CreatePostModal({
   open,
   profile,
   communityUsers = [],
+  savedHashtags = [],
+  onSaveHashtag,
   onClose,
   onCreatePost,
 }: CreatePostModalProps) {
@@ -111,11 +119,25 @@ export function CreatePostModal({
     [caption, cursorPos]
   );
 
+  const allKnownHashtags = useMemo(
+    () => mergeSavedHashtags(POPULAR_HASHTAGS, savedHashtags),
+    [savedHashtags]
+  );
+
   const hashtagSuggestions = useMemo(
     () =>
-      activeHashtagQuery ? filterHashtags(activeHashtagQuery.query) : [],
-    [activeHashtagQuery]
+      activeHashtagQuery
+        ? filterHashtags(activeHashtagQuery.query, savedHashtags)
+        : [],
+    [activeHashtagQuery, savedHashtags]
   );
+
+  const newCustomHashtag = useMemo(() => {
+    if (!activeHashtagQuery) return null;
+    const clean = normalizeHashtag(activeHashtagQuery.query);
+    if (!clean) return null;
+    return allKnownHashtags.includes(clean) ? null : clean;
+  }, [activeHashtagQuery, allKnownHashtags]);
 
   const insertMention = (handle: string) => {
     if (!activeMentionQuery) return;
@@ -135,11 +157,16 @@ export function CreatePostModal({
 
   const insertHashtag = (tag: string) => {
     if (!activeHashtagQuery) return;
+    const cleanTag = normalizeHashtag(tag);
+    if (!cleanTag) return;
+    if (!allKnownHashtags.includes(cleanTag)) {
+      void onSaveHashtag?.(cleanTag);
+    }
     const before = caption.slice(0, activeHashtagQuery.startIndex);
     const after = caption.slice(cursorPos);
-    const next = `${before}#${tag} ${after}`;
+    const next = `${before}#${cleanTag} ${after}`;
     setCaption(next);
-    const nextPos = activeHashtagQuery.startIndex + tag.length + 2;
+    const nextPos = activeHashtagQuery.startIndex + cleanTag.length + 2;
     setCursorPos(nextPos);
     setTimeout(() => {
       if (textareaRef.current) {
@@ -257,8 +284,17 @@ export function CreatePostModal({
 
   const handleCaptionChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
+    const nextPos = e.target.selectionStart || 0;
     setCaption(value);
-    setCursorPos(e.target.selectionStart || 0);
+    setCursorPos(nextPos);
+    if (value.length > 0 && /[\s.,!?;:\n]$/.test(value.slice(0, nextPos))) {
+      const completedTags = extractHashtags(value.slice(0, nextPos));
+      for (const tag of completedTags) {
+        if (!allKnownHashtags.includes(tag)) {
+          void onSaveHashtag?.(tag);
+        }
+      }
+    }
     const nextUrl = extractFirstUrl(value);
     if (nextUrl && nextUrl !== dismissedCaptionUrl) {
       setDismissedCaptionUrl(null);
@@ -498,7 +534,7 @@ export function CreatePostModal({
                   )}
 
                   {/* Hashtag Autocomplete Dropdown */}
-                  {activeHashtagQuery && hashtagSuggestions.length > 0 && (
+                  {activeHashtagQuery && (hashtagSuggestions.length > 0 || newCustomHashtag) && (
                     <div
                       data-testid="composer-hashtag-suggestions"
                       className="mt-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-1.5 space-y-0.5 max-h-48 overflow-y-auto"
@@ -506,6 +542,22 @@ export function CreatePostModal({
                       <p className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" /> Add Hashtag
                       </p>
+                      {newCustomHashtag && (
+                        <button
+                          key={`create-${newCustomHashtag}`}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertHashtag(newCustomHashtag)}
+                          className="w-full min-h-[44px] px-2.5 py-2 rounded-xl flex items-center justify-between gap-2 text-left bg-blue-50/70 dark:bg-blue-950/40 hover:bg-blue-100/80 dark:hover:bg-blue-900/50 transition-colors cursor-pointer"
+                        >
+                          <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                            #{newCustomHashtag}
+                          </span>
+                          <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                            Create &amp; save
+                          </span>
+                        </button>
+                      )}
                       {hashtagSuggestions.map((tag) => (
                         <button
                           key={tag}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { MapPin, Settings, Users } from 'lucide-react';
-import type { ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
+import type { ChatThread, ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
 import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaGalleryGrid } from './MediaGalleryGrid';
@@ -17,12 +17,14 @@ interface ProfileViewProps {
   likedPostIds: string[];
   bookmarkedPostIds: string[];
   commentsByPost: Record<string, PostComment[]>;
+  shareThreads?: ChatThread[];
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory: (post: Post) => Promise<unknown> | void;
+  onShareToChat?: (thread: ChatThread, post: Post) => Promise<void>;
   onOpenSettings: () => void;
   onOpenConnections: (tab: ConnectionsTab) => void;
   onAuthorClick: (post: Post) => void;
@@ -39,12 +41,14 @@ export function ProfileView({
   likedPostIds,
   bookmarkedPostIds,
   commentsByPost,
+  shareThreads = [],
   onToggleLike,
   onToggleBookmark,
   onAddComment,
   onDeletePost,
   onDeleteComment,
   onShareToStory,
+  onShareToChat,
   onOpenSettings,
   onOpenConnections,
   onAuthorClick,
@@ -236,12 +240,14 @@ export function ProfileView({
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}
+              shareThreads={shareThreads}
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
               onShareToStory={onShareToStory}
+              onShareToChat={onShareToChat}
               onAuthorClick={onAuthorClick}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}

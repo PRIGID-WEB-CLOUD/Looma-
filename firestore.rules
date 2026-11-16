@@ -310,6 +310,18 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidHashtag(data) {
+      return data.keys().hasAll(['tag', 'createdBy', 'createdAt'])
+        && data.keys().hasOnly(['tag', 'createdBy', 'createdAt'])
+        && data.tag is string
+        && data.tag.size() >= 1
+        && data.tag.size() <= 40
+        && data.tag.matches('^[a-z0-9_]+$')
+        && isValidId(data.createdBy)
+        && data.createdBy == request.auth.uid
+        && data.createdAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
@@ -688,6 +700,17 @@ service cloud.firestore {
           ]);
         allow delete: if false;
       }
+    }
+
+    match /hashtags/{tagId} {
+      allow get: if isVerifiedUser() && isValidId(tagId);
+      allow list: if isVerifiedUser() && resource.data.tag is string && resource.data.tag.size() >= 1;
+      allow create: if isVerifiedUser()
+        && isValidId(tagId)
+        && isValidHashtag(incoming())
+        && incoming().tag == tagId
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
   }
 }

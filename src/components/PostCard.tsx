@@ -9,16 +9,20 @@ import {
   ImageOff,
   Maximize2,
   MessageCircle,
+  MessageSquare,
   Music,
   PictureInPicture2,
   PlusCircle,
   RotateCcw,
+  Search,
   Send,
   Share2,
   Trash2,
+  X,
 } from 'lucide-react';
-import type { Post, PostComment } from '../types/social';
+import type { ChatThread, Post, PostComment } from '../types/social';
 import {
+  buildPostSharePayload,
   canSharePostToStory,
   cyclePlaybackSpeed,
   deriveMediaDownloadName,
@@ -39,12 +43,14 @@ interface PostCardProps {
   isLiked: boolean;
   isBookmarked: boolean;
   comments: PostComment[];
+  shareThreads?: ChatThread[];
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory?: (post: Post) => Promise<unknown> | void;
+  onShareToChat?: (thread: ChatThread, post: Post) => Promise<void>;
   onAuthorClick?: (post: Post) => void;
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
@@ -57,12 +63,14 @@ export function PostCard({
   isLiked,
   isBookmarked,
   comments,
+  shareThreads = [],
   onToggleLike,
   onToggleBookmark,
   onAddComment,
   onDeletePost,
   onDeleteComment,
   onShareToStory,
+  onShareToChat,
   onAuthorClick,
   onSelectHashtag,
   onMentionClick,
@@ -78,7 +86,11 @@ export function PostCard({
   const [mediaRetryNonce, setMediaRetryNonce] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [localViewerOpen, setLocalViewerOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareThreadSearch, setShareThreadSearch] = useState('');
+  const [sharingChatId, setSharingChatId] = useState<string | null>(null);
+  const [sharedChatIds, setSharedChatIds] = useState<string[]>([]);
+  const [shareStatusMessage, setShareStatusMessage] = useState<string | null>(null);
   const [sharingToStory, setSharingToStory] = useState(false);
   const [sharedToStory, setSharedToStory] = useState(false);
   const [confirmingDeletePost, setConfirmingDeletePost] = useState(false);
@@ -117,20 +129,54 @@ export function PostCard({
     }
   };
 
-  const handleShare = async () => {
+  const handleOpenShareModal = () => {
+    setShareStatusMessage(null);
+    setShareThreadSearch('');
+    setShareModalOpen(true);
+  };
+
+  const handleShareToChatThread = async (thread: ChatThread) => {
+    if (!onShareToChat || sharingChatId) return;
+    setSharingChatId(thread.id);
+    setShareStatusMessage(null);
     try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(
-          `${post.authorName}: "${post.caption.slice(0, 100)}"`
-        );
-      }
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
+      await onShareToChat(thread, post);
+      setSharedChatIds((prev) =>
+        prev.includes(thread.id) ? prev : [...prev, thread.id]
+      );
+      setShareStatusMessage(`Shared to ${thread.title}`);
+    } catch (err) {
+      setShareStatusMessage(
+        err instanceof Error ? err.message : 'Unable to share post right now.'
+      );
+    } finally {
+      setSharingChatId(null);
     }
   };
+
+  const handleNativeShare = async () => {
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+      return;
+    }
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      await navigator.share(buildPostSharePayload(post, origin));
+      setShareStatusMessage('Shared via device sheet');
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      setShareStatusMessage('Device share was unavailable.');
+    }
+  };
+
+  const filteredShareThreads = useMemo(() => {
+    const clean = shareThreadSearch.trim().toLowerCase();
+    if (!clean) return shareThreads;
+    return shareThreads.filter(
+      (t) =>
+        t.title.toLowerCase().includes(clean) ||
+        t.partnerHandle.toLowerCase().includes(clean)
+    );
+  }, [shareThreadSearch, shareThreads]);
 
   const handleShareToStory = async () => {
     if (!onShareToStory || sharingToStory) return;
@@ -689,12 +735,12 @@ export function PostCard({
 
           <button
             type="button"
-            onClick={handleShare}
+            onClick={handleOpenShareModal}
             aria-label={`Share post by ${post.authorName}`}
             className="min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <Share2 className="w-4 h-4" aria-hidden="true" />
-            <span>{copied ? 'Copied' : 'Share'}</span>
+            <span>Share</span>
           </button>
 
           <button
@@ -800,6 +846,177 @@ export function PostCard({
               {commentError}
             </p>
           )}
+        </div>
+      )}
+
+      {shareModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Share post by ${post.authorName}`}
+          data-testid="share-post-modal"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Share Post
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Post by {post.authorName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(false)}
+                aria-label="Close share modal"
+                className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3.5 text-xs text-slate-700 dark:text-slate-300">
+                <p className="font-semibold text-slate-900 dark:text-white">
+                  {post.authorName} · @{post.authorHandle}
+                </p>
+                {post.caption && (
+                  <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-400">
+                    {post.caption}
+                  </p>
+                )}
+              </div>
+
+              {(isOwnPost && onShareToStory) ||
+              (typeof navigator !== 'undefined' &&
+                typeof navigator.share === 'function') ? (
+                <div className="flex flex-wrap gap-2">
+                  {isOwnPost && onShareToStory && (
+                    <button
+                      type="button"
+                      disabled={sharingToStory}
+                      onClick={handleShareToStory}
+                      className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <PlusCircle className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                      <span>
+                        {sharingToStory
+                          ? 'Sharing...'
+                          : sharedToStory
+                            ? 'Shared to Story'
+                            : 'Share to Story'}
+                      </span>
+                    </button>
+                  )}
+
+                  {typeof navigator !== 'undefined' &&
+                    typeof navigator.share === 'function' && (
+                      <button
+                        type="button"
+                        onClick={handleNativeShare}
+                        className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Share2 className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                        <span>Share via Device...</span>
+                      </button>
+                    )}
+                </div>
+              ) : null}
+
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Send to Looma Chat
+                  </p>
+                  {shareStatusMessage && (
+                    <span
+                      role="status"
+                      className="text-xs font-semibold text-emerald-600 dark:text-emerald-400"
+                    >
+                      {shareStatusMessage}
+                    </span>
+                  )}
+                </div>
+
+                {shareThreads.length > 4 && (
+                  <div className="relative">
+                    <Search
+                      className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <input
+                      type="text"
+                      value={shareThreadSearch}
+                      onChange={(e) => setShareThreadSearch(e.target.value)}
+                      placeholder="Filter conversations..."
+                      className="w-full min-h-[38px] pl-8 pr-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                  </div>
+                )}
+
+                {!onShareToChat || filteredShareThreads.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 py-3 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                    {shareThreads.length === 0
+                      ? 'Start a chat in Messages to share posts directly with friends.'
+                      : 'No matching conversations found.'}
+                  </p>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                    {filteredShareThreads.map((thread) => {
+                      const alreadySent = sharedChatIds.includes(thread.id);
+                      const isSending = sharingChatId === thread.id;
+                      return (
+                        <div
+                          key={thread.id}
+                          className="p-3 flex items-center justify-between gap-3 bg-white dark:bg-slate-900"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Avatar
+                              src={thread.partnerAvatar}
+                              name={thread.title}
+                              size="sm"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                                {thread.title}
+                              </p>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                {thread.isGroup ? thread.partnerHandle : `@${thread.partnerHandle}`}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={isSending}
+                            onClick={() => handleShareToChatThread(thread)}
+                            className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer disabled:opacity-60 ${
+                              alreadySent
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white'
+                            }`}
+                          >
+                            {alreadySent ? (
+                              <>
+                                <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                                <span>Sent</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="w-3.5 h-3.5" aria-hidden="true" />
+                                <span>{isSending ? 'Sending...' : 'Send'}</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

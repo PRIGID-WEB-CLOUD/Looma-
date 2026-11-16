@@ -202,7 +202,11 @@ export function OnboardingFlow({
     }
   };
 
-  const followedCreators = suggestedCreators.filter((c) =>
+  const otherSuggestedCreators = suggestedCreators.filter(
+    (c) => c.uid !== profile.uid && c.uid !== firebaseUser?.uid
+  );
+
+  const followedCreators = otherSuggestedCreators.filter((c) =>
     followedUserIds.includes(c.uid)
   );
 
@@ -547,13 +551,13 @@ export function OnboardingFlow({
                   </span>
                 </div>
 
-                {suggestedCreators.length === 0 ? (
+                {otherSuggestedCreators.length === 0 ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
                     Other members will appear here once they join Looma.
                   </p>
                 ) : (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                    {suggestedCreators.map((creator) => {
+                    {otherSuggestedCreators.map((creator) => {
                       const isFollowing = followedUserIds.includes(creator.uid);
                       return (
                         <div

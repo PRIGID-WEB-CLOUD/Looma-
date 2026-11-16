@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
+  ChatThread,
   ConnectionsTab,
   Post,
   StoryGroup,
@@ -13,6 +14,7 @@ import {
   countUnreadNotifications,
   formatLastMessageSnippet,
   formatRelativeTime,
+  formatSharedPostMessage,
   getThreadOnlineStatus,
   isUserOnline,
   resolveAppStage,
@@ -390,6 +392,10 @@ export default function App() {
     await store.sendChatMessage(thread, `Story reply: ${text}`);
   };
 
+  const handleSharePostToChat = async (thread: ChatThread, post: Post) => {
+    await store.sendChatMessage(thread, formatSharedPostMessage(post));
+  };
+
   if (activeLegalDoc) {
     return (
       <>
@@ -689,6 +695,7 @@ export default function App() {
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
               bookmarkedPostIds={store.bookmarkedPostIds}
+              shareThreads={store.threads}
               searchQuery={feedSearchQuery}
               onSearchQueryChange={setFeedSearchQuery}
               onOpenComposer={() => setComposerOpen(true)}
@@ -700,6 +707,7 @@ export default function App() {
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
+              onShareToChat={handleSharePostToChat}
               onAuthorClick={(post) =>
                 handleOpenPublicProfile(post.authorId, post)
               }
@@ -725,6 +733,7 @@ export default function App() {
                 likedPostIds={store.likedPostIds}
                 bookmarkedPostIds={store.bookmarkedPostIds}
                 commentsByPost={store.commentsByPost}
+                shareThreads={store.threads}
                 backLabel={
                   publicProfileReturnTab === 'connections'
                     ? 'Back to Connections'
@@ -746,6 +755,8 @@ export default function App() {
                 onAddComment={store.addComment}
                 onDeletePost={store.deletePost}
                 onDeleteComment={store.deleteComment}
+                onShareToStory={store.sharePostToStory}
+                onShareToChat={handleSharePostToChat}
                 onMentionClick={handleOpenMention}
                 onSelectHashtag={handleHashtagClick}
               />
@@ -797,6 +808,8 @@ export default function App() {
               onEnablePush={store.enablePushNotifications}
               onMarkRead={store.markNotificationRead}
               onMarkAllRead={store.markAllNotificationsRead}
+              onDeleteNotification={store.deleteNotification}
+              onClearAllNotifications={store.clearAllNotifications}
             />
           )}
 
@@ -810,12 +823,14 @@ export default function App() {
               likedPostIds={store.likedPostIds}
               bookmarkedPostIds={store.bookmarkedPostIds}
               commentsByPost={store.commentsByPost}
+              shareThreads={store.threads}
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
+              onShareToChat={handleSharePostToChat}
               onOpenSettings={() => setActiveTab('settings')}
               onOpenConnections={(tab) => openConnections(tab, null)}
               onAuthorClick={(post) =>
@@ -1027,6 +1042,8 @@ export default function App() {
         open={composerOpen}
         profile={store.profile}
         communityUsers={store.communityUsers}
+        savedHashtags={store.savedHashtags}
+        onSaveHashtag={store.saveHashtag}
         onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);

@@ -14,6 +14,7 @@ import {
   MicOff,
   Pause,
   Phone,
+  PhoneOff,
   Play,
   Search,
   Send,
@@ -21,6 +22,7 @@ import {
   UserPlus,
   Users,
   Video,
+  VideoOff,
   X,
 } from 'lucide-react';
 import type { ChatMessage, ChatThread, UserProfile } from '../types/social';
@@ -35,7 +37,9 @@ import {
   isUserOnline,
   MAX_GROUP_MEMBERS,
   normalizeGifUrl,
+  parseCallMessage,
   parseGifMessage,
+  parseMissedCallMessage,
   parseRichUrl,
   parseVoiceNote,
   type CuratedGif,
@@ -223,6 +227,94 @@ function GifBubble({
           {caption}
         </p>
       )}
+    </div>
+  );
+}
+
+function CallBubble({
+  isAudioOnly,
+  title,
+  mine,
+  onJoin,
+}: {
+  isAudioOnly: boolean;
+  title: string;
+  mine: boolean;
+  onJoin: () => void;
+}) {
+  return (
+    <div className="space-y-2.5 min-w-[220px]">
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            mine ? 'bg-white/20 text-white' : 'bg-blue-600/15 text-blue-600 dark:text-blue-400'
+          }`}
+        >
+          {isAudioOnly ? <Phone className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">
+            {isAudioOnly ? 'Voice Call Room' : 'Video Call Room'}
+          </p>
+          <p className="font-display text-sm font-bold truncate">{title}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onJoin}
+        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition ${
+          mine
+            ? 'bg-white text-blue-600 hover:bg-white/90 shadow-sm'
+            : 'bg-blue-600 hover:bg-blue-700 text-white'
+        }`}
+      >
+        {isAudioOnly ? <Phone className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+        <span>Join Call</span>
+      </button>
+    </div>
+  );
+}
+
+function MissedCallBubble({
+  isAudioOnly,
+  title,
+  mine,
+  onCallBack,
+}: {
+  isAudioOnly: boolean;
+  title: string;
+  mine: boolean;
+  onCallBack: () => void;
+}) {
+  return (
+    <div className="space-y-2.5 min-w-[220px]">
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            mine ? 'bg-white/20 text-white' : 'bg-rose-600/15 text-rose-600 dark:text-rose-400'
+          }`}
+        >
+          {isAudioOnly ? <PhoneOff className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80 text-rose-500">
+            Missed {isAudioOnly ? 'Voice' : 'Video'} Call
+          </p>
+          <p className="font-display text-sm font-bold truncate">{title}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onCallBack}
+        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition ${
+          mine
+            ? 'bg-white text-rose-600 hover:bg-white/90 shadow-sm'
+            : 'bg-rose-600 hover:bg-rose-700 text-white'
+        }`}
+      >
+        {isAudioOnly ? <Phone className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+        <span>Call Back</span>
+      </button>
     </div>
   );
 }
@@ -896,7 +988,9 @@ export function ChatView({
 
                   const voiceData = parseVoiceNote(msg.text);
                   const gifData = parseGifMessage(msg.text);
-                  const urlMatch = !voiceData && !gifData ? extractFirstUrl(msg.text) : null;
+                  const callData = parseCallMessage(msg.text);
+                  const missedCallData = parseMissedCallMessage(msg.text);
+                  const urlMatch = !voiceData && !gifData && !callData && !missedCallData ? extractFirstUrl(msg.text) : null;
 
                   const liveSender =
                     msg.senderId === profile.uid
@@ -966,6 +1060,20 @@ export function ChatView({
                               url={gifData.url}
                               caption={gifData.caption}
                               mine={mine}
+                            />
+                          ) : callData ? (
+                            <CallBubble
+                              isAudioOnly={callData.isAudioOnly}
+                              title={callData.title}
+                              mine={mine}
+                              onJoin={() => onStartCall(activeThread, callData.isAudioOnly)}
+                            />
+                          ) : missedCallData ? (
+                            <MissedCallBubble
+                              isAudioOnly={missedCallData.isAudioOnly}
+                              title={missedCallData.title}
+                              mine={mine}
+                              onCallBack={() => onStartCall(activeThread, missedCallData.isAudioOnly)}
                             />
                           ) : (
                             <div>

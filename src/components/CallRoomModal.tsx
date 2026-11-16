@@ -150,38 +150,54 @@ function RemoteAudioPlayer({
   return <audio ref={ref} autoPlay playsInline muted={Boolean(muted)} className="hidden" />;
 }
 
-function playRingingTone(): () => void {
+interface RingingToneController {
+  setMuted: (muted: boolean) => void;
+  stop: () => void;
+}
+
+function playRingingTone(initialMuted: boolean): RingingToneController {
   try {
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
-    if (!AudioCtx) return () => {};
+    if (!AudioCtx) return { setMuted: () => {}, stop: () => {} };
     const ctx = new AudioCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
+    let muted = initialMuted;
+    let toneOn = true;
     osc.type = 'sine';
     osc.frequency.setValueAtTime(440, ctx.currentTime);
-    gain.gain.setValueAtTime(0.04, ctx.currentTime);
+    gain.gain.setValueAtTime(muted ? 0 : 0.04, ctx.currentTime);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
 
     const interval = window.setInterval(() => {
+      toneOn = !toneOn;
       try {
-        gain.gain.setValueAtTime(gain.gain.value === 0.04 ? 0 : 0.04, ctx.currentTime);
+        gain.gain.setValueAtTime(muted || !toneOn ? 0 : 0.04, ctx.currentTime);
       } catch {}
     }, 1200);
 
-    return () => {
-      window.clearInterval(interval);
-      try {
-        osc.stop();
-        ctx.close();
-      } catch {}
+    return {
+      setMuted: (nextMuted: boolean) => {
+        muted = nextMuted;
+        try {
+          gain.gain.setValueAtTime(muted || !toneOn ? 0 : 0.04, ctx.currentTime);
+        } catch {}
+      },
+      stop: () => {
+        window.clearInterval(interval);
+        try {
+          osc.stop();
+          ctx.close();
+        } catch {}
+      },
     };
   } catch {
-    return () => {};
+    return { setMuted: () => {}, stop: () => {} };
   }
 }
 
@@ -224,6 +240,13 @@ export function CallRoomModal({
   const videoTrackNameRef = useRef<string>('');
   const onPublishPeerRef = useRef(onPublishPeerSession);
   const onSubscribePeersRef = useRef(onSubscribeCallPeers);
+  const ringingToneRef = useRef<RingingToneController | null>(null);
+  const speakerMutedRef = useRef(isSpeakerMuted);
+
+  useEffect(() => {
+    speakerMutedRef.current = isSpeakerMuted;
+    ringingToneRef.current?.setMuted(isSpeakerMuted);
+  }, [isSpeakerMuted]);
 
   useEffect(() => {
     onPublishPeerRef.current = onPublishPeerSession;
@@ -237,9 +260,17 @@ export function CallRoomModal({
     peersRef.current = session?.participants || [];
   }, [session?.participants]);
 
-  // Call timer starts only when session.status === 'active'
+  const joinedParticipantsCount =
+    session?.participants.filter((p) => p.connectionState === 'joined').length || 0;
+
+  // Call timer starts only when session.status === 'active' and at least 2 parties have accepted/joined
   useEffect(() => {
-    if (!session || !session.active || session.status !== 'active') {
+    if (
+      !session ||
+      !session.active ||
+      session.status !== 'active' ||
+      joinedParticipantsCount < 2
+    ) {
       setElapsedSec(0);
       if (!session || !session.active) {
         setIsSpeakerMuted(false);
@@ -252,16 +283,22 @@ export function CallRoomModal({
       setElapsedSec((s) => s + 1);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [session?.active, session?.status]);
+  }, [session?.active, session?.status, joinedParticipantsCount]);
 
   // Ringing tone while waiting for call to be answered
   useEffect(() => {
     if (!session || !session.active || session.status !== 'ringing') {
+      ringingToneRef.current?.stop();
+      ringingToneRef.current = null;
       return;
     }
-    const stopTone = playRingingTone();
+    const controller = playRingingTone(speakerMutedRef.current);
+    ringingToneRef.current = controller;
     return () => {
-      stopTone();
+      controller.stop();
+      if (ringingToneRef.current === controller) {
+        ringingToneRef.current = null;
+      }
     };
   }, [session?.active, session?.status]);
 
@@ -392,8 +429,8 @@ export function CallRoomModal({
         setCfStatus('error');
         setCfError(
           isLocalAutostart
-            ? 'Sign in with a verified Firebase account to establish a Cloudflare Calls SFU session.'
-            : 'Authentication required to connect to Cloudflare Calls.'
+            ? 'Sign in with a verified account to establish a live call connection.'
+            : 'Authentication required to connect this call.'
         );
         return;
       }
@@ -729,7 +766,7 @@ export function CallRoomModal({
         setCfError(
           err instanceof Error
             ? err.message
-            : 'Unable to establish Cloudflare Calls WebRTC connection.'
+            : 'Unable to establish live call connection.'
         );
       }
     };
@@ -824,6 +861,20 @@ export function CallRoomModal({
 
   // Screen share acquisition & sender track replacement
   useEffect(() => {
+    const findVideoSender = () => {
+      const pc = peerConnRef.current;
+      if (!pc) return undefined;
+      return (
+        pc.getSenders().find((s) => s.track?.kind === 'video') ||
+        pc
+          .getTransceivers()
+          .find(
+            (t) =>
+              t.sender.track?.kind === 'video' || t.receiver.track?.kind === 'video'
+          )?.sender
+      );
+    };
+
     if (!session?.isScreenSharing) {
       setScreenStream((prev) => {
         if (prev) {
@@ -832,9 +883,7 @@ export function CallRoomModal({
         return null;
       });
       const camTrack = localStreamRef.current?.getVideoTracks()[0];
-      const videoSender = peerConnRef.current
-        ?.getSenders()
-        .find((s) => s.track?.kind === 'video');
+      const videoSender = findVideoSender();
       if (camTrack && videoSender) {
         void videoSender.replaceTrack(camTrack).catch(() => {});
       }
@@ -862,9 +911,7 @@ export function CallRoomModal({
         setScreenStream(stream);
         const screenTrack = stream.getVideoTracks()[0];
         if (screenTrack) {
-          const videoSender = peerConnRef.current
-            ?.getSenders()
-            .find((s) => s.track?.kind === 'video');
+          const videoSender = findVideoSender();
           if (videoSender) {
             await videoSender.replaceTrack(screenTrack).catch(() => {});
           }
@@ -887,6 +934,75 @@ export function CallRoomModal({
     };
   }, [session?.isScreenSharing]);
 
+  // If user turns Cam On while current stream has no video tracks (e.g. started with audio-only hardware fallback), try acquiring camera
+  useEffect(() => {
+    if (
+      !session?.active ||
+      session.isAudioOnly ||
+      session.isVideoOff ||
+      session.isScreenSharing
+    ) {
+      return;
+    }
+    const currentStream = localStreamRef.current;
+    if (!currentStream || currentStream.getVideoTracks().length > 0) {
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      return;
+    }
+
+    let cancelled = false;
+    void navigator.mediaDevices
+      .getUserMedia({ video: true, audio: false })
+      .then(async (camStream) => {
+        if (cancelled) {
+          for (const t of camStream.getTracks()) t.stop();
+          return;
+        }
+        const newVideoTrack = camStream.getVideoTracks()[0];
+        if (!newVideoTrack) return;
+        const baseStream = localStreamRef.current || new MediaStream();
+        baseStream.addTrack(newVideoTrack);
+        localStreamRef.current = baseStream;
+        const updatedStream = new MediaStream(baseStream.getTracks());
+        setLocalStream(updatedStream);
+        setIsUsingFallbackStream(false);
+        setCameraError(null);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = updatedStream;
+        }
+        if (peerConnRef.current) {
+          const videoSender =
+            peerConnRef.current
+              .getSenders()
+              .find((s) => s.track?.kind === 'video') ||
+            peerConnRef.current
+              .getTransceivers()
+              .find(
+                (t) =>
+                  t.sender.track?.kind === 'video' ||
+                  t.receiver.track?.kind === 'video'
+              )?.sender;
+          if (videoSender) {
+            await videoSender.replaceTrack(newVideoTrack).catch(() => {});
+          } else {
+            peerConnRef.current.addTrack(newVideoTrack, updatedStream);
+          }
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    session?.active,
+    session?.isAudioOnly,
+    session?.isVideoOff,
+    session?.isScreenSharing,
+  ]);
+
   if (!session || !session.active) return null;
 
   const formatDuration = (totalSec: number) => {
@@ -904,11 +1020,13 @@ export function CallRoomModal({
       if (peerConnRef.current) {
         const nextAudio = hwStream.getAudioTracks()[0];
         const nextVideo = hwStream.getVideoTracks()[0];
-        for (const sender of peerConnRef.current.getSenders()) {
-          if (sender.track?.kind === 'audio' && nextAudio) {
-            await sender.replaceTrack(nextAudio);
-          } else if (sender.track?.kind === 'video' && nextVideo) {
-            await sender.replaceTrack(nextVideo);
+        for (const transceiver of peerConnRef.current.getTransceivers()) {
+          const kind =
+            transceiver.sender.track?.kind || transceiver.receiver.track?.kind;
+          if (kind === 'audio' && nextAudio) {
+            await transceiver.sender.replaceTrack(nextAudio);
+          } else if (kind === 'video' && nextVideo) {
+            await transceiver.sender.replaceTrack(nextVideo);
           }
         }
       }
@@ -1143,53 +1261,75 @@ export function CallRoomModal({
         </button>
       </header>
 
-      {/* Honest Error & Hardware Banners (No Overlapping Over Controls) */}
-      {(cfError || cameraError) && (
-        <div className="px-4 sm:px-6 pt-3 space-y-2 max-w-5xl mx-auto w-full shrink-0">
-          {cfError && (
-            <div
-              role="alert"
-              data-testid="calls-error-banner"
-              className="px-4 py-2.5 rounded-2xl bg-rose-950/85 border border-rose-500/40 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-2"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
-                <span>{cfError}</span>
-              </div>
-              {cfStatus === 'error' && (
-                <button
-                  type="button"
-                  onClick={() => setRetryNonce((n) => n + 1)}
-                  className="min-h-[34px] px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+      <div className="flex-1 min-h-0 flex overflow-hidden relative">
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {/* Honest Error & Hardware Banners (No Overlapping Over Controls) */}
+          {(cfError || cameraError) && (
+            <div className="px-4 sm:px-6 pt-3 space-y-2 max-w-5xl mx-auto w-full shrink-0">
+              {cfError && (
+                <div
+                  role="alert"
+                  data-testid="calls-error-banner"
+                  className="px-4 py-2.5 rounded-2xl bg-rose-950/85 border border-rose-500/40 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-2"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Retry Connection</span>
-                </button>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
+                    <span>{cfError}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {cfStatus === 'error' && (
+                      <button
+                        type="button"
+                        onClick={() => setRetryNonce((n) => n + 1)}
+                        className="min-h-[34px] px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Retry Connection</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCfError(null)}
+                      aria-label="Dismiss connection notice"
+                      className="min-h-[34px] min-w-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-rose-100 flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {cameraError && (
+                <div className="px-4 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/40 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2">
+                  <span className="truncate">{cameraError}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleRetryHardware}
+                      className="min-h-[34px] px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold cursor-pointer text-xs"
+                    >
+                      Retry Hardware
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCameraError(null)}
+                      aria-label="Dismiss hardware notice"
+                      className="min-h-[34px] min-w-[34px] rounded-xl bg-white/10 hover:bg-white/20 text-amber-100 flex items-center justify-center cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}
 
-          {cameraError && (
-            <div className="px-4 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/40 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2">
-              <span className="truncate">{cameraError}</span>
-              <button
-                type="button"
-                onClick={handleRetryHardware}
-                className="min-h-[34px] px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold shrink-0 cursor-pointer text-xs"
-              >
-                Retry Hardware
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Main Stage: Distinct Audio Call Studio vs Adaptive Video Call Stage */}
-      {session.isAudioOnly ? (
-        <main
-          data-testid="audio-call-stage"
-          className="flex-1 min-h-0 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto relative"
-        >
+          {/* Main Stage: Distinct Audio Call Studio vs Adaptive Video Call Stage */}
+          {session.isAudioOnly ? (
+            <main
+              data-testid="audio-call-stage"
+              className="flex-1 min-h-0 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto relative"
+            >
           {/* Always mount hidden audio tracks for every remote participant */}
           {remoteParticipants.map((peer) => {
             const remoteStream = remoteStreams[peer.uid];
@@ -1367,71 +1507,74 @@ export function CallRoomModal({
         </main>
       )}
 
-      {/* Slide-Over Participants Drawer */}
-      {showParticipantsDrawer && (
-        <aside
-          aria-label="Participants in call"
-          data-testid="call-participants-drawer"
-          className="fixed top-16 right-0 bottom-0 w-full sm:w-80 bg-slate-900/95 backdrop-blur-xl border-l border-white/15 z-40 flex flex-col shadow-2xl"
-        >
-          <div className="px-4 py-3.5 border-b border-white/10 flex items-center justify-between">
-            <h3 className="font-display text-sm font-bold text-white">
-              Participants ({session.participants.length})
-            </h3>
-            <button
-              type="button"
-              onClick={() => setShowParticipantsDrawer(false)}
-              aria-label="Close participants drawer"
-              className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
-            >
-              <X className="w-4 h-4" aria-hidden="true" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
-            {session.participants.map((p) => {
-              const isSelf = p.uid === profile.uid;
-              return (
-                <div
-                  key={p.uid}
-                  className="p-3 rounded-2xl bg-slate-950/60 border border-white/10 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Avatar src={p.avatar} name={p.name} size="sm" />
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-white truncate">
-                        {p.name} {isSelf ? '(You)' : ''}
-                      </p>
-                      <p className="text-[11px] text-slate-400 truncate">
-                        {isSelf
-                          ? session.isMuted
-                            ? 'Muted'
-                            : 'Mic active'
-                          : getPeerStatusText(p)}
-                      </p>
+        </div>
+
+        {/* Slide-Over / Side-Docked Participants Drawer */}
+        {showParticipantsDrawer && (
+          <aside
+            aria-label="Participants in call"
+            data-testid="call-participants-drawer"
+            className="absolute inset-0 sm:static sm:inset-auto w-full sm:w-80 shrink-0 bg-slate-900/95 backdrop-blur-xl border-l border-white/15 z-40 flex flex-col shadow-2xl"
+          >
+            <div className="px-4 py-3.5 border-b border-white/10 flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold text-white">
+                Participants ({session.participants.length})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowParticipantsDrawer(false)}
+                aria-label="Close participants drawer"
+                className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {session.participants.map((p) => {
+                const isSelf = p.uid === profile.uid;
+                return (
+                  <div
+                    key={p.uid}
+                    className="p-3 rounded-2xl bg-slate-950/60 border border-white/10 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar src={p.avatar} name={p.name} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-white truncate">
+                          {p.name} {isSelf ? '(You)' : ''}
+                        </p>
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {isSelf
+                            ? session.isMuted
+                              ? 'Muted'
+                              : 'Mic active'
+                            : getPeerStatusText(p)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {(isSelf ? session.isMuted : p.isMuted) ? (
+                        <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+                      ) : (
+                        <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                      )}
+                      {!session.isAudioOnly &&
+                        ((isSelf ? session.isVideoOff : p.isVideoOff) ? (
+                          <VideoOff className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                        ) : (
+                          <Video className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+                        ))}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {(isSelf ? session.isMuted : p.isMuted) ? (
-                      <MicOff className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
-                    ) : (
-                      <Mic className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-                    )}
-                    {!session.isAudioOnly &&
-                      ((isSelf ? session.isVideoOff : p.isVideoOff) ? (
-                        <VideoOff className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                      ) : (
-                        <Video className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
-                      ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </aside>
-      )}
+                );
+              })}
+            </div>
+          </aside>
+        )}
+      </div>
 
       {/* Floating Studio Control Dock */}
-      <footer className="px-4 py-4 pb-5 bg-slate-950/95 border-t border-white/10 shrink-0 flex justify-center">
+      <footer className="relative z-50 px-4 py-4 pb-5 bg-slate-950/95 border-t border-white/10 shrink-0 flex justify-center">
         <div className="inline-flex flex-wrap items-center justify-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 rounded-3xl bg-slate-900 border border-white/15 shadow-2xl">
           <button
             type="button"

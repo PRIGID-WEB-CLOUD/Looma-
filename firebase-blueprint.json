@@ -752,6 +752,30 @@
         "memberIds",
         "updatedAt"
       ]
+    },
+    "Hashtag": {
+      "title": "Hashtag",
+      "description": "Saved community hashtag created by an authenticated member.",
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["tag", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -814,6 +838,10 @@
     "/calls/{callId}/peers/{peerUid}": {
       "schema": { "$ref": "#/entities/CallPeerSession" },
       "description": "Participant Cloudflare Calls SFU session & track names within a call."
+    },
+    "/hashtags/{tagId}": {
+      "schema": { "$ref": "#/entities/Hashtag" },
+      "description": "Community hashtags saved automatically when created."
     }
   }
 }
