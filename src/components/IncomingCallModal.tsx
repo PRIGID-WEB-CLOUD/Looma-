@@ -1,7 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PhoneIncoming, PhoneOff, Video } from 'lucide-react';
 import type { IncomingCallInvite } from '../types/social';
 import { Avatar } from './Avatar';
+
+function playRingingTone(): () => void {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return () => {};
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(520, ctx.currentTime);
+    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+
+    const interval = window.setInterval(() => {
+      try {
+        gain.gain.setValueAtTime(gain.gain.value === 0.05 ? 0 : 0.05, ctx.currentTime);
+      } catch {}
+    }, 1000);
+
+    return () => {
+      window.clearInterval(interval);
+      try {
+        osc.stop();
+        ctx.close();
+      } catch {}
+    };
+  } catch {
+    return () => {};
+  }
+}
 
 interface IncomingCallModalProps {
   invite: IncomingCallInvite | null;
@@ -15,6 +50,14 @@ export function IncomingCallModal({
   onDecline,
 }: IncomingCallModalProps) {
   const [busy, setBusy] = useState<'accept' | 'decline' | null>(null);
+
+  useEffect(() => {
+    if (!invite) return;
+    const stopTone = playRingingTone();
+    return () => {
+      stopTone();
+    };
+  }, [invite]);
 
   if (!invite) return null;
 

@@ -3286,7 +3286,9 @@ export function useSocialStore() {
       });
 
       if (firebaseUser) {
-        await setDoc(doc(db, 'calls', callId), {
+        const callMsgId = makeSafeId('msg_call');
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'calls', callId), {
           id: callId,
           chatId: resolvedThread.id,
           title: resolvedThread.title,
@@ -3299,6 +3301,17 @@ export function useSocialStore() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        batch.set(doc(db, 'chats', resolvedThread.id, 'messages', callMsgId), {
+          id: callMsgId,
+          chatId: resolvedThread.id,
+          senderId: firebaseUser.uid,
+          senderName: profile.displayName,
+          senderAvatar: profile.avatarUrl,
+          text: `[call:${callId}:${isAudioOnly ? 'voice' : 'video'}:${resolvedThread.title}]`,
+          memberIds: uniqueMembers,
+          createdAt: serverTimestamp(),
+        });
+        await batch.commit().catch(() => {});
       }
 
       setCallSession({

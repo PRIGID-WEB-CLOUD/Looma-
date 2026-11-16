@@ -150,6 +150,41 @@ function RemoteAudioPlayer({
   return <audio ref={ref} autoPlay playsInline muted={Boolean(muted)} className="hidden" />;
 }
 
+function playRingingTone(): () => void {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return () => {};
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, ctx.currentTime);
+    gain.gain.setValueAtTime(0.04, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+
+    const interval = window.setInterval(() => {
+      try {
+        gain.gain.setValueAtTime(gain.gain.value === 0.04 ? 0 : 0.04, ctx.currentTime);
+      } catch {}
+    }, 1200);
+
+    return () => {
+      window.clearInterval(interval);
+      try {
+        osc.stop();
+        ctx.close();
+      } catch {}
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 export function CallRoomModal({
   session,
   profile,
@@ -202,20 +237,33 @@ export function CallRoomModal({
     peersRef.current = session?.participants || [];
   }, [session?.participants]);
 
-  // Call timer
+  // Call timer starts only when session.status === 'active'
   useEffect(() => {
-    if (!session || !session.active) {
+    if (!session || !session.active || session.status !== 'active') {
       setElapsedSec(0);
-      setIsSpeakerMuted(false);
-      setShowParticipantsDrawer(false);
-      setSwappedLocalToMain(false);
+      if (!session || !session.active) {
+        setIsSpeakerMuted(false);
+        setShowParticipantsDrawer(false);
+        setSwappedLocalToMain(false);
+      }
       return;
     }
     const timer = window.setInterval(() => {
       setElapsedSec((s) => s + 1);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [session?.active]);
+  }, [session?.active, session?.status]);
+
+  // Ringing tone while waiting for call to be answered
+  useEffect(() => {
+    if (!session || !session.active || session.status !== 'ringing') {
+      return;
+    }
+    const stopTone = playRingingTone();
+    return () => {
+      stopTone();
+    };
+  }, [session?.active, session?.status]);
 
   // Keep local video element synchronized when toggling camera / screen share / stage swap
   useEffect(() => {
@@ -884,13 +932,15 @@ export function CallRoomModal({
   );
 
   const statusMeta =
-    cfStatus === 'connected'
-      ? { dot: 'bg-emerald-400', textColor: 'text-emerald-400', label: 'Cloudflare Calls SFU Live' }
-      : cfStatus === 'reconnecting'
-        ? { dot: 'bg-amber-400', textColor: 'text-amber-300', label: 'Reconnecting...' }
-        : cfStatus === 'error'
-          ? { dot: 'bg-rose-500', textColor: 'text-rose-400', label: 'Signaling Disconnected' }
-          : { dot: 'bg-blue-400', textColor: 'text-blue-300', label: 'Connecting to Calls SFU...' };
+    session.status === 'active' && cfStatus === 'connected'
+      ? { dot: 'bg-emerald-400', textColor: 'text-emerald-400', label: 'Live Call' }
+      : session.status === 'ringing'
+        ? { dot: 'bg-amber-400', textColor: 'text-amber-300', label: 'Ringing / Calling...' }
+        : cfStatus === 'reconnecting'
+          ? { dot: 'bg-amber-400', textColor: 'text-amber-300', label: 'Reconnecting...' }
+          : cfStatus === 'error'
+            ? { dot: 'bg-rose-500', textColor: 'text-rose-400', label: 'Connection Error' }
+            : { dot: 'bg-blue-400', textColor: 'text-blue-300', label: 'Connecting...' };
 
   const getPeerStatusText = (peer: CallParticipant) =>
     peer.connectionState === 'declined'
@@ -1038,8 +1088,8 @@ export function CallRoomModal({
       aria-modal="true"
       aria-label={
         session.isAudioOnly
-          ? 'Looma Voice Call Studio'
-          : 'Cloudflare Calls WebRTC Room'
+          ? 'Looma Voice Call Room'
+          : 'Looma Video Call Room'
       }
       data-testid="call-room-modal"
       data-call-mode={session.isAudioOnly ? 'audio' : 'video'}
@@ -1073,14 +1123,6 @@ export function CallRoomModal({
                 <span className={`w-2 h-2 rounded-full ${statusMeta.dot}`} />
                 <span>{statusMeta.label}</span>
               </span>
-              {cfSessionId && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="font-mono text-[11px] text-blue-300 bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-800/60">
-                    CF: {cfSessionId.slice(0, 8)}
-                  </span>
-                </>
-              )}
               <span aria-hidden="true">·</span>
               <span className="tabular-nums font-mono text-slate-200">
                 {formatDuration(elapsedSec)}
