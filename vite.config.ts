@@ -108,6 +108,11 @@ export default defineConfig(() => {
     },
     build: {
       rollupOptions: {
+        input: {
+          main: path.resolve(import.meta.dirname, 'index.html'),
+          landing: path.resolve(import.meta.dirname, 'landingpage/index.html'),
+          admin: path.resolve(import.meta.dirname, 'admin/index.html'),
+        },
         output: {
           manualChunks(id) {
             if (

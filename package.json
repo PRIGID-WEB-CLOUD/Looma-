@@ -12,7 +12,9 @@
     "lint": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts src/*/*.test.ts src/*/*/*.test.ts admin/*.test.ts landingpage/*.test.ts",
     "bun:check": "bun install --frozen-lockfile --dry-run",
-    "bun:sync": "bun install --lockfile-only"
+    "bun:sync": "bun install --lockfile-only",
+    "deploy:landing": "npm run build && npx wrangler deploy --config wrangler.landing.jsonc",
+    "deploy:admin": "npm run build && npx wrangler deploy --config wrangler.admin.jsonc"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1168.0",
