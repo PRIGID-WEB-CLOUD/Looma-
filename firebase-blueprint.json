@@ -849,6 +849,163 @@
         "memberIds",
         "updatedAt"
       ]
+    },
+    "AdminRoleRecord": {
+      "title": "AdminRoleRecord",
+      "description": "Explicit administrator role assignment and permission scopes keyed by UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "role": { "type": "string", "enum": ["super_admin", "moderator", "analyst"] },
+        "permissions": { "type": "array", "description": "Granular admin permission keys" },
+        "grantedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "permissions", "grantedBy", "createdAt", "updatedAt"]
+    },
+    "MemberModerationRecord": {
+      "title": "MemberModerationRecord",
+      "description": "Authoritative moderation lifecycle status for a member account.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "status": { "type": "string", "enum": ["active", "restricted", "suspended"] },
+        "reason": { "type": "string", "maxLength": 400 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "status", "reason", "updatedBy", "updatedAt"]
+    },
+    "ModerationReport": {
+      "title": "ModerationReport",
+      "description": "Content or account moderation report submitted for administrator triage.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "targetType": { "type": "string", "enum": ["post", "story", "comment", "user"] },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetAuthorUid": { "type": "string", "maxLength": 128 },
+        "targetSummary": { "type": "string", "maxLength": 240 },
+        "reporterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reporterName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "category": { "type": "string", "enum": ["spam", "harassment", "misinformation", "nudity", "copyright", "other"] },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "status": { "type": "string", "enum": ["open", "reviewing", "resolved", "dismissed"] },
+        "resolutionAction": { "type": "string", "maxLength": 120 },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "reviewedAtMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "targetType", "targetId", "targetAuthorUid", "targetSummary",
+        "reporterUid", "reporterName", "category", "severity", "reason",
+        "status", "resolutionAction", "reviewedBy", "reviewedAtMs", "createdAt", "updatedAt"
+      ]
+    },
+    "ModerationAppeal": {
+      "title": "ModerationAppeal",
+      "description": "Member appeal requesting review of a restriction, suspension, or content removal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "appellantUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "appellantName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "appellantHandle": { "type": "string", "maxLength": 32 },
+        "reportId": { "type": "string", "maxLength": 128 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reviewerUid": { "type": "string", "maxLength": 128 },
+        "reviewerNote": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "appellantUid", "appellantName", "appellantHandle",
+        "reportId", "targetId", "reason", "status", "reviewerUid",
+        "reviewerNote", "createdAt", "updatedAt"
+      ]
+    },
+    "PlatformAnnouncement": {
+      "title": "PlatformAnnouncement",
+      "description": "Broadcast announcement or maintenance notice published by administrators.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "severity": { "type": "string", "enum": ["info", "warning", "maintenance"] },
+        "audience": { "type": "string", "enum": ["all", "verified", "admins"] },
+        "active": { "type": "boolean" },
+        "authorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "title", "body", "severity", "audience", "active",
+        "authorUid", "authorName", "createdAt", "updatedAt"
+      ]
+    },
+    "AdminConfigDoc": {
+      "title": "AdminConfigDoc",
+      "description": "Platform configuration document storing feature flags, moderation lists, or community guidelines.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storiesEnabled": { "type": "boolean" },
+        "voiceNotesEnabled": { "type": "boolean" },
+        "callsEnabled": { "type": "boolean" },
+        "maintenanceMode": { "type": "boolean" },
+        "registrationsOpen": { "type": "boolean" },
+        "strictModerationQueue": { "type": "boolean" },
+        "hiddenPostIds": { "type": "array", "description": "Hidden post document IDs" },
+        "version": { "type": "string", "maxLength": 32 },
+        "summary": { "type": "string", "maxLength": 300 },
+        "rulesText": { "type": "string", "maxLength": 5000 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "updatedBy", "updatedAt"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Immutable append-only audit log entry recording administrative actions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 200 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "targetType": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "createdAtMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorUid", "actorEmail", "action", "targetType", "targetId", "summary", "createdAtMs", "createdAt"]
+    },
+    "AccessInquiryRecord": {
+      "title": "AccessInquiryRecord",
+      "description": "Workspace access inquiry submitted for administrator approval.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "organization": { "type": "string", "maxLength": 100 },
+        "note": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "status": { "type": "string", "enum": ["pending", "approved", "archived"] },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "fullName", "email", "organization", "note", "status", "reviewedBy", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -923,6 +1080,38 @@
     "/hashtags/{tagId}": {
       "schema": { "$ref": "#/entities/Hashtag" },
       "description": "Community hashtags saved automatically when created."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRoleRecord" },
+      "description": "Authorized platform administrator roles keyed by UID."
+    },
+    "/userModeration/{targetUid}": {
+      "schema": { "$ref": "#/entities/MemberModerationRecord" },
+      "description": "Account restriction and suspension states managed by administrators."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ModerationReport" },
+      "description": "Content and account abuse reports routed to the moderation queue."
+    },
+    "/appeals/{appealId}": {
+      "schema": { "$ref": "#/entities/ModerationAppeal" },
+      "description": "Member appeals of moderation decisions reviewed by administrators."
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/PlatformAnnouncement" },
+      "description": "Platform-wide governance banners and maintenance notices."
+    },
+    "/adminConfig/{configId}": {
+      "schema": { "$ref": "#/entities/AdminConfigDoc" },
+      "description": "Feature flags, moderation toggles, and community guidelines configuration."
+    },
+    "/adminAuditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminAuditLog" },
+      "description": "Append-only audit trail for administrative actions."
+    },
+    "/accessInquiries/{inquiryId}": {
+      "schema": { "$ref": "#/entities/AccessInquiryRecord" },
+      "description": "Landing and access inquiry approval queue managed by administrators."
     }
   }
 }

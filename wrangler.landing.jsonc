@@ -7,7 +7,7 @@
     "nodejs_compat"
   ],
   "assets": {
-    "directory": "./dist/landing",
+    "directory": "./dist-landing",
     "not_found_handling": "single-page-application"
   },
   "observability": {

@@ -2,17 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Post, UserProfile } from '../src/types/social';
 import {
+  appendAuditEntry,
+  assignAdminRole,
+  computeCategoryBreakdown,
+  computeExtendedWorkspaceMetrics,
   computeWorkspaceMetrics,
+  countExpiredStories,
+  createAutostartAdminSeed,
   filterAdminMembers,
   filterAdminPosts,
+  filterAppeals,
+  filterAuditLogs,
+  filterReports,
   resolveAdminAuthorization,
+  reviewAppealDecision,
+  revokeAdminRole,
+  setMemberModerationStatus,
   toggleHiddenPostId,
   toggleRestrictedMemberUid,
   updateAccessInquiryStatus,
+  updateReportResolution,
+  validateAnnouncementInput,
+  validateGuidelinesInput,
 } from './adminLogic';
 
 test('resolveAdminAuthorization enforces authentication, verified email, and role checks', () => {
-  // Unauthenticated even with admin email must fail
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: false,
@@ -23,7 +37,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     { isAdmin: false, reason: 'unauthenticated' }
   );
 
-  // Spoofed/unverified email matching allowlist must fail
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: true,
@@ -34,7 +47,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     { isAdmin: false, reason: 'unverified' }
   );
 
-  // Standard verified member without admin doc or allowlisted email is forbidden
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: true,
@@ -45,7 +57,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     { isAdmin: false, reason: 'forbidden' }
   );
 
-  // Verified allowlisted admin succeeds
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: true,
@@ -56,7 +67,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     { isAdmin: true, reason: 'ok-allowlist' }
   );
 
-  // Verified user with Firestore /admins/{uid} doc succeeds
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: true,
@@ -67,7 +77,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     { isAdmin: true, reason: 'ok-admin-doc' }
   );
 
-  // Local autostart preview succeeds on localhost
   assert.deepEqual(
     resolveAdminAuthorization({
       isAuthorized: true,
@@ -210,4 +219,153 @@ test('computeWorkspaceMetrics and updateAccessInquiryStatus calculate live count
   assert.equal(metrics.totalPosts, 2);
   assert.equal(metrics.hiddenPosts, 1);
   assert.equal(metrics.pendingInquiries, 1);
+});
+
+test('member suspension, restoration, and admin role RBAC prevent self-lockout and require justification', () => {
+  const selfAttempt = setMemberModerationStatus({}, 'u_admin', 'suspended', 'Test', 'u_admin');
+  assert.equal(selfAttempt.ok, false);
+
+  const missingReason = setMemberModerationStatus({}, 'u_member', 'suspended', ' ', 'u_admin');
+  assert.equal(missingReason.ok, false);
+
+  const suspended = setMemberModerationStatus(
+    {},
+    'u_member',
+    'suspended',
+    'Repeated abuse after warnings.',
+    'u_admin',
+    9000
+  );
+  assert.equal(suspended.ok, true);
+  if (!suspended.ok) return;
+  assert.equal(suspended.records.u_member.status, 'suspended');
+
+  const suspendedFilter = filterAdminMembers(
+    SAMPLE_PROFILES,
+    '',
+    'suspended',
+    [],
+    [],
+    ['u_member'],
+    ['u_admin']
+  );
+  assert.equal(suspendedFilter.length, 1);
+  assert.equal(suspendedFilter[0].uid, 'u_member');
+
+  const granted = assignAdminRole(
+    [],
+    {
+      uid: 'u_member',
+      email: 'sophia@looma.studio',
+      displayName: 'Sophia Chen',
+      role: 'moderator',
+    },
+    'u_admin',
+    9100
+  );
+  assert.equal(granted.ok, true);
+  if (!granted.ok) return;
+  assert.equal(granted.entry.role, 'moderator');
+  assert.ok(granted.entry.permissions.includes('reports.resolve'));
+
+  const selfRevoke = revokeAdminRole(granted.roles, 'u_admin', 'u_admin');
+  assert.equal(selfRevoke.ok, false);
+
+  const revoked = revokeAdminRole(granted.roles, 'u_member', 'u_admin');
+  assert.equal(revoked.ok, true);
+  if (revoked.ok) {
+    assert.equal(revoked.roles.length, 0);
+  }
+});
+
+test('reports queue sorting, appeal decisions, governance validation, audit trail, and category analytics work accurately', () => {
+  const seed = createAutostartAdminSeed(1_700_000_000_000);
+
+  const sortedOpen = filterReports(seed.reports, '', 'all', 'all');
+  assert.equal(sortedOpen[0].status, 'open');
+  assert.equal(sortedOpen[0].severity, 'high');
+
+  const resolvedReports = updateReportResolution(
+    seed.reports,
+    'rep_spam_01',
+    'resolved',
+    'Removed post & restricted author',
+    'admin_operator_1',
+    1_700_000_005_000
+  );
+  const resolvedItem = resolvedReports.find((r) => r.id === 'rep_spam_01');
+  assert.equal(resolvedItem?.status, 'resolved');
+  assert.equal(resolvedItem?.resolutionAction, 'Removed post & restricted author');
+
+  const appealMissingNote = reviewAppealDecision(
+    seed.appeals,
+    'app_01',
+    'approved',
+    '',
+    'admin_operator_1'
+  );
+  assert.equal(appealMissingNote.ok, false);
+
+  const appealApproved = reviewAppealDecision(
+    seed.appeals,
+    'app_01',
+    'approved',
+    'Spam links deleted; restoring standard posting access.',
+    'admin_operator_1',
+    1_700_000_010_000
+  );
+  assert.equal(appealApproved.ok, true);
+  assert.equal(filterAppeals(seed.appeals, '', 'pending').length, 1);
+
+  assert.equal(validateAnnouncementInput('ab', 'Too short').valid, false);
+  assert.equal(
+    validateAnnouncementInput('Scheduled Upgrade', 'Database index maintenance at 02:00 UTC.').valid,
+    true
+  );
+
+  assert.equal(validateGuidelinesInput('', 'Summary too short', 'Rules').valid, false);
+  assert.equal(
+    validateGuidelinesInput(
+      '2026.05',
+      'Updated attribution and content safety policies.',
+      'All members must credit original photography and refrain from spam or harassment.'
+    ).valid,
+    true
+  );
+
+  const logs = appendAuditEntry(seed.auditLogs, {
+    actorUid: 'admin_operator_1',
+    actorEmail: 'prigidholdings@gmail.com',
+    action: 'report.resolve',
+    targetType: 'report',
+    targetId: 'rep_spam_01',
+    summary: 'Resolved spam report rep_spam_01.',
+    createdAtMs: 1_700_000_020_000,
+  });
+  assert.equal(filterAuditLogs(logs, 'rep_spam_01', 'report.resolve').length, 1);
+
+  const breakdown = computeCategoryBreakdown(seed.posts);
+  assert.equal(breakdown.length, 5);
+  assert.equal(breakdown[0].totalLikes > 0, true);
+
+  const expiredCount = countExpiredStories(seed.storyGroups, 1_700_000_000_000);
+  assert.equal(expiredCount, 1);
+
+  const extended = computeExtendedWorkspaceMetrics({
+    currentProfile: seed.currentProfile,
+    communityUsers: seed.communityUsers,
+    posts: seed.posts,
+    storyGroups: seed.storyGroups,
+    onlineUserIds: seed.onlineUserIds,
+    moderation: seed.moderation,
+    memberModerationRecords: seed.memberModerationRecords,
+    inquiries: seed.inquiries,
+    reports: seed.reports,
+    appeals: seed.appeals,
+    announcements: seed.announcements,
+    adminRoles: seed.adminRoles,
+  });
+  assert.equal(extended.openReports, 2);
+  assert.equal(extended.pendingAppeals, 1);
+  assert.equal(extended.activeAnnouncements, 1);
 });

@@ -8,13 +8,15 @@
     "build": "vite build",
     "start": "node server.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist dist-admin dist-landing server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts src/*/*.test.ts src/*/*/*.test.ts admin/*.test.ts landingpage/*.test.ts",
     "bun:check": "bun install --frozen-lockfile --dry-run",
     "bun:sync": "bun install --lockfile-only",
-    "deploy:landing": "npm run build && npx wrangler deploy --config wrangler.landing.jsonc",
-    "deploy:admin": "npm run build && npx wrangler deploy --config wrangler.admin.jsonc"
+    "build:landing": "vite build --config vite.landing.config.ts",
+    "build:admin": "vite build --config vite.admin.config.ts",
+    "deploy:landing": "npm run build:landing && npx wrangler deploy --config wrangler.landing.jsonc",
+    "deploy:admin": "npm run build:admin && npx wrangler deploy --config wrangler.admin.jsonc"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1168.0",

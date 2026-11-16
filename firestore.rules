@@ -27,6 +27,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email in ['prigidwebcloud@gmail.com', 'prigidholdings@gmail.com']
+        || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -345,10 +352,177 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAdminRole(data) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'role', 'permissions',
+          'grantedBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'permissions',
+          'grantedBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
+        && data.role in ['super_admin', 'moderator', 'analyst']
+        && data.permissions is list && data.permissions.size() <= 16
+        && (data.permissions.size() == 0 || (data.permissions[0] is string && data.permissions[0].size() <= 48))
+        && isValidId(data.grantedBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMemberModeration(data) {
+      return data.keys().hasAll(['uid', 'status', 'reason', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'status', 'reason', 'updatedBy', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.status in ['active', 'restricted', 'suspended']
+        && data.reason is string && data.reason.size() <= 400
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidModerationReport(data) {
+      return data.keys().hasAll([
+          'id', 'targetType', 'targetId', 'targetAuthorUid', 'targetSummary',
+          'reporterUid', 'reporterName', 'category', 'severity', 'reason',
+          'status', 'resolutionAction', 'reviewedBy', 'reviewedAtMs', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'targetType', 'targetId', 'targetAuthorUid', 'targetSummary',
+          'reporterUid', 'reporterName', 'category', 'severity', 'reason',
+          'status', 'resolutionAction', 'reviewedBy', 'reviewedAtMs', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.targetType in ['post', 'story', 'comment', 'user']
+        && isValidId(data.targetId)
+        && data.targetAuthorUid is string && data.targetAuthorUid.size() <= 128
+        && data.targetSummary is string && data.targetSummary.size() <= 240
+        && isValidId(data.reporterUid)
+        && data.reporterName is string && data.reporterName.size() >= 1 && data.reporterName.size() <= 60
+        && data.category in ['spam', 'harassment', 'misinformation', 'nudity', 'copyright', 'other']
+        && data.severity in ['low', 'medium', 'high', 'critical']
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 500
+        && data.status in ['open', 'reviewing', 'resolved', 'dismissed']
+        && data.resolutionAction is string && data.resolutionAction.size() <= 120
+        && data.reviewedBy is string && data.reviewedBy.size() <= 128
+        && data.reviewedAtMs is int && data.reviewedAtMs >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidModerationAppeal(data) {
+      return data.keys().hasAll([
+          'id', 'appellantUid', 'appellantName', 'appellantHandle',
+          'reportId', 'targetId', 'reason', 'status', 'reviewerUid',
+          'reviewerNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'appellantUid', 'appellantName', 'appellantHandle',
+          'reportId', 'targetId', 'reason', 'status', 'reviewerUid',
+          'reviewerNote', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.appellantUid)
+        && data.appellantName is string && data.appellantName.size() >= 1 && data.appellantName.size() <= 60
+        && data.appellantHandle is string && data.appellantHandle.size() <= 32
+        && data.reportId is string && data.reportId.size() <= 128
+        && data.targetId is string && data.targetId.size() <= 128
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 600
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.reviewerUid is string && data.reviewerUid.size() <= 128
+        && data.reviewerNote is string && data.reviewerNote.size() <= 400
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlatformAnnouncement(data) {
+      return data.keys().hasAll([
+          'id', 'title', 'body', 'severity', 'audience', 'active',
+          'authorUid', 'authorName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'body', 'severity', 'audience', 'active',
+          'authorUid', 'authorName', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 600
+        && data.severity in ['info', 'warning', 'maintenance']
+        && data.audience in ['all', 'verified', 'admins']
+        && data.active is bool
+        && isValidId(data.authorUid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminConfigDoc(data) {
+      return data.keys().hasAll(['id', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'storiesEnabled', 'voiceNotesEnabled', 'callsEnabled',
+          'maintenanceMode', 'registrationsOpen', 'strictModerationQueue',
+          'hiddenPostIds', 'version', 'summary', 'rulesText', 'updatedBy', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && (!('storiesEnabled' in data) || data.storiesEnabled is bool)
+        && (!('voiceNotesEnabled' in data) || data.voiceNotesEnabled is bool)
+        && (!('callsEnabled' in data) || data.callsEnabled is bool)
+        && (!('maintenanceMode' in data) || data.maintenanceMode is bool)
+        && (!('registrationsOpen' in data) || data.registrationsOpen is bool)
+        && (!('strictModerationQueue' in data) || data.strictModerationQueue is bool)
+        && (!('hiddenPostIds' in data) || (data.hiddenPostIds is list && data.hiddenPostIds.size() <= 500))
+        && (!('version' in data) || (data.version is string && data.version.size() <= 32))
+        && (!('summary' in data) || (data.summary is string && data.summary.size() <= 300))
+        && (!('rulesText' in data) || (data.rulesText is string && data.rulesText.size() <= 5000))
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminAuditLog(data) {
+      return data.keys().hasAll([
+          'id', 'actorUid', 'actorEmail', 'action', 'targetType', 'targetId',
+          'summary', 'createdAtMs', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'actorUid', 'actorEmail', 'action', 'targetType', 'targetId',
+          'summary', 'createdAtMs', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.actorUid) && data.actorUid == request.auth.uid
+        && data.actorEmail is string && data.actorEmail.size() <= 200
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 64
+        && data.targetType is string && data.targetType.size() >= 1 && data.targetType.size() <= 40
+        && data.targetId is string && data.targetId.size() <= 128
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300
+        && data.createdAtMs is int && data.createdAtMs >= 0
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAccessInquiry(data) {
+      return data.keys().hasAll([
+          'id', 'fullName', 'email', 'organization', 'note',
+          'status', 'reviewedBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'fullName', 'email', 'organization', 'note',
+          'status', 'reviewedBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.organization is string && data.organization.size() <= 100
+        && data.note is string && data.note.size() >= 1 && data.note.size() <= 600
+        && data.status in ['pending', 'approved', 'archived']
+        && data.reviewedBy is string && data.reviewedBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
-      allow list: if isVerifiedUser() && resource.data.onboardingCompleted == true;
+      allow list: if isVerifiedUser() && (resource.data.onboardingCompleted == true || isAdmin());
       allow create: if isVerifiedUser()
         && isOwner(userId)
         && isValidId(userId)
@@ -513,7 +687,7 @@ service cloud.firestore {
         );
       allow delete: if isVerifiedUser()
         && isValidId(postId)
-        && existing().authorId == request.auth.uid;
+        && (existing().authorId == request.auth.uid || isAdmin());
 
       match /likes/{userId} {
         allow get: if isVerifiedUser() && isValidId(postId) && isValidId(userId);
@@ -684,12 +858,12 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isVerifiedUser()
         && isValidId(storyId)
-        && existing().authorId == request.auth.uid;
+        && (existing().authorId == request.auth.uid || isAdmin());
     }
 
     match /presence/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
-      allow list: if isVerifiedUser() && resource.data.online == true;
+      allow list: if isVerifiedUser() && (resource.data.online == true || isAdmin());
       allow create: if isVerifiedUser()
         && isOwner(userId)
         && isValidId(userId)
@@ -775,6 +949,145 @@ service cloud.firestore {
         && incoming().tag == tagId
         && incoming().createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    // --- Platform Administration Collections ---
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(adminUid)
+        && isValidAdminRole(incoming())
+        && incoming().uid == adminUid
+        && incoming().grantedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(adminUid)
+        && isValidAdminRole(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(adminUid) && adminUid != request.auth.uid;
+    }
+
+    match /userModeration/{targetUid} {
+      allow get: if isVerifiedUser() && isValidId(targetUid) && (isOwner(targetUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidId(targetUid)
+        && targetUid != request.auth.uid
+        && isValidMemberModeration(incoming())
+        && incoming().uid == targetUid
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(targetUid) && targetUid != request.auth.uid;
+    }
+
+    match /reports/{reportId} {
+      allow get: if isVerifiedUser() && isValidId(reportId) && (isAdmin() || existing().reporterUid == request.auth.uid);
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.reporterUid == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(reportId)
+        && isValidModerationReport(incoming())
+        && incoming().id == reportId
+        && incoming().reporterUid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().reviewedBy == ''
+        && incoming().reviewedAtMs == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(reportId)
+        && isValidModerationReport(incoming())
+        && incoming().id == existing().id
+        && incoming().reporterUid == existing().reporterUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /appeals/{appealId} {
+      allow get: if isVerifiedUser() && isValidId(appealId) && (isAdmin() || existing().appellantUid == request.auth.uid);
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.appellantUid == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(appealId)
+        && isValidModerationAppeal(incoming())
+        && incoming().id == appealId
+        && incoming().appellantUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().reviewerUid == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(appealId)
+        && isValidModerationAppeal(incoming())
+        && incoming().id == existing().id
+        && incoming().appellantUid == existing().appellantUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /announcements/{announcementId} {
+      allow get: if isVerifiedUser() && isValidId(announcementId) && (existing().active == true || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.active == true || isAdmin());
+      allow create: if isAdmin()
+        && isValidId(announcementId)
+        && isValidPlatformAnnouncement(incoming())
+        && incoming().id == announcementId
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(announcementId)
+        && isValidPlatformAnnouncement(incoming())
+        && incoming().id == existing().id
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(announcementId);
+    }
+
+    match /adminConfig/{configId} {
+      allow get: if isVerifiedUser() && isValidId(configId);
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidId(configId)
+        && isValidAdminConfigDoc(incoming())
+        && incoming().id == configId
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow get: if isAdmin() && isValidId(logId);
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(logId)
+        && isValidAdminAuditLog(incoming())
+        && incoming().id == logId
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /accessInquiries/{inquiryId} {
+      allow get: if isAdmin() && isValidId(inquiryId);
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(inquiryId)
+        && isValidAccessInquiry(incoming())
+        && incoming().id == inquiryId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(inquiryId)
+        && isValidAccessInquiry(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(inquiryId);
     }
   }
 }
