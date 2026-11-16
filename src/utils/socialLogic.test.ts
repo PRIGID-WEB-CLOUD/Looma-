@@ -72,11 +72,18 @@ import {
   buildPostSharePayload,
   formatMissedCallMessage,
   parseMissedCallMessage,
+  filterAndSortFeed,
+  filterActiveTypingUids,
+  resolveThreadReadStatus,
+  validatePasswordResetEmail,
+  TYPING_STALE_MS,
 } from './socialLogic';
 import type {
   AppNotification,
   ChatMessage,
+  ChatReadReceipt,
   ChatThread,
+  ChatTypingStatus,
   CallSession,
   Post,
   StoryItem,
@@ -1359,3 +1366,118 @@ test('formatSharedPostMessage, buildPostSharePayload, and missed call message fo
   assert.equal(formatLastMessageSnippet(encodedMissed), '📞 Missed voice call');
 });
 
+test('filterAndSortFeed supports Following stream, category filtering, and top-liked sorting', () => {
+  const posts: Post[] = [
+    { ...makePost(1, 'Architecture'), authorId: 'u_maya', likesCount: 15, createdAtMs: 100 },
+    { ...makePost(2, 'Design'), authorId: 'u_kenji', likesCount: 40, createdAtMs: 200 },
+    { ...makePost(3, 'Architecture'), authorId: 'u_me', likesCount: 5, createdAtMs: 300 },
+    { ...makePost(4, 'Travel'), authorId: 'u_stranger', likesCount: 99, createdAtMs: 400 },
+  ];
+
+  const followingFeed = filterAndSortFeed({
+    posts,
+    pageSize: 4,
+    visibleCount: 4,
+    filter: 'Following',
+    sortOrder: 'latest',
+    searchQuery: '',
+    followedUserIds: ['u_maya'],
+    currentUserId: 'u_me',
+  });
+  assert.deepEqual(
+    followingFeed.items.map((p) => p.id),
+    ['post_3', 'post_1']
+  );
+
+  const topArch = filterAndSortFeed({
+    posts,
+    pageSize: 4,
+    visibleCount: 4,
+    filter: 'Architecture',
+    sortOrder: 'top',
+    searchQuery: '',
+  });
+  assert.deepEqual(
+    topArch.items.map((p) => p.id),
+    ['post_1', 'post_3']
+  );
+
+  const topAll = filterAndSortFeed({
+    posts,
+    pageSize: 4,
+    visibleCount: 4,
+    filter: 'All',
+    sortOrder: 'top',
+    searchQuery: '',
+  });
+  assert.equal(topAll.items[0].id, 'post_4');
+});
+
+test('filterActiveTypingUids, resolveThreadReadStatus, and validatePasswordResetEmail enforce live sync semantics', () => {
+  const now = 1_700_000_000_000;
+  const memberIds = ['u_me', 'u_maya', 'u_kenji', 'u_elena'];
+  const typingRecords: ChatTypingStatus[] = [
+    { chatId: 'c1', uid: 'u_me', memberIds, isTyping: true, updatedAtMs: now - 500 },
+    { chatId: 'c1', uid: 'u_maya', memberIds, isTyping: true, updatedAtMs: now - 1500 },
+    {
+      chatId: 'c1',
+      uid: 'u_kenji',
+      memberIds,
+      isTyping: true,
+      updatedAtMs: now - (TYPING_STALE_MS + 100),
+    },
+    { chatId: 'c1', uid: 'u_elena', memberIds, isTyping: false, updatedAtMs: now - 200 },
+  ];
+  assert.deepEqual(filterActiveTypingUids(typingRecords, 'u_me', now), ['u_maya']);
+
+  const outgoingMsg: Pick<ChatMessage, 'id' | 'senderId' | 'createdAtMs'> = {
+    id: 'msg_10',
+    senderId: 'u_me',
+    createdAtMs: now - 10_000,
+  };
+  const selfOnlyReceipts: ChatReadReceipt[] = [
+    {
+      chatId: 'c1',
+      uid: 'u_me',
+      memberIds: ['u_me', 'u_maya'],
+      lastReadMessageId: 'msg_10',
+      lastReadAtMs: now - 9_000,
+      updatedAtMs: now - 9_000,
+    },
+    {
+      chatId: 'c1',
+      uid: 'u_maya',
+      memberIds: ['u_me', 'u_maya'],
+      lastReadMessageId: 'msg_9',
+      lastReadAtMs: now - 20_000,
+      updatedAtMs: now - 20_000,
+    },
+  ];
+  assert.deepEqual(
+    resolveThreadReadStatus(outgoingMsg, 'u_me', selfOnlyReceipts),
+    { seen: false, seenByUids: [], label: 'Delivered' }
+  );
+
+  const seenReceipts: ChatReadReceipt[] = [
+    ...selfOnlyReceipts,
+    {
+      chatId: 'c1',
+      uid: 'u_maya',
+      memberIds: ['u_me', 'u_maya'],
+      lastReadMessageId: 'msg_10',
+      lastReadAtMs: now - 5_000,
+      updatedAtMs: now - 5_000,
+    },
+  ];
+  assert.deepEqual(
+    resolveThreadReadStatus(outgoingMsg, 'u_me', seenReceipts),
+    { seen: true, seenByUids: ['u_maya'], label: 'Seen' }
+  );
+
+  assert.equal(validatePasswordResetEmail('').valid, false);
+  assert.equal(validatePasswordResetEmail('not-an-email').valid, false);
+  assert.deepEqual(validatePasswordResetEmail('  alex@looma.app '), {
+    valid: true,
+    email: 'alex@looma.app',
+  });
+});

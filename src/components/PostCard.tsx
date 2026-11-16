@@ -11,6 +11,7 @@ import {
   MessageCircle,
   MessageSquare,
   Music,
+  Pencil,
   PictureInPicture2,
   PlusCircle,
   RotateCcw,
@@ -20,7 +21,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { ChatThread, Post, PostComment } from '../types/social';
+import type { ChatThread, Post, PostCategory, PostComment } from '../types/social';
 import {
   buildPostSharePayload,
   canSharePostToStory,
@@ -29,9 +30,11 @@ import {
   extractFirstUrl,
   formatRelativeTime,
   parseRichUrl,
+  POST_CATEGORIES,
   resolvePostMediaDescriptor,
   sanitizeMediaTitle,
   validateCommentInput,
+  validatePostInput,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaViewerModal } from './MediaViewerModal';
@@ -47,6 +50,10 @@ interface PostCardProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onUpdatePost?: (
+    post: Post,
+    updates: { caption: string; category: PostCategory }
+  ) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory?: (post: Post) => Promise<unknown> | void;
@@ -67,6 +74,7 @@ export function PostCard({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onUpdatePost,
   onDeletePost,
   onDeleteComment,
   onShareToStory,
@@ -97,6 +105,11 @@ export function PostCard({
   const [deletingPost, setDeletingPost] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editingPost, setEditingPost] = useState(false);
+  const [editCaption, setEditCaption] = useState(post.caption);
+  const [editCategory, setEditCategory] = useState<PostCategory>(post.category);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -199,6 +212,40 @@ export function PostCard({
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Unable to delete post.');
       setDeletingPost(false);
+    }
+  };
+
+  const handleOpenEdit = () => {
+    setEditCaption(post.caption);
+    setEditCategory(post.category);
+    setEditError(null);
+    setConfirmingDeletePost(false);
+    setEditingPost(true);
+  };
+
+  const handleSaveEdit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!onUpdatePost || savingEdit) return;
+    const hasAttachment = Boolean(
+      post.imageUrl || post.videoUrl || post.audioUrl || post.linkUrl
+    );
+    const check = validatePostInput(editCaption, editCategory, hasAttachment);
+    if (!check.valid) {
+      setEditError(check.error || 'Enter valid post content.');
+      return;
+    }
+    setEditError(null);
+    setSavingEdit(true);
+    try {
+      await onUpdatePost(post, {
+        caption: editCaption.trim(),
+        category: editCategory,
+      });
+      setEditingPost(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Unable to save post changes.');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -307,11 +354,24 @@ export function PostCard({
               <span>@{post.authorHandle}</span>
               <span className="mx-1" aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAtMs)}</span>
+              <span className="mx-1" aria-hidden="true">·</span>
+              <span>{post.category}</span>
             </p>
           </div>
         </button>
 
         <div className="flex items-center gap-1 shrink-0">
+          {isOwnPost && onUpdatePost && !editingPost && !confirmingDeletePost && (
+            <button
+              type="button"
+              onClick={handleOpenEdit}
+              aria-label="Edit post"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+            >
+              <Pencil className="w-4 h-4" aria-hidden="true" />
+            </button>
+          )}
+
           {isOwnPost && onDeletePost && (
             confirmingDeletePost ? (
               <div className="flex items-center gap-1.5 mr-1">
@@ -346,26 +406,6 @@ export function PostCard({
               </button>
             )
           )}
-
-          <button
-            type="button"
-            onClick={() => onToggleBookmark(post.id)}
-            aria-label={
-              isBookmarked
-                ? `Remove bookmark for ${post.authorName}'s post`
-                : `Bookmark ${post.authorName}'s post`
-            }
-            className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
-              isBookmarked
-                ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50'
-                : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Bookmark
-              className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`}
-              aria-hidden="true"
-            />
-          </button>
         </div>
       </div>
 
@@ -375,15 +415,87 @@ export function PostCard({
         </p>
       )}
 
-      {/* Caption */}
-      {post.caption && (
-        <div className="mt-3 text-[15px] leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line break-words">
-          <RichText
-            text={post.caption}
-            onHashtagClick={onSelectHashtag}
-            onMentionClick={onMentionClick}
-          />
-        </div>
+      {/* Caption or Inline Edit Form */}
+      {editingPost ? (
+        <form
+          onSubmit={handleSaveEdit}
+          data-testid={`edit-post-form-${post.id}`}
+          className="mt-3 rounded-2xl border border-blue-200 dark:border-blue-900/70 bg-slate-50 dark:bg-slate-950 p-3.5 space-y-3"
+        >
+          <div>
+            <label
+              htmlFor={`edit-caption-${post.id}`}
+              className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+            >
+              Edit Caption
+            </label>
+            <textarea
+              id={`edit-caption-${post.id}`}
+              value={editCaption}
+              onChange={(e) => setEditCaption(e.target.value)}
+              rows={3}
+              maxLength={1200}
+              className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor={`edit-category-${post.id}`}
+                className="text-xs font-semibold text-slate-600 dark:text-slate-400"
+              >
+                Category
+              </label>
+              <select
+                id={`edit-category-${post.id}`}
+                value={editCategory}
+                onChange={(e) => setEditCategory(e.target.value as PostCategory)}
+                className="min-h-[36px] px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                {POST_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => {
+                  setEditingPost(false);
+                  setEditError(null);
+                }}
+                className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingEdit}
+                className="min-h-[36px] px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {savingEdit ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+          {editError && (
+            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {editError}
+            </p>
+          )}
+        </form>
+      ) : (
+        post.caption && (
+          <div className="mt-3 text-[15px] leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line break-words">
+            <RichText
+              text={post.caption}
+              onHashtagClick={onSelectHashtag}
+              onMentionClick={onMentionClick}
+            />
+          </div>
+        )
       )}
 
       {/* Interactive Media Frame: Click to open full-screen viewer */}
@@ -670,8 +782,8 @@ export function PostCard({
       )}
 
       {/* Action Bar */}
-      <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1 sm:gap-2">
+      <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
           <button
             type="button"
             onClick={() => onToggleLike(post)}
@@ -680,14 +792,14 @@ export function PostCard({
                 ? `Unlike post by ${post.authorName} (${post.likesCount} likes)`
                 : `Like post by ${post.authorName} (${post.likesCount} likes)`
             }
-            className={`min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium tabular-nums transition-colors cursor-pointer ${
+            className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               isLiked
                 ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Heart
-              className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`}
+              className={`w-4 h-4 shrink-0 ${isLiked ? 'fill-current' : ''}`}
               aria-hidden="true"
             />
             <span>{post.likesCount}</span>
@@ -698,37 +810,40 @@ export function PostCard({
             onClick={() => setCommentsOpen((prev) => !prev)}
             aria-expanded={commentsOpen}
             aria-label={`Comments on ${post.authorName}'s post (${comments.length || post.commentsCount})`}
-            className="min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >
-            <MessageCircle className="w-4 h-4" aria-hidden="true" />
+            <MessageCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>{Math.max(post.commentsCount, comments.length)}</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {isOwnPost && onShareToStory && (
             <button
               type="button"
               disabled={sharingToStory}
               onClick={handleShareToStory}
               aria-label="Share post to story"
-              className={`min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+              className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-60 ${
                 sharedToStory
                   ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               {sharedToStory ? (
-                <Check className="w-4 h-4" aria-hidden="true" />
+                <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
               ) : (
-                <PlusCircle className="w-4 h-4" aria-hidden="true" />
+                <PlusCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
               )}
-              <span>
+              <span className="hidden sm:inline">
                 {sharingToStory
                   ? 'Sharing...'
                   : sharedToStory
                     ? 'In Story'
                     : 'To Story'}
+              </span>
+              <span className="sm:hidden">
+                {sharingToStory ? '...' : sharedToStory ? 'Added' : 'Story'}
               </span>
             </button>
           )}
@@ -737,10 +852,10 @@ export function PostCard({
             type="button"
             onClick={handleOpenShareModal}
             aria-label={`Share post by ${post.authorName}`}
-            className="min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >
-            <Share2 className="w-4 h-4" aria-hidden="true" />
-            <span>Share</span>
+            <Share2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span className="hidden sm:inline">Share</span>
           </button>
 
           <button
@@ -751,17 +866,17 @@ export function PostCard({
                 ? `Remove bookmark for post by ${post.authorName}`
                 : `Bookmark post by ${post.authorName}`
             }
-            className={`min-h-[44px] px-3 rounded-xl flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
+            className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               isBookmarked
                 ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Bookmark
-              className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`}
+              className={`w-4 h-4 shrink-0 ${isBookmarked ? 'fill-current' : ''}`}
               aria-hidden="true"
             />
-            <span className="hidden xs:inline sm:inline">{isBookmarked ? 'Saved' : 'Save'}</span>
+            <span className="hidden sm:inline">{isBookmarked ? 'Saved' : 'Save'}</span>
           </button>
         </div>
       </div>

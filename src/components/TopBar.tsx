@@ -1,4 +1,4 @@
-import { Moon, Sun, Video } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import type { TabId, ThemeMode } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -9,7 +9,6 @@ interface TopBarProps {
   unreadNotifications: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
-  onStartCall?: (title: string, isAudioOnly: boolean) => void;
 }
 
 export function TopBar({
@@ -18,7 +17,6 @@ export function TopBar({
   unreadNotifications,
   theme,
   onToggleTheme,
-  onStartCall,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -78,7 +76,7 @@ export function TopBar({
               theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
             }
             className={`${
-              activeTab === 'messages' ? 'flex' : 'md:hidden flex'
+              activeTab === 'messages' ? 'flex' : 'lg:hidden flex'
             } min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer`}
           >
             {theme === 'dark' ? (

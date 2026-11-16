@@ -1,8 +1,12 @@
 import type {
   AppNotification,
   ChatMessage,
+  ChatReadReceipt,
   ChatThread,
+  ChatTypingStatus,
   DirectChatParticipantResolution,
+  FeedFilter,
+  FeedSortOrder,
   Post,
   PostCategory,
   StoryGroup,
@@ -107,17 +111,37 @@ export function validateCommentInput(text: string): {
   return { valid: true };
 }
 
-export function paginateFeed(
-  posts: Post[],
-  pageSize: number,
-  visibleCount: number,
-  category: 'All' | PostCategory,
-  searchQuery: string
-): { items: Post[]; filteredTotal: number; hasMore: boolean } {
+export function filterAndSortFeed(params: {
+  posts: Post[];
+  pageSize: number;
+  visibleCount: number;
+  filter: FeedFilter;
+  sortOrder?: FeedSortOrder;
+  followedUserIds?: string[];
+  currentUserId?: string;
+  searchQuery?: string;
+}): { items: Post[]; filteredTotal: number; hasMore: boolean } {
+  const {
+    posts,
+    pageSize,
+    visibleCount,
+    filter,
+    sortOrder = 'latest',
+    followedUserIds = [],
+    currentUserId = '',
+    searchQuery = '',
+  } = params;
   const query = searchQuery.trim().toLowerCase();
+  const followedSet = new Set(followedUserIds);
+
   const filtered = posts
     .filter((post) => {
-      if (category !== 'All' && post.category !== category) {
+      if (filter === 'Following') {
+        const isFollowingOrSelf =
+          followedSet.has(post.authorId) ||
+          (Boolean(currentUserId) && post.authorId === currentUserId);
+        if (!isFollowingOrSelf) return false;
+      } else if (filter !== 'All' && post.category !== filter) {
         return false;
       }
       if (!query) return true;
@@ -128,7 +152,13 @@ export function paginateFeed(
         post.category.toLowerCase().includes(query)
       );
     })
-    .sort((a, b) => b.createdAtMs - a.createdAtMs);
+    .sort((a, b) => {
+      if (sortOrder === 'top') {
+        const diff = b.likesCount - a.likesCount;
+        if (diff !== 0) return diff;
+      }
+      return b.createdAtMs - a.createdAtMs;
+    });
 
   const safeLimit = Math.max(pageSize, visibleCount);
   const items = filtered.slice(0, safeLimit);
@@ -137,6 +167,23 @@ export function paginateFeed(
     filteredTotal: filtered.length,
     hasMore: items.length < filtered.length,
   };
+}
+
+export function paginateFeed(
+  posts: Post[],
+  pageSize: number,
+  visibleCount: number,
+  category: 'All' | PostCategory,
+  searchQuery: string
+): { items: Post[]; filteredTotal: number; hasMore: boolean } {
+  return filterAndSortFeed({
+    posts,
+    pageSize,
+    visibleCount,
+    filter: category,
+    sortOrder: 'latest',
+    searchQuery,
+  });
 }
 
 export function togglePostLikeState(
@@ -1967,6 +2014,74 @@ export function filterGifs(
     );
   });
 }
+
+export const TYPING_STALE_MS = 6500;
+
+export function filterActiveTypingUids(
+  typingRecords: ChatTypingStatus[],
+  currentUid: string,
+  nowMs: number = Date.now(),
+  ttlMs: number = TYPING_STALE_MS
+): string[] {
+  return typingRecords
+    .filter(
+      (rec) =>
+        rec.uid &&
+        rec.uid !== currentUid &&
+        rec.isTyping &&
+        nowMs - rec.updatedAtMs <= ttlMs &&
+        nowMs - rec.updatedAtMs >= -30_000
+    )
+    .map((rec) => rec.uid);
+}
+
+export function resolveThreadReadStatus(
+  lastOutgoingMessage: Pick<ChatMessage, 'id' | 'senderId' | 'createdAtMs'> | null | undefined,
+  currentUid: string,
+  readReceipts: ChatReadReceipt[]
+): { seen: boolean; seenByUids: string[]; label: 'Seen' | 'Delivered' } {
+  if (!lastOutgoingMessage || lastOutgoingMessage.senderId !== currentUid) {
+    return { seen: false, seenByUids: [], label: 'Delivered' };
+  }
+  const seenByUids = readReceipts
+    .filter((receipt) => {
+      if (!receipt.uid || receipt.uid === currentUid) return false;
+      if (
+        receipt.lastReadMessageId &&
+        receipt.lastReadMessageId === lastOutgoingMessage.id
+      ) {
+        return true;
+      }
+      return (
+        receipt.lastReadAtMs > 0 &&
+        lastOutgoingMessage.createdAtMs > 0 &&
+        receipt.lastReadAtMs >= lastOutgoingMessage.createdAtMs
+      );
+    })
+    .map((receipt) => receipt.uid);
+
+  return {
+    seen: seenByUids.length > 0,
+    seenByUids,
+    label: seenByUids.length > 0 ? 'Seen' : 'Delivered',
+  };
+}
+
+export function validatePasswordResetEmail(rawEmail: string): {
+  valid: boolean;
+  email?: string;
+  error?: string;
+} {
+  const clean = rawEmail.trim();
+  if (!clean) {
+    return { valid: false, error: 'Enter your account email address.' };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) || clean.length > 200) {
+    return { valid: false, error: 'Enter a valid email address.' };
+  }
+  return { valid: true, email: clean };
+}
+
 
 
 

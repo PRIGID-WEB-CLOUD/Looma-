@@ -107,6 +107,9 @@ export interface ChatThread {
   updatedAtMs: number;
 }
 
+export type FeedFilter = 'All' | 'Following' | PostCategory;
+export type FeedSortOrder = 'latest' | 'top';
+
 export interface ChatMessage {
   id: string;
   chatId: string;
@@ -116,6 +119,23 @@ export interface ChatMessage {
   text: string;
   memberIds: string[];
   createdAtMs: number;
+}
+
+export interface ChatTypingStatus {
+  chatId: string;
+  uid: string;
+  isTyping: boolean;
+  memberIds: string[];
+  updatedAtMs: number;
+}
+
+export interface ChatReadReceipt {
+  chatId: string;
+  uid: string;
+  lastReadAtMs: number;
+  lastReadMessageId: string;
+  memberIds: string[];
+  updatedAtMs: number;
 }
 
 export interface CallParticipant {

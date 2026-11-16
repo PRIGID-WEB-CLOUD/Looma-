@@ -28,6 +28,7 @@ import {
   OperationType,
   reloadCurrentUser,
   resendVerificationEmail,
+  sendPasswordReset,
   signInWithGoogle,
   signInWithApple,
   signInWithEmail,
@@ -64,7 +65,9 @@ import type {
   CallParticipant,
   CallSession,
   ChatMessage,
+  ChatReadReceipt,
   ChatThread,
+  ChatTypingStatus,
   IncomingCallInvite,
   Post,
   PostCategory,
@@ -107,6 +110,8 @@ import {
   shouldDispatchChatPushNotification,
   toggleFollowState,
   validateGroupChatInput,
+  validatePasswordResetEmail,
+  validatePostInput,
 } from '../utils/socialLogic';
 import {
   reconcileCallSessionWithPeers,
@@ -485,6 +490,12 @@ export function useSocialStore() {
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.MUTED_CHATS, [])
   );
+  const [typingByChat, setTypingByChat] = useState<
+    Record<string, ChatTypingStatus[]>
+  >({});
+  const [readReceiptsByChat, setReadReceiptsByChat] = useState<
+    Record<string, ChatReadReceipt[]>
+  >({});
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() =>
     stripDemoNotifications(
@@ -717,6 +728,8 @@ export function useSocialStore() {
         | { type: 'post:new'; post: Post }
         | { type: 'story:new'; story: StoryItem }
         | { type: 'chat:message'; threadId: string; message: ChatMessage }
+        | { type: 'chat:typing'; status: ChatTypingStatus }
+        | { type: 'chat:read'; receipt: ChatReadReceipt }
         | { type: 'chat:thread_created'; thread: ChatThread }
         | { type: 'chat:thread_updated'; thread: ChatThread }
         | { type: 'notif:new'; notification: AppNotification };
@@ -804,6 +817,26 @@ export function useSocialStore() {
             dedupeKey: `msg:${payload.message.id}`,
           });
         }
+      } else if (payload.type === 'chat:typing') {
+        setTypingByChat((prev) => {
+          const list = (prev[payload.status.chatId] || []).filter(
+            (item) => item.uid !== payload.status.uid
+          );
+          return {
+            ...prev,
+            [payload.status.chatId]: [...list, payload.status],
+          };
+        });
+      } else if (payload.type === 'chat:read') {
+        setReadReceiptsByChat((prev) => {
+          const list = (prev[payload.receipt.chatId] || []).filter(
+            (item) => item.uid !== payload.receipt.uid
+          );
+          return {
+            ...prev,
+            [payload.receipt.chatId]: [...list, payload.receipt],
+          };
+        });
       } else if (payload.type === 'notif:new') {
         setNotifications((prev) =>
           prev.some((n) => n.id === payload.notification.id)
@@ -1798,6 +1831,27 @@ export function useSocialStore() {
     }
   }, []);
 
+  const sendPasswordResetLink = useCallback(async (rawEmail: string) => {
+    const check = validatePasswordResetEmail(rawEmail);
+    if (!check.valid || !check.email) {
+      throw new Error(check.error || 'Enter a valid email address.');
+    }
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await sendPasswordReset(check.email);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to send password reset email.';
+      setAuthError(msg);
+      throw new Error(msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
   const refreshVerificationStatus = useCallback(async (): Promise<boolean> => {
     setAuthError(null);
     setAuthLoading(true);
@@ -2284,6 +2338,58 @@ export function useSocialStore() {
     [firebaseUser, profile, requireAuthorized, saveHashtagsFromText, triggerNotification]
   );
 
+  const updatePost = useCallback(
+    async (
+      post: Post,
+      updates: { caption: string; category: PostCategory }
+    ) => {
+      requireAuthorized();
+      if (post.authorId !== profile.uid) {
+        throw new Error('You can only edit your own posts.');
+      }
+      const cleanCaption = updates.caption.trim();
+      const hasAttachment = Boolean(
+        post.imageUrl || post.videoUrl || post.audioUrl || post.linkUrl
+      );
+      const check = validatePostInput(
+        cleanCaption,
+        updates.category,
+        hasAttachment
+      );
+      if (!check.valid) {
+        throw new Error(check.error || 'Enter a valid post update.');
+      }
+
+      const isRemotePost = remotePosts.some((rp) => rp.id === post.id);
+      if (firebaseUser && isRemotePost) {
+        try {
+          await updateDoc(doc(db, 'posts', post.id), {
+            caption: cleanCaption,
+            category: updates.category,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `posts/${post.id}`);
+        }
+      } else {
+        setLocalPosts((prev) =>
+          prev.map((p) =>
+            p.id === post.id
+              ? {
+                  ...p,
+                  caption: cleanCaption,
+                  category: updates.category,
+                  updatedAtMs: Date.now(),
+                }
+              : p
+          )
+        );
+      }
+      void saveHashtagsFromText(cleanCaption);
+    },
+    [firebaseUser, profile.uid, remotePosts, requireAuthorized, saveHashtagsFromText]
+  );
+
   const toggleLike = useCallback(
     async (post: Post) => {
       requireAuthorized();
@@ -2317,6 +2423,13 @@ export function useSocialStore() {
         try {
           await batch.commit();
         } catch (err) {
+          setLikedPostIds((prev) =>
+            alreadyLiked
+              ? prev.includes(post.id)
+                ? prev
+                : [...prev, post.id]
+              : prev.filter((id) => id !== post.id)
+          );
           handleFirestoreError(err, OperationType.WRITE, `posts/${post.id}`);
         }
       } else {
@@ -2332,7 +2445,7 @@ export function useSocialStore() {
         );
       }
     },
-    [firebaseUser, likedPostIds, remotePosts]
+    [firebaseUser, likedPostIds, remotePosts, requireAuthorized]
   );
 
   const toggleBookmark = useCallback(
@@ -2353,6 +2466,13 @@ export function useSocialStore() {
             await setDoc(ref, { postId, createdAt: serverTimestamp() });
           }
         } catch (err) {
+          setBookmarkedPostIds((prev) =>
+            saved
+              ? prev.includes(postId)
+                ? prev
+                : [...prev, postId]
+              : prev.filter((id) => id !== postId)
+          );
           handleFirestoreError(
             err,
             OperationType.WRITE,
@@ -2361,7 +2481,7 @@ export function useSocialStore() {
         }
       }
     },
-    [bookmarkedPostIds, firebaseUser, remotePosts]
+    [bookmarkedPostIds, firebaseUser, remotePosts, requireAuthorized]
   );
 
   const addComment = useCallback(
@@ -2405,6 +2525,10 @@ export function useSocialStore() {
         try {
           await batch.commit();
         } catch (err) {
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [post.id]: (prev[post.id] || []).filter((c) => c.id !== commentId),
+          }));
           handleFirestoreError(
             err,
             OperationType.WRITE,
@@ -2446,7 +2570,7 @@ export function useSocialStore() {
         }
       }
     },
-    [firebaseUser, profile, remotePosts, triggerNotification]
+    [firebaseUser, profile, remotePosts, requireAuthorized, triggerNotification]
   );
 
   const deletePost = useCallback(
@@ -2523,6 +2647,14 @@ export function useSocialStore() {
         try {
           await batch.commit();
         } catch (err) {
+          if (targetComment) {
+            setCommentsByPost((prev) => ({
+              ...prev,
+              [post.id]: [...(prev[post.id] || []), targetComment].sort(
+                (a, b) => a.createdAtMs - b.createdAtMs
+              ),
+            }));
+          }
           handleFirestoreError(
             err,
             OperationType.DELETE,
@@ -2550,7 +2682,7 @@ export function useSocialStore() {
         where('memberIds', 'array-contains', firebaseUser.uid)
       );
       let initialLoad = true;
-      return onSnapshot(
+      const unsubMessages = onSnapshot(
         q,
         (snap) => {
           const mapped: ChatMessage[] = snap.docs.map((docSnap) => {
@@ -2597,8 +2729,137 @@ export function useSocialStore() {
           // Seed threads not yet stored in Firestore remain available locally
         }
       );
+
+      const typingQuery = query(
+        collection(db, 'chats', chatId, 'typing'),
+        where('memberIds', 'array-contains', firebaseUser.uid)
+      );
+      const unsubTyping = onSnapshot(
+        typingQuery,
+        (snap) => {
+          const list: ChatTypingStatus[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              chatId: String(d.chatId || chatId),
+              uid: String(d.uid || docSnap.id),
+              isTyping: Boolean(d.isTyping),
+              memberIds: Array.isArray(d.memberIds) ? d.memberIds : [],
+              updatedAtMs: timestampToMs(d.updatedAt),
+            };
+          });
+          setTypingByChat((prev) => ({ ...prev, [chatId]: list }));
+        },
+        () => {}
+      );
+
+      const readReceiptsQuery = query(
+        collection(db, 'chats', chatId, 'readReceipts'),
+        where('memberIds', 'array-contains', firebaseUser.uid)
+      );
+      const unsubReceipts = onSnapshot(
+        readReceiptsQuery,
+        (snap) => {
+          const list: ChatReadReceipt[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              chatId: String(d.chatId || chatId),
+              uid: String(d.uid || docSnap.id),
+              lastReadAtMs: Number(d.lastReadAtMs || 0),
+              lastReadMessageId: String(d.lastReadMessageId || ''),
+              memberIds: Array.isArray(d.memberIds) ? d.memberIds : [],
+              updatedAtMs: timestampToMs(d.updatedAt),
+            };
+          });
+          setReadReceiptsByChat((prev) => ({ ...prev, [chatId]: list }));
+        },
+        () => {}
+      );
+
+      return () => {
+        unsubMessages();
+        unsubTyping();
+        unsubReceipts();
+      };
     },
     [firebaseUser, notifyIncomingChatMessage]
+  );
+
+  const setTypingStatus = useCallback(
+    async (thread: ChatThread, isTyping: boolean) => {
+      if (!isAuthorized) return;
+      const memberIds = thread.memberIds.includes(profile.uid)
+        ? thread.memberIds
+        : [profile.uid, ...thread.memberIds].slice(0, 10);
+      const status: ChatTypingStatus = {
+        chatId: thread.id,
+        uid: profile.uid,
+        isTyping,
+        memberIds,
+        updatedAtMs: Date.now(),
+      };
+      setTypingByChat((prev) => {
+        const filtered = (prev[thread.id] || []).filter(
+          (item) => item.uid !== profile.uid
+        );
+        return { ...prev, [thread.id]: [...filtered, status] };
+      });
+      broadcastRef.current?.postMessage({ type: 'chat:typing', status });
+
+      if (firebaseUser) {
+        const ref = doc(db, 'chats', thread.id, 'typing', firebaseUser.uid);
+        setDoc(ref, {
+          chatId: thread.id,
+          uid: firebaseUser.uid,
+          isTyping,
+          memberIds,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    },
+    [firebaseUser, isAuthorized, profile.uid]
+  );
+
+  const markThreadRead = useCallback(
+    async (thread: ChatThread, lastMessage: ChatMessage) => {
+      if (!isAuthorized || !lastMessage?.id) return;
+      const memberIds = thread.memberIds.includes(profile.uid)
+        ? thread.memberIds
+        : [profile.uid, ...thread.memberIds].slice(0, 10);
+      const receipt: ChatReadReceipt = {
+        chatId: thread.id,
+        uid: profile.uid,
+        lastReadAtMs: Math.max(Date.now(), lastMessage.createdAtMs),
+        lastReadMessageId: lastMessage.id,
+        memberIds,
+        updatedAtMs: Date.now(),
+      };
+      setReadReceiptsByChat((prev) => {
+        const filtered = (prev[thread.id] || []).filter(
+          (item) => item.uid !== profile.uid
+        );
+        return { ...prev, [thread.id]: [...filtered, receipt] };
+      });
+      broadcastRef.current?.postMessage({ type: 'chat:read', receipt });
+
+      if (firebaseUser) {
+        const ref = doc(
+          db,
+          'chats',
+          thread.id,
+          'readReceipts',
+          firebaseUser.uid
+        );
+        setDoc(ref, {
+          chatId: thread.id,
+          uid: firebaseUser.uid,
+          lastReadAtMs: receipt.lastReadAtMs,
+          lastReadMessageId: receipt.lastReadMessageId,
+          memberIds,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    },
+    [firebaseUser, isAuthorized, profile.uid]
   );
 
   const sendChatMessage = useCallback(
@@ -2623,6 +2884,12 @@ export function useSocialStore() {
         createdAtMs: now,
       };
 
+      const prevThreadState = {
+        lastMessageText: thread.lastMessageText,
+        lastMessageSenderId: thread.lastMessageSenderId,
+        updatedAtMs: thread.updatedAtMs,
+      };
+
       setMessagesByChat((prev) => ({
         ...prev,
         [thread.id]: [...(prev[thread.id] || []), newMsg],
@@ -2641,12 +2908,6 @@ export function useSocialStore() {
           )
           .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
       );
-
-      broadcastRef.current?.postMessage({
-        type: 'chat:message',
-        threadId: thread.id,
-        message: newMsg,
-      });
 
       if (firebaseUser) {
         try {
@@ -2688,6 +2949,19 @@ export function useSocialStore() {
           });
           await batch.commit();
         } catch (err) {
+          setMessagesByChat((prev) => ({
+            ...prev,
+            [thread.id]: (prev[thread.id] || []).filter((m) => m.id !== msgId),
+          }));
+          setRawThreads((prev) =>
+            prev
+              .map((t) =>
+                t.id === thread.id
+                  ? { ...t, ...prevThreadState }
+                  : t
+              )
+              .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+          );
           handleFirestoreError(
             err,
             OperationType.WRITE,
@@ -2695,6 +2969,12 @@ export function useSocialStore() {
           );
         }
       }
+
+      broadcastRef.current?.postMessage({
+        type: 'chat:message',
+        threadId: thread.id,
+        message: newMsg,
+      });
     },
     [firebaseUser, profile, requireAuthorized]
   );
@@ -3970,6 +4250,7 @@ export function useSocialStore() {
     loginWithEmail,
     signupWithEmail,
     resendEmailVerificationLink,
+    sendPasswordResetLink,
     refreshVerificationStatus,
     logout,
     deleteAccount,
@@ -4006,6 +4287,7 @@ export function useSocialStore() {
     fetchPublicUserProfile,
     fetchOtherUserConnections,
     createPost,
+    updatePost,
     deletePost,
     toggleLike,
     toggleBookmark,
@@ -4014,8 +4296,12 @@ export function useSocialStore() {
     threads,
     messagesByChat,
     mutedChatIds,
+    typingByChat,
+    readReceiptsByChat,
     subscribeChatMessages,
     sendChatMessage,
+    setTypingStatus,
+    markThreadRead,
     startDirectThread,
     createGroupThread,
     addGroupParticipants,

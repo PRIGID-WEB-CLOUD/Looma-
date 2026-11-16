@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, MapPin, MessageSquare, Phone, UserCheck, UserPlus, Users, Video } from 'lucide-react';
-import type { ChatThread, ConnectionsTab, Post, PostComment, UserProfile } from '../types/social';
+import type {
+  ChatThread,
+  ConnectionsTab,
+  Post,
+  PostCategory,
+  PostComment,
+  UserProfile,
+} from '../types/social';
 import { filterMediaPosts } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaGalleryGrid } from './MediaGalleryGrid';
@@ -30,6 +37,10 @@ interface PublicProfileViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onUpdatePost?: (
+    post: Post,
+    updates: { caption: string; category: PostCategory }
+  ) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory?: (post: Post) => Promise<unknown> | void;
@@ -60,6 +71,7 @@ export function PublicProfileView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onUpdatePost,
   onDeletePost,
   onDeleteComment,
   onShareToStory,
@@ -314,6 +326,7 @@ export function PublicProfileView({
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onUpdatePost={onUpdatePost}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
               onShareToStory={onShareToStory}

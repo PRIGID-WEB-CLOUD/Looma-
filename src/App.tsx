@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
@@ -34,20 +34,14 @@ import {
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
-import { CallRoomModal } from './components/CallRoomModal';
-import { ChatView } from './components/ChatView';
-import { ConnectionsView } from './components/ConnectionsView';
 import { CreatePostModal } from './components/CreatePostModal';
 import { FeedView } from './components/FeedView';
 import { IncomingCallModal } from './components/IncomingCallModal';
-import { LegalDocumentView } from './components/LegalDocumentView';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationsView } from './components/NotificationsView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { OnboardingFlow } from './components/OnboardingFlow';
-import { ProfileSettingsView } from './components/ProfileSettingsView';
 import { ProfileView } from './components/ProfileView';
-import { PublicProfileView } from './components/PublicProfileView';
 import { PushToast } from './components/PushToast';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { StoryViewerModal } from './components/StoryViewerModal';
@@ -55,6 +49,45 @@ import { TopBar } from './components/TopBar';
 import { BrandLogoModal } from './components/BrandLogoModal';
 import { useInitialization } from './app/initialization';
 import { InitializationScreen } from './app/startup/InitializationScreen';
+
+const CallRoomModal = lazy(() =>
+  import('./components/CallRoomModal').then((m) => ({
+    default: m.CallRoomModal,
+  }))
+);
+const ChatView = lazy(() =>
+  import('./components/ChatView').then((m) => ({
+    default: m.ChatView,
+  }))
+);
+const ConnectionsView = lazy(() =>
+  import('./components/ConnectionsView').then((m) => ({
+    default: m.ConnectionsView,
+  }))
+);
+const LegalDocumentView = lazy(() =>
+  import('./components/LegalDocumentView').then((m) => ({
+    default: m.LegalDocumentView,
+  }))
+);
+const ProfileSettingsView = lazy(() =>
+  import('./components/ProfileSettingsView').then((m) => ({
+    default: m.ProfileSettingsView,
+  }))
+);
+const PublicProfileView = lazy(() =>
+  import('./components/PublicProfileView').then((m) => ({
+    default: m.PublicProfileView,
+  }))
+);
+
+function RouteLoadingFallback() {
+  return (
+    <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 text-center text-xs text-slate-500 dark:text-slate-400">
+      Loading view...
+    </div>
+  );
+}
 
 export default function App() {
   const { snapshot: initSnapshot } = useInitialization();
@@ -268,7 +301,7 @@ export default function App() {
   const handleOpenMention = (handle: string) => {
     const clean = handle.toLowerCase().replace(/^@+/, '');
     if (clean === store.profile.handle.toLowerCase()) {
-      setActiveTab('profile');
+      selectWorkspaceTab('profile');
       return;
     }
     const foundUser = store.communityUsers.find(
@@ -296,14 +329,14 @@ export default function App() {
 
   const handleHashtagClick = (tag: string) => {
     setFeedSearchQuery(tag ? `#${tag}` : '');
-    setActiveTab('feed');
+    selectWorkspaceTab('feed');
   };
 
   const handleOpenDm = async (creator: UserProfile) => {
     if (creator.uid === store.profile.uid) return;
     const thread = await store.startDirectThread(creator);
     setActiveChatId(thread.id);
-    setActiveTab('messages');
+    selectWorkspaceTab('messages');
   };
 
   const handleOpenPublicProfile = async (
@@ -312,7 +345,7 @@ export default function App() {
     returnTab: 'feed' | 'connections' | 'profile' | 'messages' = 'feed'
   ) => {
     if (targetUid === store.profile.uid) {
-      setActiveTab('profile');
+      selectWorkspaceTab('profile');
       return;
     }
     setPublicProfileReturnTab(returnTab);
@@ -351,7 +384,7 @@ export default function App() {
   ) => {
     setConnectionsOwner(owner);
     setConnectionsTab(tab);
-    setActiveTab('connections');
+    selectWorkspaceTab('connections');
   };
 
   const getConnectionsForUser = (target: UserProfile) => {
@@ -399,19 +432,21 @@ export default function App() {
   if (activeLegalDoc) {
     return (
       <>
-        <LegalDocumentView
-          activeDocId={activeLegalDoc}
-          theme={store.theme}
-          fromAuthSignup={!store.isAuthorized && authMode === 'signup'}
-          consentAlreadyAccepted={hasRequiredAccountConsent(signupConsent)}
-          onSelectDoc={openLegalDocument}
-          onSetTheme={store.setThemeExplicit}
-          onBack={closeLegalDocument}
-          onAcceptAndReturn={() => {
-            setSignupConsent({ termsAccepted: true, privacyAccepted: true });
-            closeLegalDocument();
-          }}
-        />
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <LegalDocumentView
+            activeDocId={activeLegalDoc}
+            theme={store.theme}
+            fromAuthSignup={!store.isAuthorized && authMode === 'signup'}
+            consentAlreadyAccepted={hasRequiredAccountConsent(signupConsent)}
+            onSelectDoc={openLegalDocument}
+            onSetTheme={store.setThemeExplicit}
+            onBack={closeLegalDocument}
+            onAcceptAndReturn={() => {
+              setSignupConsent({ termsAccepted: true, privacyAccepted: true });
+              closeLegalDocument();
+            }}
+          />
+        </Suspense>
         <OfflineIndicator />
       </>
     );
@@ -474,6 +509,7 @@ export default function App() {
           }}
           onResendVerification={store.resendEmailVerificationLink}
           onCheckVerified={store.refreshVerificationStatus}
+          onSendPasswordReset={store.sendPasswordResetLink}
           onLogout={handleLogout}
           onContinueAuthenticated={() => {
             navigateAfterAuthentication();
@@ -530,13 +566,12 @@ export default function App() {
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
-        onStartCall={store.startInstantCall}
       />
 
       <PushToast
         notification={store.activeToast}
         onDismiss={store.dismissToast}
-        onOpenNotifications={() => setActiveTab('notifications')}
+        onOpenNotifications={() => selectWorkspaceTab('notifications')}
       />
 
       <main
@@ -555,7 +590,7 @@ export default function App() {
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4">
             <button
               type="button"
-              onClick={() => setActiveTab('profile')}
+              onClick={() => selectWorkspaceTab('profile')}
               className="w-full flex items-center gap-3 text-left cursor-pointer group"
             >
               <Avatar
@@ -620,7 +655,7 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('notifications')}
+              onClick={() => selectWorkspaceTab('notifications')}
               className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer tabular-nums"
             >
               <span className="flex items-center gap-2.5">
@@ -695,6 +730,7 @@ export default function App() {
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
               bookmarkedPostIds={store.bookmarkedPostIds}
+              followedUserIds={store.followedUserIds}
               shareThreads={store.threads}
               searchQuery={feedSearchQuery}
               onSearchQueryChange={setFeedSearchQuery}
@@ -704,6 +740,7 @@ export default function App() {
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onUpdatePost={store.updatePost}
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
@@ -719,85 +756,97 @@ export default function App() {
           {activeTab === 'public-profile' && selectedPublicProfile && (() => {
             const creatorConnections = getConnectionsForUser(selectedPublicProfile);
             return (
-              <PublicProfileView
-                creator={selectedPublicProfile}
-                currentUserId={store.profile.uid}
-                loading={loadingPublicProfile}
-                isFollowing={store.followedUserIds.includes(
-                  selectedPublicProfile.uid
-                )}
-                followersCount={creatorConnections.followers.length}
-                followingCount={creatorConnections.following.length}
-                friendsCount={creatorConnections.friends.length}
-                posts={store.posts}
-                likedPostIds={store.likedPostIds}
-                bookmarkedPostIds={store.bookmarkedPostIds}
-                commentsByPost={store.commentsByPost}
-                shareThreads={store.threads}
-                backLabel={
-                  publicProfileReturnTab === 'connections'
-                    ? 'Back to Connections'
-                    : publicProfileReturnTab === 'profile'
-                      ? 'Back to Profile'
-                      : publicProfileReturnTab === 'messages'
-                        ? 'Back to Messages'
-                        : 'Back to Feed'
-                }
-                onToggleFollow={store.toggleFollowUser}
-                onMessage={handleOpenDm}
-                onStartCallWithUser={store.startCallWithUser}
-                onOpenConnections={(tab) =>
-                  openConnections(tab, selectedPublicProfile)
-                }
-                onBack={() => setActiveTab(publicProfileReturnTab)}
-                onToggleLike={store.toggleLike}
-                onToggleBookmark={store.toggleBookmark}
-                onAddComment={store.addComment}
-                onDeletePost={store.deletePost}
-                onDeleteComment={store.deleteComment}
-                onShareToStory={store.sharePostToStory}
-                onShareToChat={handleSharePostToChat}
-                onMentionClick={handleOpenMention}
-                onSelectHashtag={handleHashtagClick}
-              />
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <PublicProfileView
+                  creator={selectedPublicProfile}
+                  currentUserId={store.profile.uid}
+                  loading={loadingPublicProfile}
+                  isFollowing={store.followedUserIds.includes(
+                    selectedPublicProfile.uid
+                  )}
+                  followersCount={creatorConnections.followers.length}
+                  followingCount={creatorConnections.following.length}
+                  friendsCount={creatorConnections.friends.length}
+                  posts={store.posts}
+                  likedPostIds={store.likedPostIds}
+                  bookmarkedPostIds={store.bookmarkedPostIds}
+                  commentsByPost={store.commentsByPost}
+                  shareThreads={store.threads}
+                  backLabel={
+                    publicProfileReturnTab === 'connections'
+                      ? 'Back to Connections'
+                      : publicProfileReturnTab === 'profile'
+                        ? 'Back to Profile'
+                        : publicProfileReturnTab === 'messages'
+                          ? 'Back to Messages'
+                          : 'Back to Feed'
+                  }
+                  onToggleFollow={store.toggleFollowUser}
+                  onMessage={handleOpenDm}
+                  onStartCallWithUser={store.startCallWithUser}
+                  onOpenConnections={(tab) =>
+                    openConnections(tab, selectedPublicProfile)
+                  }
+                  onBack={() => selectWorkspaceTab(publicProfileReturnTab)}
+                  onToggleLike={store.toggleLike}
+                  onToggleBookmark={store.toggleBookmark}
+                  onAddComment={store.addComment}
+                  onUpdatePost={store.updatePost}
+                  onDeletePost={store.deletePost}
+                  onDeleteComment={store.deleteComment}
+                  onShareToStory={store.sharePostToStory}
+                  onShareToChat={handleSharePostToChat}
+                  onMentionClick={handleOpenMention}
+                  onSelectHashtag={handleHashtagClick}
+                />
+              </Suspense>
             );
           })()}
 
           {activeTab === 'messages' && (
-            <ChatView
-              profile={store.profile}
-              threads={store.threads}
-              messagesByChat={store.messagesByChat}
-              mutedChatIds={store.mutedChatIds}
-              pushEnabled={store.pushEnabled}
-              onlineUserIds={store.onlineUserIds}
-              communityUsers={store.communityUsers}
-              chatUsers={store.allKnownChatUsers}
-              initialThreadId={activeChatId}
-              onSubscribeThread={store.subscribeChatMessages}
-              onSendMessage={store.sendChatMessage}
-              onStartDirectThread={store.startDirectThread}
-              onCreateGroupThread={store.createGroupThread}
-              onAddParticipants={async (chatId, ids) => {
-                await store.addGroupParticipants(chatId, ids);
-              }}
-              onRemoveParticipant={async (chatId, uid) => {
-                await store.removeGroupParticipant(chatId, uid);
-              }}
-              onRenameGroup={async (chatId, nextTitle) => {
-                await store.renameGroupThread(chatId, nextTitle);
-              }}
-              onPromoteAdmin={async (chatId, uid) => {
-                await store.promoteGroupAdmin(chatId, uid);
-              }}
-              onToggleMuteChat={store.toggleMuteChat}
-              onEnablePush={store.enablePushNotifications}
-              onOpenPublicProfile={(uid) =>
-                handleOpenPublicProfile(uid, undefined, 'messages')
-              }
-              onStartCall={store.startCall}
-              onStartInstantCall={store.startInstantCall}
-            />
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <ChatView
+                profile={store.profile}
+                threads={store.threads}
+                messagesByChat={store.messagesByChat}
+                mutedChatIds={store.mutedChatIds}
+                pushEnabled={store.pushEnabled}
+                onlineUserIds={store.onlineUserIds}
+                communityUsers={store.communityUsers}
+                chatUsers={store.allKnownChatUsers}
+                initialThreadId={activeChatId}
+                isFirebaseBacked={
+                  Boolean(store.firebaseUser) && !store.isLocalAutostart
+                }
+                typingByChat={store.typingByChat}
+                readReceiptsByChat={store.readReceiptsByChat}
+                onSubscribeThread={store.subscribeChatMessages}
+                onSendMessage={store.sendChatMessage}
+                onSetTyping={store.setTypingStatus}
+                onMarkThreadRead={store.markThreadRead}
+                onStartDirectThread={store.startDirectThread}
+                onCreateGroupThread={store.createGroupThread}
+                onAddParticipants={async (chatId, ids) => {
+                  await store.addGroupParticipants(chatId, ids);
+                }}
+                onRemoveParticipant={async (chatId, uid) => {
+                  await store.removeGroupParticipant(chatId, uid);
+                }}
+                onRenameGroup={async (chatId, nextTitle) => {
+                  await store.renameGroupThread(chatId, nextTitle);
+                }}
+                onPromoteAdmin={async (chatId, uid) => {
+                  await store.promoteGroupAdmin(chatId, uid);
+                }}
+                onToggleMuteChat={store.toggleMuteChat}
+                onEnablePush={store.enablePushNotifications}
+                onOpenPublicProfile={(uid) =>
+                  handleOpenPublicProfile(uid, undefined, 'messages')
+                }
+                onStartCall={store.startCall}
+                onStartInstantCall={store.startInstantCall}
+              />
+            </Suspense>
           )}
 
           {activeTab === 'notifications' && (
@@ -827,11 +876,12 @@ export default function App() {
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onUpdatePost={store.updatePost}
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
               onShareToChat={handleSharePostToChat}
-              onOpenSettings={() => setActiveTab('settings')}
+              onOpenSettings={() => selectWorkspaceTab('settings')}
               onOpenConnections={(tab) => openConnections(tab, null)}
               onAuthorClick={(post) =>
                 handleOpenPublicProfile(post.authorId, post, 'profile')
@@ -848,63 +898,67 @@ export default function App() {
               ? getConnectionsForUser(connectionsOwner)
               : store.connections;
             return (
-              <ConnectionsView
-                initialTab={connectionsTab}
-                targetUser={viewingOther ? connectionsOwner : null}
-                currentUserId={store.profile.uid}
-                followers={activeConnections.followers}
-                following={activeConnections.following}
-                friends={activeConnections.friends}
-                followerIds={store.followerUserIds}
-                followedUserIds={store.followedUserIds}
-                onBack={() => {
-                  if (viewingOther) {
-                    setSelectedPublicProfile(connectionsOwner);
-                    setActiveTab('public-profile');
-                  } else {
-                    setActiveTab('profile');
-                  }
-                }}
-                onToggleFollow={store.toggleFollowUser}
-                onMessage={handleOpenDm}
-                onOpenPublicProfile={(person) => {
-                  if (person.uid === store.profile.uid) {
-                    setActiveTab('profile');
-                    return;
-                  }
-                  handleOpenPublicProfile(person.uid, undefined, 'connections');
-                }}
-              />
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <ConnectionsView
+                  initialTab={connectionsTab}
+                  targetUser={viewingOther ? connectionsOwner : null}
+                  currentUserId={store.profile.uid}
+                  followers={activeConnections.followers}
+                  following={activeConnections.following}
+                  friends={activeConnections.friends}
+                  followerIds={store.followerUserIds}
+                  followedUserIds={store.followedUserIds}
+                  onBack={() => {
+                    if (viewingOther) {
+                      setSelectedPublicProfile(connectionsOwner);
+                      setActiveTab('public-profile');
+                    } else {
+                      selectWorkspaceTab('profile');
+                    }
+                  }}
+                  onToggleFollow={store.toggleFollowUser}
+                  onMessage={handleOpenDm}
+                  onOpenPublicProfile={(person) => {
+                    if (person.uid === store.profile.uid) {
+                      selectWorkspaceTab('profile');
+                      return;
+                    }
+                    handleOpenPublicProfile(person.uid, undefined, 'connections');
+                  }}
+                />
+              </Suspense>
             );
           })()}
 
           {activeTab === 'settings' && (
-            <ProfileSettingsView
-              profile={store.profile}
-              privateSettings={store.privateSettings}
-              accountEmail={store.firebaseUser?.email || null}
-              theme={store.theme}
-              pushPermission={store.pushPermission}
-              onSetTheme={store.setThemeExplicit}
-              onEnablePush={store.enablePushNotifications}
-              onLogout={handleLogout}
-              onOpenLegal={openLegalDocument}
-              onDeleteAccount={async () => {
-                await store.deleteAccount();
-                setPreviewOnboarding(false);
-                setAuthMode('signin');
-                setActiveTab('feed');
-                setFeedSearchQuery('');
-                setActiveChatId(null);
-                setSelectedPublicProfile(null);
-                setConnectionsOwner(null);
-                setRemoteOtherConnections(null);
-                navigateToPath('/auth', true);
-              }}
-              onUpdateProfile={store.updateProfile}
-              onUpdatePrivateSettings={store.updatePrivateSettings}
-              onBack={() => selectWorkspaceTab('profile')}
-            />
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <ProfileSettingsView
+                profile={store.profile}
+                privateSettings={store.privateSettings}
+                accountEmail={store.firebaseUser?.email || null}
+                theme={store.theme}
+                pushPermission={store.pushPermission}
+                onSetTheme={store.setThemeExplicit}
+                onEnablePush={store.enablePushNotifications}
+                onLogout={handleLogout}
+                onOpenLegal={openLegalDocument}
+                onDeleteAccount={async () => {
+                  await store.deleteAccount();
+                  setPreviewOnboarding(false);
+                  setAuthMode('signin');
+                  setActiveTab('feed');
+                  setFeedSearchQuery('');
+                  setActiveChatId(null);
+                  setSelectedPublicProfile(null);
+                  setConnectionsOwner(null);
+                  setRemoteOtherConnections(null);
+                  navigateToPath('/auth', true);
+                }}
+                onUpdateProfile={store.updateProfile}
+                onUpdatePrivateSettings={store.updatePrivateSettings}
+                onBack={() => selectWorkspaceTab('profile')}
+              />
+            </Suspense>
           )}
         </div>
 
@@ -921,7 +975,7 @@ export default function App() {
                 </h2>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('messages')}
+                  onClick={() => selectWorkspaceTab('messages')}
                   className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                 >
                   Open all
@@ -939,7 +993,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setActiveChatId(thread.id);
-                        setActiveTab('messages');
+                        selectWorkspaceTab('messages');
                       }}
                       className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
                     >
@@ -1047,7 +1101,7 @@ export default function App() {
         onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);
-          setActiveTab('feed');
+          selectWorkspaceTab('feed');
         }}
       />
 
@@ -1068,27 +1122,31 @@ export default function App() {
         onClose={() => setAddStoryOpen(false)}
         onCreateStory={async (caption, imageUrl) => {
           await store.addStory(caption, imageUrl);
-          setActiveTab('feed');
+          selectWorkspaceTab('feed');
         }}
       />
 
       <BrandLogoModal
         open={brandModalOpen}
         onClose={() => setBrandModalOpen(false)}
-        onGoToFeed={() => setActiveTab('feed')}
+        onGoToFeed={() => selectWorkspaceTab('feed')}
       />
 
-      <CallRoomModal
-        session={store.callSession}
-        profile={store.profile}
-        isLocalAutostart={store.isLocalAutostart}
-        onEndCall={store.endCall}
-        onToggleMute={store.toggleCallMute}
-        onToggleVideo={store.toggleCallVideo}
-        onToggleScreenShare={store.toggleCallScreenShare}
-        onPublishPeerSession={store.publishCallPeerSession}
-        onSubscribeCallPeers={store.subscribeCallPeers}
-      />
+      {store.callSession && (
+        <Suspense fallback={null}>
+          <CallRoomModal
+            session={store.callSession}
+            profile={store.profile}
+            isLocalAutostart={store.isLocalAutostart}
+            onEndCall={store.endCall}
+            onToggleMute={store.toggleCallMute}
+            onToggleVideo={store.toggleCallVideo}
+            onToggleScreenShare={store.toggleCallScreenShare}
+            onPublishPeerSession={store.publishCallPeerSession}
+            onSubscribeCallPeers={store.subscribeCallPeers}
+          />
+        </Suspense>
+      )}
 
       <IncomingCallModal
         invite={store.incomingCallInvite}

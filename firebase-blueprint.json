@@ -776,6 +776,79 @@
         }
       },
       "required": ["tag", "createdBy", "createdAt"]
+    },
+    "ChatTypingStatus": {
+      "title": "ChatTypingStatus",
+      "description": "Per-participant real-time typing status inside a chat thread.",
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isTyping": {
+          "type": "boolean"
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs matching parent thread"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["chatId", "uid", "isTyping", "memberIds", "updatedAt"]
+    },
+    "ChatReadReceipt": {
+      "title": "ChatReadReceipt",
+      "description": "Per-participant real-time read receipt watermark inside a chat thread.",
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lastReadAtMs": {
+          "type": "number"
+        },
+        "lastReadMessageId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "memberIds": {
+          "type": "array",
+          "description": "Bounded participant UIDs matching parent thread"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "chatId",
+        "uid",
+        "lastReadAtMs",
+        "lastReadMessageId",
+        "memberIds",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -830,6 +903,14 @@
     "/chats/{chatId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/ChatMessage" },
       "description": "Messages inside a chat thread."
+    },
+    "/chats/{chatId}/typing/{userId}": {
+      "schema": { "$ref": "#/entities/ChatTypingStatus" },
+      "description": "Per-member real-time typing indicator state inside a chat thread."
+    },
+    "/chats/{chatId}/readReceipts/{userId}": {
+      "schema": { "$ref": "#/entities/ChatReadReceipt" },
+      "description": "Per-member read receipt watermark inside a chat thread."
     },
     "/calls/{callId}": {
       "schema": { "$ref": "#/entities/CallRoom" },

@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
+  KeyRound,
   Lock,
   LogOut,
   Mail,
@@ -20,6 +21,7 @@ import {
   type ConsentAuthMethod,
   type LegalDocId,
 } from '../utils/legalLogic';
+import { validatePasswordResetEmail } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { LoomaLogo, LoomaLogoMark } from './LoomaLogo';
 
@@ -55,6 +57,7 @@ interface AuthViewProps {
   ) => Promise<void>;
   onResendVerification?: () => Promise<void>;
   onCheckVerified?: () => Promise<boolean>;
+  onSendPasswordReset?: (email: string) => Promise<void>;
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
   protectedRedirectNotice?: string | null;
@@ -110,12 +113,17 @@ export function AuthView({
   onSignupEmail,
   onResendVerification,
   onCheckVerified,
+  onSendPasswordReset,
   onLogout,
   onContinueAuthenticated,
   protectedRedirectNotice = null,
 }: AuthViewProps) {
   const [internalMode, setInternalMode] = useState<AuthMode>(initialMode);
   const [useEmailForm, setUseEmailForm] = useState(false);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSending, setResetSending] = useState(false);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -155,6 +163,8 @@ export function AuthView({
     setLocalError(null);
     setConsentErrorHighlight(false);
     setVerificationNotice(null);
+    setShowPasswordReset(false);
+    setResetNotice(null);
   };
 
   const openLegal = (docId: LegalDocId) => {
@@ -255,6 +265,36 @@ export function AuthView({
       }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Authentication failed.');
+    }
+  };
+
+  const handlePasswordResetSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+    setResetNotice(null);
+    const check = validatePasswordResetEmail(resetEmail || email);
+    if (!check.valid || !check.email) {
+      setLocalError(check.error || 'Enter a valid email address.');
+      return;
+    }
+    if (!onSendPasswordReset) {
+      setLocalError('Password reset is unavailable right now.');
+      return;
+    }
+    setResetSending(true);
+    try {
+      await onSendPasswordReset(check.email);
+      setResetNotice(
+        `If an account matches ${check.email}, a password reset link has been sent. Check your inbox and spam folder.`
+      );
+    } catch (err) {
+      setLocalError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to send password reset email.'
+      );
+    } finally {
+      setResetSending(false);
     }
   };
 
@@ -722,6 +762,74 @@ export function AuthView({
                       </span>
                     </button>
                   </>
+                ) : isSignIn && showPasswordReset ? (
+                  <form
+                    onSubmit={handlePasswordResetSubmit}
+                    noValidate
+                    data-testid="password-reset-form"
+                    className="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-4 sm:p-5"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
+                      <div>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">
+                          Reset your password
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          Enter the email associated with your Looma account to receive a reset link.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="auth-reset-email"
+                        className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                      >
+                        Account Email
+                      </label>
+                      <input
+                        id="auth-reset-email"
+                        type="email"
+                        value={resetEmail}
+                        onChange={(e) => setResetEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        required
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                    </div>
+
+                    {resetNotice && (
+                      <p
+                        role="status"
+                        className="text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2.5"
+                      >
+                        {resetNotice}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="submit"
+                        disabled={resetSending}
+                        className="flex-1 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <span>{resetSending ? 'Sending link...' : 'Send Reset Link'}</span>
+                        <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLocalError(null);
+                          setResetNotice(null);
+                          setShowPasswordReset(false);
+                        }}
+                        className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        Back to Sign In
+                      </button>
+                    </div>
+                  </form>
                 ) : (
                   <form onSubmit={handleEmailSubmit} noValidate className="space-y-4">
                     {!isSignIn && (
@@ -763,12 +871,28 @@ export function AuthView({
                     </div>
 
                     <div>
-                      <label
-                        htmlFor="auth-password"
-                        className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
-                      >
-                        Password
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label
+                          htmlFor="auth-password"
+                          className="block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                        >
+                          Password
+                        </label>
+                        {isSignIn && onSendPasswordReset && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLocalError(null);
+                              setResetNotice(null);
+                              setResetEmail(email);
+                              setShowPasswordReset(true);
+                            }}
+                            className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                          >
+                            Forgot password?
+                          </button>
+                        )}
+                      </div>
                       <input
                         id="auth-password"
                         type="password"
@@ -797,6 +921,7 @@ export function AuthView({
                         onClick={() => {
                           setLocalError(null);
                           setConsentErrorHighlight(false);
+                          setShowPasswordReset(false);
                           setUseEmailForm(false);
                         }}
                         className="min-h-[46px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"

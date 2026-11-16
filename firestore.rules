@@ -322,6 +322,29 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidChatTypingStatus(data, chatId, userId) {
+      return data.keys().hasAll(['chatId', 'uid', 'isTyping', 'memberIds', 'updatedAt'])
+        && data.keys().hasOnly(['chatId', 'uid', 'isTyping', 'memberIds', 'updatedAt'])
+        && isValidId(data.chatId) && data.chatId == chatId
+        && isValidId(data.uid) && data.uid == userId && data.uid == request.auth.uid
+        && data.isTyping is bool
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && isValidId(data.memberIds[0])
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatReadReceipt(data, chatId, userId) {
+      return data.keys().hasAll(['chatId', 'uid', 'lastReadAtMs', 'lastReadMessageId', 'memberIds', 'updatedAt'])
+        && data.keys().hasOnly(['chatId', 'uid', 'lastReadAtMs', 'lastReadMessageId', 'memberIds', 'updatedAt'])
+        && isValidId(data.chatId) && data.chatId == chatId
+        && isValidId(data.uid) && data.uid == userId && data.uid == request.auth.uid
+        && data.lastReadAtMs is int && data.lastReadAtMs >= 0
+        && data.lastReadMessageId is string && data.lastReadMessageId.size() <= 128
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && isValidId(data.memberIds[0])
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
@@ -603,6 +626,47 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds
           && incoming().memberIds == get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
         allow update, delete: if false;
+      }
+
+      match /typing/{userId} {
+        allow get: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(userId)
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
+        allow list: if isVerifiedUser()
+          && request.auth.uid in resource.data.memberIds;
+        allow create, update: if isVerifiedUser()
+          && isOwner(userId)
+          && isValidId(chatId)
+          && isValidId(userId)
+          && isValidChatTypingStatus(incoming(), chatId, userId)
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/chats/$(chatId))
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds
+          && incoming().memberIds == get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
+        allow delete: if isVerifiedUser()
+          && isOwner(userId)
+          && isValidId(chatId)
+          && isValidId(userId);
+      }
+
+      match /readReceipts/{userId} {
+        allow get: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(userId)
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
+        allow list: if isVerifiedUser()
+          && request.auth.uid in resource.data.memberIds;
+        allow create, update: if isVerifiedUser()
+          && isOwner(userId)
+          && isValidId(chatId)
+          && isValidId(userId)
+          && isValidChatReadReceipt(incoming(), chatId, userId)
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/chats/$(chatId))
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds
+          && incoming().memberIds == get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
+        allow delete: if false;
       }
     }
 

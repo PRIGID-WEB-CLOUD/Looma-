@@ -7,6 +7,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
   reload,
   deleteUser,
   updateProfile,
@@ -198,6 +199,10 @@ export async function resendVerificationEmail(): Promise<void> {
     throw new Error('No active signed-in account found.');
   }
   await sendEmailVerification(auth.currentUser);
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
 }
 
 export async function reloadCurrentUser(): Promise<User | null> {

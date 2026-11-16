@@ -2,12 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Search, X } from 'lucide-react';
 import type {
   ChatThread,
+  FeedFilter,
+  FeedSortOrder,
   Post,
+  PostCategory,
   PostComment,
   StoryGroup,
   UserProfile,
 } from '../types/social';
-import { filterMediaPosts, paginateFeed } from '../utils/socialLogic';
+import {
+  filterAndSortFeed,
+  filterMediaPosts,
+  POST_CATEGORIES,
+} from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
@@ -20,6 +27,7 @@ interface FeedViewProps {
   commentsByPost: Record<string, PostComment[]>;
   likedPostIds: string[];
   bookmarkedPostIds: string[];
+  followedUserIds?: string[];
   shareThreads?: ChatThread[];
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
@@ -29,6 +37,10 @@ interface FeedViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onUpdatePost?: (
+    post: Post,
+    updates: { caption: string; category: PostCategory }
+  ) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
   onShareToStory: (post: Post) => Promise<unknown> | void;
@@ -47,6 +59,7 @@ export function FeedView({
   commentsByPost,
   likedPostIds,
   bookmarkedPostIds,
+  followedUserIds = [],
   shareThreads = [],
   searchQuery: externalSearchQuery,
   onSearchQueryChange,
@@ -56,6 +69,7 @@ export function FeedView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onUpdatePost,
   onDeletePost,
   onDeleteComment,
   onShareToStory,
@@ -70,24 +84,29 @@ export function FeedView({
     if (onSearchQueryChange) onSearchQueryChange(q);
     else setInternalQuery(q);
   };
+  const [feedFilter, setFeedFilter] = useState<FeedFilter>('All');
+  const [sortOrder, setSortOrder] = useState<FeedSortOrder>('latest');
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  const { items, filteredTotal, hasMore } = paginateFeed(
+  const { items, filteredTotal, hasMore } = filterAndSortFeed({
     posts,
-    PAGE_SIZE,
+    pageSize: PAGE_SIZE,
     visibleCount,
-    'All',
-    searchQuery
-  );
+    filter: feedFilter,
+    sortOrder,
+    searchQuery,
+    followedUserIds,
+    currentUserId: profile.uid,
+  });
 
   const mediaEntries = useMemo(() => filterMediaPosts(posts), [posts]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [searchQuery]);
+  }, [searchQuery, feedFilter, sortOrder]);
 
   useEffect(() => {
     if (!hasMore || !sentinelRef.current) return;
@@ -108,6 +127,18 @@ export function FeedView({
     return () => observer.disconnect();
   }, [hasMore, items.length]);
 
+  const filterOptions: { id: FeedFilter; label: string }[] = [
+    { id: 'All', label: 'All' },
+    { id: 'Following', label: 'Following' },
+    ...POST_CATEGORIES.map((category) => ({
+      id: category as FeedFilter,
+      label: category,
+    })),
+  ];
+
+  const hasActiveFilterOrSearch =
+    feedFilter !== 'All' || Boolean(searchQuery.trim());
+
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
       {/* Homefeed Header Stories */}
@@ -124,7 +155,7 @@ export function FeedView({
         <button
           type="button"
           onClick={onOpenComposer}
-          className="flex-1 min-h-[44px] px-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-left text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer"
+          className="flex-1 min-w-0 min-h-[44px] px-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-left text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer truncate"
         >
           Share a note or photo, {profile.displayName.split(' ')[0]}...
         </button>
@@ -132,51 +163,121 @@ export function FeedView({
           type="button"
           onClick={onOpenComposer}
           aria-label="Upload photo post"
-          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className="min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
         >
           <ImagePlus className="w-5 h-5" aria-hidden="true" />
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <label htmlFor="feed-search" className="sr-only">
-          Search posts and creators
-        </label>
-        <Search
-          className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-          aria-hidden="true"
-        />
-        <input
-          id="feed-search"
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search posts or creators..."
-          className="w-full min-h-[44px] pl-10 pr-10 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-        />
-        {searchQuery && (
-          <button
-            type="button"
-            onClick={() => setSearchQuery('')}
-            aria-label="Clear search"
-            className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+      {/* Search & Feed Filter Controls */}
+      <div className="space-y-2.5">
+        <div className="relative">
+          <label htmlFor="feed-search" className="sr-only">
+            Search posts and creators
+          </label>
+          <Search
+            className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            aria-hidden="true"
+          />
+          <input
+            id="feed-search"
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search posts or creators..."
+            className="w-full min-h-[44px] pl-10 pr-10 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+            >
+              <X className="w-4 h-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
+        <div
+          data-testid="feed-filter-toolbar"
+          className="flex flex-wrap items-center justify-between gap-2"
+        >
+          <div
+            role="tablist"
+            aria-label="Feed streams and categories"
+            className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0"
           >
-            <X className="w-4 h-4" aria-hidden="true" />
-          </button>
-        )}
+            {filterOptions.map((option) => {
+              const selected = feedFilter === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setFeedFilter(option.id)}
+                  className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 border transition-colors cursor-pointer ${
+                    selected
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/70'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            role="group"
+            aria-label="Sort feed posts"
+            className="flex items-center gap-1 p-1 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shrink-0"
+          >
+            <button
+              type="button"
+              aria-pressed={sortOrder === 'latest'}
+              onClick={() => setSortOrder('latest')}
+              className={`min-h-[30px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                sortOrder === 'latest'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Latest
+            </button>
+            <button
+              type="button"
+              aria-pressed={sortOrder === 'top'}
+              onClick={() => setSortOrder('top')}
+              className={`min-h-[30px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                sortOrder === 'top'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Most Liked
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Feed Cards */}
       {items.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
           <p className="text-sm font-semibold">
-            {posts.length === 0 ? 'No posts yet' : 'No matching posts'}
+            {posts.length === 0
+              ? 'No posts yet'
+              : feedFilter === 'Following'
+                ? 'No posts from people you follow yet'
+                : 'No matching posts'}
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             {posts.length === 0
               ? 'Be the first to share a note, photo, video, or link with the community.'
-              : 'Try clearing your search to view more posts.'}
+              : feedFilter === 'Following'
+                ? 'Follow creators in Community Members or switch back to All posts.'
+                : 'Try clearing your search or selecting a different category.'}
           </p>
           {posts.length === 0 ? (
             <button
@@ -185,6 +286,17 @@ export function FeedView({
               className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
             >
               Create First Post
+            </button>
+          ) : hasActiveFilterOrSearch ? (
+            <button
+              type="button"
+              onClick={() => {
+                setFeedFilter('All');
+                setSearchQuery('');
+              }}
+              className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
+            >
+              Show All Posts
             </button>
           ) : null}
         </div>
@@ -202,6 +314,7 @@ export function FeedView({
               onToggleLike={onToggleLike}
               onToggleBookmark={onToggleBookmark}
               onAddComment={onAddComment}
+              onUpdatePost={onUpdatePost}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
               onShareToStory={onShareToStory}

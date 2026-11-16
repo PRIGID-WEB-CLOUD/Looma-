@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
+  AlertCircle,
   ArrowLeft,
   BellOff,
   Check,
@@ -9,13 +10,12 @@ import {
   Info,
   MapPin,
   MessageSquare,
-  MessageSquarePlus,
   Mic,
-  MicOff,
   Pause,
   Phone,
   PhoneOff,
   Play,
+  RotateCcw,
   Search,
   Send,
   Trash2,
@@ -25,9 +25,16 @@ import {
   VideoOff,
   X,
 } from 'lucide-react';
-import type { ChatMessage, ChatThread, UserProfile } from '../types/social';
+import type {
+  ChatMessage,
+  ChatReadReceipt,
+  ChatThread,
+  ChatTypingStatus,
+  UserProfile,
+} from '../types/social';
 import {
   extractFirstUrl,
+  filterActiveTypingUids,
   filterUsersByQuery,
   formatGifMessage,
   formatLastMessageSnippet,
@@ -42,6 +49,7 @@ import {
   parseMissedCallMessage,
   parseRichUrl,
   parseVoiceNote,
+  resolveThreadReadStatus,
   type CuratedGif,
 } from '../utils/socialLogic';
 import { uploadMediaToCloudflareR2 } from '../services/storage';
@@ -59,8 +67,13 @@ interface ChatViewProps {
   communityUsers: UserProfile[];
   chatUsers?: UserProfile[];
   initialThreadId?: string | null;
+  isFirebaseBacked?: boolean;
+  typingByChat?: Record<string, ChatTypingStatus[]>;
+  readReceiptsByChat?: Record<string, ChatReadReceipt[]>;
   onSubscribeThread: (chatId: string) => () => void;
   onSendMessage: (thread: ChatThread, text: string) => Promise<void>;
+  onSetTyping?: (thread: ChatThread, isTyping: boolean) => void | Promise<void>;
+  onMarkThreadRead?: (thread: ChatThread, lastMessage: ChatMessage) => void | Promise<void>;
   onStartDirectThread: (creator: UserProfile) => Promise<ChatThread>;
   onCreateGroupThread: (
     title: string,
@@ -357,8 +370,13 @@ export function ChatView({
   communityUsers,
   chatUsers,
   initialThreadId,
+  isFirebaseBacked = false,
+  typingByChat = {},
+  readReceiptsByChat = {},
   onSubscribeThread,
   onSendMessage,
+  onSetTyping,
+  onMarkThreadRead,
   onStartDirectThread,
   onCreateGroupThread,
   onAddParticipants,
@@ -392,16 +410,44 @@ export function ChatView({
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceUploading, setVoiceUploading] = useState(false);
-  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [chatComposerError, setChatComposerError] = useState<string | null>(null);
+  const [failedMessages, setFailedMessages] = useState<
+    Array<{
+      id: string;
+      threadId: string;
+      text: string;
+      error: string;
+      createdAtMs: number;
+    }>
+  >([]);
+  const [typingTick, setTypingTick] = useState(() => Date.now());
   const endRef = useRef<HTMLDivElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<number | null>(null);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const isTypingEmittedRef = useRef(false);
+  const lastMarkedReadRef = useRef<string>('');
 
   const activeThread =
     threads.find((t) => t.id === selectedId) || threads[0] || null;
   const activeMessages = activeThread
     ? messagesByChat[activeThread.id] || []
+    : [];
+  const activeTypingRecords = activeThread
+    ? typingByChat[activeThread.id] || []
+    : [];
+  const activeTypingUids = filterActiveTypingUids(
+    activeTypingRecords,
+    profile.uid,
+    typingTick
+  );
+  const activeReadReceipts = activeThread
+    ? readReceiptsByChat[activeThread.id] || []
+    : [];
+  const activeFailedMessages = activeThread
+    ? failedMessages.filter((item) => item.threadId === activeThread.id)
     : [];
   const activeStatus = activeThread
     ? getThreadOnlineStatus(activeThread, profile.uid, onlineUserIds)
@@ -494,40 +540,147 @@ export function ChatView({
   }, []);
 
   useEffect(() => {
-    if (activeStatus?.isOnline) {
-      setIsPartnerTyping(true);
-      const timer = setTimeout(() => setIsPartnerTyping(false), 2200);
-      return () => clearTimeout(timer);
-    } else {
-      setIsPartnerTyping(false);
+    if (activeTypingRecords.length === 0) return;
+    setTypingTick(Date.now());
+    const id = window.setInterval(() => setTypingTick(Date.now()), 2000);
+    return () => window.clearInterval(id);
+  }, [activeTypingRecords.length]);
+
+  useEffect(() => {
+    if (!activeThread || !onMarkThreadRead || activeMessages.length === 0) return;
+    const lastIncoming = [...activeMessages]
+      .reverse()
+      .find((m) => m.senderId !== profile.uid);
+    if (!lastIncoming) return;
+    const dedupeKey = `${activeThread.id}:${lastIncoming.id}`;
+    if (lastMarkedReadRef.current === dedupeKey) return;
+    const alreadySeenByMe = activeReadReceipts.some(
+      (rec) =>
+        rec.uid === profile.uid &&
+        (rec.lastReadMessageId === lastIncoming.id ||
+          rec.lastReadAtMs >= lastIncoming.createdAtMs)
+    );
+    if (alreadySeenByMe) {
+      lastMarkedReadRef.current = dedupeKey;
+      return;
     }
-  }, [selectedId, activeStatus?.isOnline]);
+    lastMarkedReadRef.current = dedupeKey;
+    void onMarkThreadRead(activeThread, lastIncoming);
+  }, [
+    activeMessages,
+    activeReadReceipts,
+    activeThread,
+    onMarkThreadRead,
+    profile.uid,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (typingStopTimerRef.current) {
+        clearTimeout(typingStopTimerRef.current);
+      }
+      if (isTypingEmittedRef.current && activeThread && onSetTyping) {
+        isTypingEmittedRef.current = false;
+        void onSetTyping(activeThread, false);
+      }
+    };
+  }, [activeThread, onSetTyping]);
+
+  const stopTypingEmission = (thread: ChatThread | null) => {
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+    }
+    if (isTypingEmittedRef.current && thread && onSetTyping) {
+      isTypingEmittedRef.current = false;
+      void onSetTyping(thread, false);
+    }
+  };
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+    if (chatComposerError) setChatComposerError(null);
+    if (!activeThread || !onSetTyping) return;
+    if (!value.trim()) {
+      stopTypingEmission(activeThread);
+      return;
+    }
+    if (!isTypingEmittedRef.current) {
+      isTypingEmittedRef.current = true;
+      void onSetTyping(activeThread, true);
+    }
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+    }
+    typingStopTimerRef.current = window.setTimeout(() => {
+      stopTypingEmission(activeThread);
+    }, 4000);
+  };
+
+  const dispatchMessageWithRetryQueue = async (
+    thread: ChatThread,
+    text: string,
+    existingFailureId?: string
+  ) => {
+    setChatComposerError(null);
+    setSendingMessage(true);
+    try {
+      await onSendMessage(thread, text);
+      if (existingFailureId) {
+        setFailedMessages((prev) => prev.filter((m) => m.id !== existingFailureId));
+      }
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Unable to send message.';
+      setChatComposerError(errorMessage);
+      if (existingFailureId) {
+        setFailedMessages((prev) =>
+          prev.map((m) =>
+            m.id === existingFailureId ? { ...m, error: errorMessage } : m
+          )
+        );
+      } else {
+        setFailedMessages((prev) => [
+          ...prev,
+          {
+            id: `fail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            threadId: thread.id,
+            text,
+            error: errorMessage,
+            createdAtMs: Date.now(),
+          },
+        ]);
+      }
+    } finally {
+      setSendingMessage(false);
+    }
+  };
 
   const handleSend = async (e: FormEvent) => {
     e.preventDefault();
-    if (!activeThread || !draft.trim()) return;
+    if (!activeThread || !draft.trim() || sendingMessage) return;
     const text = draft;
     setDraft('');
-    await onSendMessage(activeThread, text);
+    stopTypingEmission(activeThread);
+    await dispatchMessageWithRetryQueue(activeThread, text);
   };
 
   const handleSelectChatGif = async (gif: CuratedGif) => {
     if (!activeThread) return;
-    await onSendMessage(activeThread, formatGifMessage(gif.url));
+    await dispatchMessageWithRetryQueue(activeThread, formatGifMessage(gif.url));
   };
 
   const handleStartVoiceRecording = async () => {
+    setChatComposerError(null);
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        alert('Audio recording is not supported in this browser.');
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        setChatComposerError('Voice recording is not supported in this browser.');
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType =
-        typeof MediaRecorder !== 'undefined' &&
-        MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : 'audio/mp4';
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/mp4';
       const recorder = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
 
@@ -546,7 +699,11 @@ export function ChatView({
         setRecordingSeconds((sec) => sec + 1);
       }, 1000);
     } catch (err) {
-      console.error('Failed to start voice recording:', err);
+      setChatComposerError(
+        err instanceof Error
+          ? err.message
+          : 'Microphone access was denied or unavailable.'
+      );
     }
   };
 
@@ -570,6 +727,7 @@ export function ChatView({
 
   const handleSendVoiceRecording = async () => {
     if (!mediaRecorderRef.current || !activeThread) return;
+    const targetThread = activeThread;
     const finalDuration = Math.max(1, recordingSeconds);
 
     if (recordTimerRef.current) {
@@ -579,6 +737,7 @@ export function ChatView({
 
     const recorder = mediaRecorderRef.current;
     setVoiceUploading(true);
+    setChatComposerError(null);
 
     recorder.onstop = async () => {
       try {
@@ -599,16 +758,29 @@ export function ChatView({
           );
           const uploaded = await uploadMediaToCloudflareR2(file, 'posts');
           audioUrl = uploaded.url;
-        } catch {
-          // Fall back to object URL so audio memo remains immediately playable
+        } catch (uploadErr) {
+          if (isFirebaseBacked) {
+            setChatComposerError(
+              uploadErr instanceof Error
+                ? `Voice upload failed: ${uploadErr.message}`
+                : 'Audio upload failed. Check your connection and try again.'
+            );
+            return;
+          }
+          // Offline/local preview fallback only when not backed by Firebase
           audioUrl = URL.createObjectURL(blob);
         }
 
         if (audioUrl) {
-          await onSendMessage(activeThread, formatVoiceNote(audioUrl, finalDuration));
+          await dispatchMessageWithRetryQueue(
+            targetThread,
+            formatVoiceNote(audioUrl, finalDuration)
+          );
         }
       } catch (err) {
-        console.error('Failed to upload/send voice note:', err);
+        setChatComposerError(
+          err instanceof Error ? err.message : 'Unable to send voice note.'
+        );
       } finally {
         setIsRecordingVoice(false);
         setRecordingSeconds(0);
@@ -1086,50 +1258,103 @@ export function ChatView({
                         </div>
                       </div>
 
-                      {/* Messenger-style Read Receipt & Status Indicator */}
-                      {isLastMine && (
-                        <div className="flex items-center justify-end gap-1 mt-1 px-1 text-[11px] text-slate-400">
-                          {activeStatus?.isOnline ? (
-                            <div className="flex items-center gap-1.5" title="Seen by partner">
-                              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                                Seen
-                              </span>
-                              <div className="w-3.5 h-3.5 rounded-full overflow-hidden ring-1 ring-blue-500/40 shrink-0 bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[8px] font-bold text-slate-700 dark:text-slate-200">
-                                {activeThread.partnerAvatar ? (
-                                  <img
-                                    src={activeThread.partnerAvatar}
-                                    alt={activeThread.title}
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <span>
-                                    {(activeThread.title.trim()[0] || '?').toUpperCase()}
-                                  </span>
-                                )}
+                      {/* Live Firestore Read Receipt & Delivery Indicator */}
+                      {isLastMine && (() => {
+                        const readStatus = resolveThreadReadStatus(
+                          msg,
+                          profile.uid,
+                          activeReadReceipts
+                        );
+                        return (
+                          <div className="flex items-center justify-end gap-1 mt-1 px-1 text-[11px] text-slate-400">
+                            {readStatus.seen ? (
+                              <div className="flex items-center gap-1.5" title="Seen">
+                                <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                                  Seen
+                                </span>
+                                <div className="w-3.5 h-3.5 rounded-full overflow-hidden ring-1 ring-blue-500/40 shrink-0 bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[8px] font-bold text-slate-700 dark:text-slate-200">
+                                  {activeThread.partnerAvatar ? (
+                                    <img
+                                      src={activeThread.partnerAvatar}
+                                      alt={activeThread.title}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <span>
+                                      {(activeThread.title.trim()[0] || '?').toUpperCase()}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1" title="Delivered">
-                              <span className="text-[10px]">Delivered</span>
-                              <CheckCheck className="w-3.5 h-3.5 text-slate-400" />
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            ) : (
+                              <div className="flex items-center gap-1" title="Delivered">
+                                <span className="text-[10px]">Delivered</span>
+                                <CheckCheck className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })
               )}
 
-              {/* Animated Typing Indicator */}
-              {activeStatus?.isOnline && isPartnerTyping && (
-                <div className="flex items-end gap-2 mb-2 animate-in fade-in duration-200">
+              {/* Failed Outgoing Messages Queue with Retry */}
+              {activeFailedMessages.map((failed) => (
+                <div key={failed.id} className="flex flex-col items-end mb-2">
+                  <div className="rounded-2xl rounded-br-xs px-3.5 py-2 text-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-900 dark:text-red-100 max-w-[85%] sm:max-w-[75%] space-y-1.5">
+                    <p className="leading-relaxed break-words">
+                      {formatLastMessageSnippet(failed.text)}
+                    </p>
+                    <div className="flex items-center justify-end gap-2 text-[11px]">
+                      <span className="text-red-600 dark:text-red-400 font-medium">
+                        Failed to send
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatchMessageWithRetryQueue(
+                            activeThread,
+                            failed.text,
+                            failed.id
+                          )
+                        }
+                        className="font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3 h-3" aria-hidden="true" />
+                        <span>Retry</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFailedMessages((prev) =>
+                            prev.filter((item) => item.id !== failed.id)
+                          )
+                        }
+                        aria-label="Dismiss failed message"
+                        className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Real-Time Typing Indicator */}
+              {activeTypingUids.length > 0 && (
+                <div
+                  data-testid="live-typing-indicator"
+                  className="flex items-end gap-2 mb-2 animate-in fade-in duration-200"
+                >
                   <Avatar
                     src={activeThread.partnerAvatar}
                     name={activeThread.title}
                     size="sm"
                   />
                   <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-bl-xs px-3.5 py-2.5 flex items-center gap-1.5 shadow-2xs">
+                    <span className="sr-only">{activeThread.title} is typing</span>
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce [animation-delay:-0.3s]" />
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce [animation-delay:-0.15s]" />
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce" />
@@ -1139,6 +1364,26 @@ export function ChatView({
 
               <div ref={endRef} />
             </div>
+
+            {chatComposerError && (
+              <div
+                role="alert"
+                className="px-3.5 py-2 border-t border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300 flex items-center justify-between gap-2"
+              >
+                <span className="inline-flex items-center gap-1.5 min-w-0">
+                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{chatComposerError}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setChatComposerError(null)}
+                  aria-label="Dismiss error"
+                  className="min-h-[28px] min-w-[28px] flex items-center justify-center rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            )}
 
             {isRecordingVoice ? (
               <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-red-50/50 dark:bg-red-950/20 animate-in slide-in-from-bottom-2 duration-150">
@@ -1210,7 +1455,8 @@ export function ChatView({
                   id="chat-message-input"
                   type="text"
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={(e) => handleDraftChange(e.target.value)}
+                  onBlur={() => stopTypingEmission(activeThread)}
                   placeholder={`Message ${activeThread.title}...`}
                   maxLength={1000}
                   className="flex-1 min-h-[40px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 border-none text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-900 dark:text-slate-100 placeholder-slate-400"
@@ -1218,7 +1464,7 @@ export function ChatView({
 
                 <button
                   type="submit"
-                  disabled={!draft.trim()}
+                  disabled={!draft.trim() || sendingMessage}
                   aria-label="Send message"
                   className="min-h-[40px] min-w-[40px] rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white flex items-center justify-center cursor-pointer transition shadow-sm"
                 >
