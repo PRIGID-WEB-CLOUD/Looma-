@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts src/*/*.test.ts src/*/*/*.test.ts admin/*.test.ts landingpage/*.test.ts"
+    "test": "tsx --test src/*.test.ts src/*/*.test.ts src/*/*/*.test.ts admin/*.test.ts landingpage/*.test.ts",
+    "bun:check": "bun install --frozen-lockfile --dry-run",
+    "bun:sync": "bun install --lockfile-only"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1168.0",
