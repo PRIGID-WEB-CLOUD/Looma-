@@ -16,6 +16,12 @@
 
 ---
 
+<div align="center">
+  <img src="./src/assets/images/looma_hero_banner_1794787692647.jpg" alt="Looma Platform Dashboard UI Preview" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);" />
+</div>
+
+---
+
 ## 1. Repository Identity
 
 | Field | Value |
