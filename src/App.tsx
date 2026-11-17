@@ -1,5 +1,16 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, LogOut, MessageSquare, Moon, Settings, Sun, Users } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bell,
+  LogOut,
+  MessageSquare,
+  Moon,
+  Settings,
+  ShieldAlert,
+  Sun,
+  Users,
+  X,
+} from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
 import type {
   ChatThread,
@@ -12,6 +23,7 @@ import type {
 import {
   computeOtherUserConnections,
   countUnreadNotifications,
+  filterActiveAnnouncementsForMember,
   formatLastMessageSnippet,
   formatRelativeTime,
   formatSharedPostMessage,
@@ -47,6 +59,8 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { StoryViewerModal } from './components/StoryViewerModal';
 import { TopBar } from './components/TopBar';
 import { BrandLogoModal } from './components/BrandLogoModal';
+import { VerifiedBadge } from './components/VerifiedBadge';
+import { LoomaLogo } from './components/LoomaLogo';
 import { useInitialization } from './app/initialization';
 import { InitializationScreen } from './app/startup/InitializationScreen';
 
@@ -162,6 +176,22 @@ export default function App() {
     followingIds: string[];
   } | null>(null);
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
+  const [dismissedAnnouncementIds, setDismissedAnnouncementIds] = useState<string[]>([]);
+  const [appealModalOpen, setAppealModalOpen] = useState(false);
+  const [appealReason, setAppealReason] = useState('');
+  const [submittingAppeal, setSubmittingAppeal] = useState(false);
+  const [appealError, setAppealError] = useState<string | null>(null);
+  const [appealSuccessNotice, setAppealSuccessNotice] = useState<string | null>(null);
+
+  const visibleAnnouncements = useMemo(
+    () =>
+      filterActiveAnnouncementsForMember(store.announcements, {
+        isVerified: Boolean(store.profile.isVerified),
+        isAdmin: isUserAdmin,
+        dismissedIds: dismissedAnnouncementIds,
+      }),
+    [dismissedAnnouncementIds, isUserAdmin, store.announcements, store.profile.isVerified]
+  );
 
   const unreadCount = countUnreadNotifications(store.notifications);
   const appStage = resolveAppStage(
@@ -469,6 +499,7 @@ export default function App() {
           <LegalDocumentView
             activeDocId={activeLegalDoc}
             theme={store.theme}
+            guidelinesConfig={store.guidelines}
             fromAuthSignup={!store.isAuthorized && authMode === 'signup'}
             consentAlreadyAccepted={hasRequiredAccountConsent(signupConsent)}
             onSelectDoc={openLegalDocument}
@@ -570,6 +601,8 @@ export default function App() {
           onContinueAuthenticated={() => {
             navigateAfterAuthentication();
           }}
+          registrationsOpen={store.featureFlags.registrationsOpen}
+          maintenanceMode={store.featureFlags.maintenanceMode}
         />
         <OfflineIndicator />
       </div>
@@ -606,6 +639,139 @@ export default function App() {
     );
   }
 
+  const handleAppealSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submittingAppeal) return;
+    setAppealError(null);
+    setAppealSuccessNotice(null);
+    setSubmittingAppeal(true);
+    try {
+      await store.submitModerationAppeal({
+        reason: appealReason,
+        targetId: store.profile.uid,
+      });
+      setAppealReason('');
+      setAppealSuccessNotice('Your appeal has been submitted for moderator review.');
+    } catch (err) {
+      setAppealError(err instanceof Error ? err.message : 'Unable to submit appeal.');
+    } finally {
+      setSubmittingAppeal(false);
+    }
+  };
+
+  if (store.memberModeration?.status === 'suspended' && !isUserAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">
+        <header className="h-16 px-4 md:px-8 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
+          <LoomaLogo />
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-2 cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" aria-hidden="true" />
+            <span>Log Out</span>
+          </button>
+        </header>
+        <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-8 md:py-12 space-y-6">
+          <section
+            data-testid="account-suspended-gate"
+            className="rounded-2xl border border-rose-200 dark:border-rose-900/70 bg-white dark:bg-slate-900 p-6 sm:p-8 space-y-5"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-6 h-6" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <span className="inline-block px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-[11px] font-semibold">
+                  Account Suspended
+                </span>
+                <h1 className="font-display text-xl sm:text-2xl font-bold mt-2">
+                  Your account access is temporarily suspended
+                </h1>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
+                  {store.memberModeration.reason ||
+                    'Your account has been suspended by a Looma moderator following a community safety review.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => openLegalDocument('guidelines')}
+                className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Read Community Guidelines
+              </button>
+            </div>
+
+            <form onSubmit={handleAppealSubmit} className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <h2 className="text-sm font-bold">Submit a Moderation Appeal</h2>
+              <textarea
+                rows={3}
+                value={appealReason}
+                onChange={(e) => setAppealReason(e.target.value)}
+                maxLength={600}
+                placeholder="Explain why your account should be reinstated or clarify what happened..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+              />
+              {appealError && (
+                <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
+                  {appealError}
+                </p>
+              )}
+              {appealSuccessNotice && (
+                <p role="status" className="text-xs text-emerald-700 dark:text-emerald-300">
+                  {appealSuccessNotice}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={submittingAppeal}
+                className="min-h-[42px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {submittingAppeal ? 'Submitting Appeal...' : 'Submit Appeal'}
+              </button>
+            </form>
+
+            {store.userAppeals.length > 0 && (
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Recent Appeals
+                </h3>
+                <div className="space-y-2">
+                  {store.userAppeals.map((appeal) => (
+                    <div
+                      key={appeal.id}
+                      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold capitalize px-2 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {appeal.status}
+                        </span>
+                        <span className="text-slate-400 tabular-nums">
+                          {formatRelativeTime(appeal.createdAtMs)}
+                        </span>
+                      </div>
+                      <p className="text-slate-700 dark:text-slate-300">{appeal.reason}</p>
+                      {appeal.reviewerNote && (
+                        <p className="text-slate-500 dark:text-slate-400">
+                          Reviewer note: {appeal.reviewerNote}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        </main>
+        <OfflineIndicator />
+      </div>
+    );
+  }
+
   const isMessagesFullScreen = activeTab === 'messages';
 
   return (
@@ -633,6 +799,102 @@ export default function App() {
         onOpenNotifications={() => selectWorkspaceTab('notifications')}
       />
 
+      {(store.featureFlags.maintenanceMode ||
+        visibleAnnouncements.length > 0 ||
+        store.memberModeration?.status === 'restricted') && (
+        <div className="max-w-7xl w-full mx-auto px-4 md:px-6 pt-3.5 space-y-2 shrink-0">
+          {store.featureFlags.maintenanceMode && (
+            <div
+              role="status"
+              data-testid="workspace-maintenance-banner"
+              className="rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2.5"
+            >
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" aria-hidden="true" />
+              <span className="font-medium">
+                Scheduled maintenance mode is active. Posting and call availability may be limited.
+              </span>
+            </div>
+          )}
+
+          {store.memberModeration?.status === 'restricted' && (
+            <div
+              role="status"
+              data-testid="account-restricted-banner"
+              className="rounded-xl border border-rose-200 dark:border-rose-900/70 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs text-rose-900 dark:text-rose-200 flex flex-wrap items-center justify-between gap-3"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="font-semibold">
+                    Account Restricted — posting, replies, and calls are paused
+                  </p>
+                  <p className="text-rose-700 dark:text-rose-300 mt-0.5">
+                    {store.memberModeration.reason || 'A moderator temporarily restricted posting actions on this account.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {store.userAppeals[0] && (
+                  <span className="px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900 border border-rose-200 dark:border-rose-800 text-[11px] font-semibold capitalize">
+                    Appeal: {store.userAppeals[0].status}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAppealError(null);
+                    setAppealSuccessNotice(null);
+                    setAppealModalOpen(true);
+                  }}
+                  className="min-h-[36px] px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Submit Appeal
+                </button>
+              </div>
+            </div>
+          )}
+
+          {visibleAnnouncements.map((ann) => {
+            const toneClass =
+              ann.severity === 'maintenance'
+                ? 'border-rose-200 dark:border-rose-900/70 bg-rose-50/90 dark:bg-rose-950/30 text-rose-900 dark:text-rose-100'
+                : ann.severity === 'warning'
+                  ? 'border-amber-200 dark:border-amber-800/70 bg-amber-50/90 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100'
+                  : 'border-blue-200 dark:border-blue-900/70 bg-blue-50/90 dark:bg-blue-950/30 text-blue-900 dark:text-blue-100';
+            return (
+              <div
+                key={ann.id}
+                role="status"
+                data-testid={`platform-announcement-${ann.id}`}
+                className={`rounded-xl border px-4 py-3 text-xs flex items-start justify-between gap-3 ${toneClass}`}
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-md bg-white/70 dark:bg-slate-900/60 text-[10px] font-bold uppercase tracking-wider">
+                      {ann.severity}
+                    </span>
+                    <p className="font-bold text-sm">{ann.title}</p>
+                  </div>
+                  <p className="leading-relaxed opacity-90">{ann.body}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDismissedAnnouncementIds((prev) =>
+                      prev.includes(ann.id) ? prev : [...prev, ann.id]
+                    )
+                  }
+                  aria-label={`Dismiss announcement ${ann.title}`}
+                  className="min-h-[36px] min-w-[36px] rounded-lg flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 shrink-0 cursor-pointer"
+                >
+                  <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <main
         className={
           isMessagesFullScreen
@@ -658,8 +920,9 @@ export default function App() {
                 size="md"
               />
               <div className="min-w-0">
-                <p className="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                  {store.profile.displayName}
+                <p className="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 inline-flex items-center gap-1.5 max-w-full">
+                  <span className="truncate">{store.profile.displayName}</span>
+                  {store.profile.isVerified && <VerifiedBadge size={14} />}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   @{store.profile.handle}
@@ -809,6 +1072,17 @@ export default function App() {
               }
               onMentionClick={handleOpenMention}
               onSelectHashtag={handleHashtagClick}
+              storiesEnabled={store.featureFlags.storiesEnabled}
+              onReportPost={async (post, category, reason) => {
+                await store.submitContentReport({
+                  targetType: 'post',
+                  targetId: post.id,
+                  targetAuthorUid: post.authorId,
+                  targetSummary: post.caption || post.mediaTitle || `Post by @${post.authorHandle}`,
+                  category,
+                  reason,
+                });
+              }}
             />
           )}
 
@@ -857,6 +1131,28 @@ export default function App() {
                   onShareToChat={handleSharePostToChat}
                   onMentionClick={handleOpenMention}
                   onSelectHashtag={handleHashtagClick}
+                  callsEnabled={store.featureFlags.callsEnabled}
+                  storiesEnabled={store.featureFlags.storiesEnabled}
+                  onReportPost={async (post, category, reason) => {
+                    await store.submitContentReport({
+                      targetType: 'post',
+                      targetId: post.id,
+                      targetAuthorUid: post.authorId,
+                      targetSummary: post.caption || post.mediaTitle || `Post by @${post.authorHandle}`,
+                      category,
+                      reason,
+                    });
+                  }}
+                  onReportUser={async (creator, category, reason) => {
+                    await store.submitContentReport({
+                      targetType: 'user',
+                      targetId: creator.uid,
+                      targetAuthorUid: creator.uid,
+                      targetSummary: `${creator.displayName} (@${creator.handle})`,
+                      category,
+                      reason,
+                    });
+                  }}
                 />
               </Suspense>
             );
@@ -904,6 +1200,8 @@ export default function App() {
                 }
                 onStartCall={store.startCall}
                 onStartInstantCall={store.startInstantCall}
+                callsEnabled={store.featureFlags.callsEnabled}
+                voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
               />
             </Suspense>
           )}
@@ -947,6 +1245,17 @@ export default function App() {
               }
               onMentionClick={handleOpenMention}
               onSelectHashtag={handleHashtagClick}
+              storiesEnabled={store.featureFlags.storiesEnabled}
+              onReportPost={async (post, category, reason) => {
+                await store.submitContentReport({
+                  targetType: 'post',
+                  targetId: post.id,
+                  targetAuthorUid: post.authorId,
+                  targetSummary: post.caption || post.mediaTitle || `Post by @${post.authorHandle}`,
+                  category,
+                  reason,
+                });
+              }}
             />
           )}
 
@@ -1121,8 +1430,9 @@ export default function App() {
                           )}
                         />
                         <div className="min-w-0">
-                          <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                            {creator.displayName}
+                          <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1 max-w-full">
+                            <span className="truncate">{creator.displayName}</span>
+                            {creator.isVerified && <VerifiedBadge size={12} />}
                           </p>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                             @{creator.handle}
@@ -1159,6 +1469,7 @@ export default function App() {
         profile={store.profile}
         communityUsers={store.communityUsers}
         savedHashtags={store.savedHashtags}
+        voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
         onSaveHashtag={store.saveHashtag}
         onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
@@ -1193,6 +1504,71 @@ export default function App() {
         onClose={() => setBrandModalOpen(false)}
         onGoToFeed={() => selectWorkspaceTab('feed')}
       />
+
+      {appealModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Submit moderation appeal"
+          data-testid="moderation-appeal-modal"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-base font-bold">Submit Moderation Appeal</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Request a review of your account restriction
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAppealModalOpen(false)}
+                aria-label="Close appeal modal"
+                className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+            <form onSubmit={handleAppealSubmit} className="p-5 space-y-4">
+              <textarea
+                rows={4}
+                value={appealReason}
+                onChange={(e) => setAppealReason(e.target.value)}
+                maxLength={600}
+                placeholder="Explain why this restriction should be lifted..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+              />
+              {appealError && (
+                <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
+                  {appealError}
+                </p>
+              )}
+              {appealSuccessNotice && (
+                <p role="status" className="text-xs text-emerald-700 dark:text-emerald-300">
+                  {appealSuccessNotice}
+                </p>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAppealModalOpen(false)}
+                  className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAppeal}
+                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {submittingAppeal ? 'Submitting...' : 'Submit Appeal'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {store.callSession && (
         <Suspense fallback={null}>

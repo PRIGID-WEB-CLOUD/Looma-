@@ -13,7 +13,6 @@ import type {
 import {
   filterAndSortFeed,
   filterMediaPosts,
-  POST_CATEGORIES,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaViewerModal } from './MediaViewerModal';
@@ -43,8 +42,10 @@ interface FeedViewProps {
   ) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
-  onShareToStory: (post: Post) => Promise<unknown> | void;
+  onShareToStory?: (post: Post) => Promise<unknown> | void;
   onShareToChat?: (thread: ChatThread, post: Post) => Promise<void>;
+  onReportPost?: (post: Post, category: 'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other', reason: string) => Promise<void>;
+  storiesEnabled?: boolean;
   onAuthorClick: (post: Post) => void;
   onMentionClick?: (handle: string) => void;
   onSelectHashtag?: (tag: string) => void;
@@ -74,6 +75,8 @@ export function FeedView({
   onDeleteComment,
   onShareToStory,
   onShareToChat,
+  onReportPost,
+  storiesEnabled = true,
   onAuthorClick,
   onMentionClick,
   onSelectHashtag,
@@ -130,10 +133,6 @@ export function FeedView({
   const filterOptions: { id: FeedFilter; label: string }[] = [
     { id: 'All', label: 'All' },
     { id: 'Following', label: 'Following' },
-    ...POST_CATEGORIES.map((category) => ({
-      id: category as FeedFilter,
-      label: category,
-    })),
   ];
 
   const hasActiveFilterOrSearch =
@@ -142,12 +141,14 @@ export function FeedView({
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
       {/* Homefeed Header Stories */}
-      <StoriesStrip
-        profile={profile}
-        storyGroups={storyGroups}
-        onOpenStory={onOpenStory}
-        onOpenAddStory={onOpenAddStory}
-      />
+      {storiesEnabled && (
+        <StoriesStrip
+          profile={profile}
+          storyGroups={storyGroups}
+          onOpenStory={onOpenStory}
+          onOpenAddStory={onOpenAddStory}
+        />
+      )}
 
       {/* Quick Post Prompt */}
       <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 flex items-center gap-3">
@@ -205,7 +206,7 @@ export function FeedView({
         >
           <div
             role="tablist"
-            aria-label="Feed streams and categories"
+            aria-label="Feed streams"
             className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0"
           >
             {filterOptions.map((option) => {
@@ -277,7 +278,7 @@ export function FeedView({
               ? 'Be the first to share a note, photo, video, or link with the community.'
               : feedFilter === 'Following'
                 ? 'Follow creators in Community Members or switch back to All posts.'
-                : 'Try clearing your search or selecting a different category.'}
+                : 'Try clearing your search or switching back to All posts.'}
           </p>
           {posts.length === 0 ? (
             <button
@@ -317,8 +318,9 @@ export function FeedView({
               onUpdatePost={onUpdatePost}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
-              onShareToStory={onShareToStory}
+              onShareToStory={storiesEnabled ? onShareToStory : undefined}
               onShareToChat={onShareToChat}
+              onReportPost={onReportPost}
               onAuthorClick={onAuthorClick}
               onSelectHashtag={(tag) => {
                 setSearchQuery(`#${tag}`);

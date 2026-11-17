@@ -61,6 +61,8 @@ interface AuthViewProps {
   onLogout: () => Promise<void>;
   onContinueAuthenticated: () => void;
   protectedRedirectNotice?: string | null;
+  registrationsOpen?: boolean;
+  maintenanceMode?: boolean;
 }
 
 function GoogleMark() {
@@ -117,6 +119,8 @@ export function AuthView({
   onLogout,
   onContinueAuthenticated,
   protectedRedirectNotice = null,
+  registrationsOpen = true,
+  maintenanceMode = false,
 }: AuthViewProps) {
   const [internalMode, setInternalMode] = useState<AuthMode>(initialMode);
   const [useEmailForm, setUseEmailForm] = useState(false);
@@ -206,6 +210,10 @@ export function AuthView({
 
   const handleGoogleAction = async () => {
     setLocalError(null);
+    if (!isSignIn && !registrationsOpen) {
+      setLocalError('New registrations are currently paused by administrators.');
+      return;
+    }
     if (!ensureConsentBeforeAuth('google')) return;
     try {
       await onLoginGoogle({
@@ -221,6 +229,10 @@ export function AuthView({
 
   const handleAppleAction = async () => {
     setLocalError(null);
+    if (!isSignIn && !registrationsOpen) {
+      setLocalError('New registrations are currently paused by administrators.');
+      return;
+    }
     if (!ensureConsentBeforeAuth('apple')) return;
     try {
       await onLoginApple({
@@ -237,6 +249,10 @@ export function AuthView({
   const handleEmailSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLocalError(null);
+    if (!isSignIn && !registrationsOpen) {
+      setLocalError('New registrations are currently paused by administrators.');
+      return;
+    }
     const cleanEmail = email.trim();
     if (!isSignIn && !displayName.trim()) {
       setLocalError('Enter your display name to sign up.');
@@ -557,6 +573,28 @@ export function AuthView({
               </p>
             </div>
 
+            {maintenanceMode && (
+              <div
+                role="status"
+                data-testid="auth-maintenance-banner"
+                className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/30 text-xs sm:text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2.5"
+              >
+                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>Looma is undergoing scheduled maintenance. Some actions may be temporarily paused.</span>
+              </div>
+            )}
+
+            {!isSignIn && !registrationsOpen && (
+              <div
+                role="status"
+                data-testid="registrations-paused-banner"
+                className="p-3.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-xs sm:text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2.5"
+              >
+                <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>New registrations are currently paused by administrators. You can still sign in to an existing account.</span>
+              </div>
+            )}
+
             {protectedRedirectNotice && !displayError && (
               <div
                 role="status"
@@ -712,9 +750,9 @@ export function AuthView({
 
                     <button
                       type="button"
-                      disabled={authLoading}
+                      disabled={authLoading || (!isSignIn && !registrationsOpen)}
                       onClick={handleGoogleAction}
-                      className="w-full min-h-[48px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
+                      className="w-full min-h-[48px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <span className="w-6 h-6 rounded-full bg-white flex items-center justify-center">
                         <GoogleMark />
@@ -730,9 +768,9 @@ export function AuthView({
 
                     <button
                       type="button"
-                      disabled={authLoading}
+                      disabled={authLoading || (!isSignIn && !registrationsOpen)}
                       onClick={handleAppleAction}
-                      className="w-full min-h-[48px] px-5 rounded-xl bg-black hover:bg-slate-900 dark:bg-white dark:hover:bg-slate-200 dark:text-slate-900 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60"
+                      className="w-full min-h-[48px] px-5 rounded-xl bg-black hover:bg-slate-900 dark:bg-white dark:hover:bg-slate-200 dark:text-slate-900 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <AppleMark />
                       <span>
@@ -746,13 +784,13 @@ export function AuthView({
 
                     <button
                       type="button"
-                      disabled={authLoading}
+                      disabled={authLoading || (!isSignIn && !registrationsOpen)}
                       onClick={() => {
                         setLocalError(null);
                         setConsentErrorHighlight(false);
                         setUseEmailForm(true);
                       }}
-                      className="w-full min-h-[48px] px-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer"
+                      className="w-full min-h-[48px] px-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <Mail className="w-4 h-4 text-slate-500" aria-hidden="true" />
                       <span>
@@ -910,8 +948,8 @@ export function AuthView({
                     <div className="flex items-center gap-2.5 pt-1">
                       <button
                         type="submit"
-                        disabled={authLoading}
-                        className="flex-1 min-h-[46px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                        disabled={authLoading || (!isSignIn && !registrationsOpen)}
+                        className="flex-1 min-h-[46px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <span>{authLoading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}</span>
                         <ArrowRight className="w-4 h-4" aria-hidden="true" />

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildLiveGuidelinesDocument,
   createTermsConsentRecord,
   getLegalRoutePath,
   hasRequiredAccountConsent,
@@ -107,3 +108,24 @@ test('hasRequiredAccountConsent and consent records validate accurately', () => 
   );
   assert.equal(isConsentRecordValid(null), false);
 });
+
+test('buildLiveGuidelinesDocument parses dynamic rules blocks and falls back cleanly', () => {
+  const fallback = buildLiveGuidelinesDocument(null);
+  assert.equal(fallback.version, LEGAL_DOCUMENTS.guidelines.version);
+
+  const dynamicDoc = buildLiveGuidelinesDocument({
+    version: '2026.2',
+    summary: 'Updated studio community expectations.',
+    rulesText:
+      '1. Original Work Only\nShare authentic architecture and photography.\n- Credit collaborators\n\n2. Zero Spam\nNo automated promotions.',
+    updatedAtMs: 1763240000000,
+  });
+
+  assert.equal(dynamicDoc.version, '2026.2');
+  assert.equal(dynamicDoc.summary, 'Updated studio community expectations.');
+  assert.equal(dynamicDoc.sections.length, 2);
+  assert.equal(dynamicDoc.sections[0].title, 'Original Work Only');
+  assert.deepEqual(dynamicDoc.sections[0].bullets, ['Credit collaborators']);
+  assert.equal(dynamicDoc.sections[1].title, 'Zero Spam');
+});
+

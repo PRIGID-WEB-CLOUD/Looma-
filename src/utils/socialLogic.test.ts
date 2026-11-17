@@ -1481,3 +1481,51 @@ test('filterActiveTypingUids, resolveThreadReadStatus, and validatePasswordReset
     email: 'alex@looma.app',
   });
 });
+
+test('governance helpers enforce announcements audience, moderation blocks, verified enrichment, and strict queue rules', async () => {
+  const {
+    enrichPostWithVerifiedAuthor,
+    filterActiveAnnouncementsForMember,
+    shouldAutoQueuePostReport,
+    shouldBlockActionByModeration,
+  } = await import('./socialLogic');
+
+  const announcements = [
+    { id: 'a1', title: 'Public', body: 'All', severity: 'info' as const, audience: 'all' as const, active: true, createdAtMs: 10 },
+    { id: 'a2', title: 'Verified', body: 'Blue', severity: 'warning' as const, audience: 'verified' as const, active: true, createdAtMs: 20 },
+    { id: 'a3', title: 'Admins', body: 'Ops', severity: 'maintenance' as const, audience: 'admins' as const, active: true, createdAtMs: 30 },
+    { id: 'a4', title: 'Paused', body: 'Off', severity: 'info' as const, audience: 'all' as const, active: false, createdAtMs: 40 },
+  ];
+
+  assert.deepEqual(
+    filterActiveAnnouncementsForMember(announcements, { isVerified: false, isAdmin: false, dismissedIds: [] }).map((a) => a.id),
+    ['a1']
+  );
+  assert.deepEqual(
+    filterActiveAnnouncementsForMember(announcements, { isVerified: true, isAdmin: false, dismissedIds: ['a1'] }).map((a) => a.id),
+    ['a2']
+  );
+  assert.deepEqual(
+    filterActiveAnnouncementsForMember(announcements, { isVerified: true, isAdmin: true, dismissedIds: [] }).map((a) => a.id),
+    ['a3', 'a2', 'a1']
+  );
+
+  assert.equal(shouldBlockActionByModeration('active', 'post').blocked, false);
+  assert.equal(shouldBlockActionByModeration('restricted', 'post').blocked, true);
+  assert.equal(shouldBlockActionByModeration('restricted', 'call').blocked, true);
+  assert.equal(shouldBlockActionByModeration('restricted', 'like').blocked, false);
+  assert.equal(shouldBlockActionByModeration('suspended', 'follow').blocked, true);
+
+  const post = makePost(9);
+  const enriched = enrichPostWithVerifiedAuthor(
+    post,
+    [{ uid: post.authorId, isVerified: true }],
+    null
+  );
+  assert.equal(enriched.authorVerified, true);
+
+  assert.equal(shouldAutoQueuePostReport('Check https://example.com', undefined, true), true);
+  assert.equal(shouldAutoQueuePostReport('Check https://example.com', undefined, false), false);
+  assert.equal(shouldAutoQueuePostReport('No links here', '', true), false);
+});
+

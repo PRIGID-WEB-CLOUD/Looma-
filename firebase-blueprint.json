@@ -47,6 +47,9 @@
         "onboardingCompleted": {
           "type": "boolean"
         },
+        "isVerified": {
+          "type": "boolean"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -159,6 +162,9 @@
         "authorAvatar": {
           "type": "string",
           "maxLength": 250000
+        },
+        "authorVerified": {
+          "type": "boolean"
         },
         "caption": {
           "type": "string",

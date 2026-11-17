@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Search, ShieldAlert, UserCheck, UserX, ExternalLink, Globe, Sparkles } from 'lucide-react';
+import { CheckCircle2, Search, ShieldAlert, UserCheck, UserX } from 'lucide-react';
 import { Avatar } from '../../src/components/Avatar';
 import { VerifiedBadge } from '../../src/components/VerifiedBadge';
 import type { UserProfile } from '../../src/types/social';
@@ -396,7 +396,7 @@ export function UsersDirectorySection({
                       </div>
 
                       <span
-                        className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-full shrink-0 ${
+                        className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md shrink-0 ${
                           isSuspended
                             ? 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300'
                             : isRestricted
@@ -416,13 +416,13 @@ export function UsersDirectorySection({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800/80">
-                      <span>Followers: <strong className="text-slate-800 dark:text-slate-200 font-mono">{user.followersCount}</strong></span>
-                      <div className="flex items-center gap-1.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                      <span>Followers: <strong className="text-slate-800 dark:text-slate-200 font-mono tabular-nums">{user.followersCount}</strong></span>
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => setInspectedUser((prev) => (prev?.uid === user.uid ? null : user))}
-                          className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          className="min-h-[38px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                         >
                           {inspectedUser?.uid === user.uid ? 'Hide' : 'Details'}
                         </button>
@@ -433,7 +433,7 @@ export function UsersDirectorySection({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => void handleQuickStatusChange(user, 'active', 'Restored by admin')}
-                                className="min-h-[36px] px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold cursor-pointer"
+                                className="min-h-[38px] px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold cursor-pointer"
                               >
                                 Restore
                               </button>
@@ -442,9 +442,22 @@ export function UsersDirectorySection({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => void handleQuickStatusChange(user, 'restricted', 'Restricted by moderator')}
-                                className="min-h-[36px] px-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold cursor-pointer"
+                                className="min-h-[38px] px-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold cursor-pointer"
                               >
                                 Restrict
+                              </button>
+                            )}
+                            {!isSuspended && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => {
+                                  setSuspendTarget(user);
+                                  setSuspendReason('');
+                                }}
+                                className="min-h-[38px] px-3 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-semibold cursor-pointer"
+                              >
+                                Suspend
                               </button>
                             )}
                             {onToggleVerify && (
@@ -452,7 +465,7 @@ export function UsersDirectorySection({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => void handleToggleVerifyClick(user)}
-                                className="min-h-[36px] px-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-semibold cursor-pointer"
+                                className="min-h-[38px] px-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-semibold cursor-pointer"
                               >
                                 {user.isVerified ? 'Unverify' : 'Verify'}
                               </button>

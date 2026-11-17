@@ -50,6 +50,7 @@ interface CreatePostModalProps {
   profile: UserProfile;
   communityUsers?: UserProfile[];
   savedHashtags?: string[];
+  voiceNotesEnabled?: boolean;
   onSaveHashtag?: (tag: string) => Promise<void> | void;
   onClose: () => void;
   onCreatePost: (
@@ -65,6 +66,7 @@ export function CreatePostModal({
   profile,
   communityUsers = [],
   savedHashtags = [],
+  voiceNotesEnabled = true,
   onSaveHashtag,
   onClose,
   onCreatePost,
@@ -242,6 +244,11 @@ export function CreatePostModal({
   const handleAllInOneFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!voiceNotesEnabled && file.type.startsWith('audio/')) {
+      setError('Audio & voice notes are currently disabled by administrators.');
+      e.target.value = '';
+      return;
+    }
     setError(null);
     setUploading(true);
     setUploadProgress(0);
@@ -252,6 +259,11 @@ export function CreatePostModal({
         'posts',
         (pct) => setUploadProgress(pct)
       );
+      if (!voiceNotesEnabled && uploaded.kind === 'audio') {
+        void deleteUploadedMedia(uploaded.url);
+        setError('Audio & voice notes are currently disabled by administrators.');
+        return;
+      }
       cleanupStagedUrls(previousUrls);
       const cleanTitle = sanitizeUploadedFilenameTitle(file.name);
       setMediaTitle(cleanTitle);

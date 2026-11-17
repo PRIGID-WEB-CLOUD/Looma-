@@ -297,54 +297,91 @@ export function OverviewAnalyticsSection({
             No member posts have been published yet.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs sm:text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
-                  <th className="py-3 px-6 font-semibold">Author</th>
-                  <th className="py-3 px-4 font-semibold">Category</th>
-                  <th className="py-3 px-4 font-semibold">Excerpt</th>
-                  <th className="py-3 px-4 font-semibold text-right">Engagement</th>
-                  <th className="py-3 px-6 font-semibold text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {posts.slice(0, 6).map((post) => {
-                  const isHidden = hiddenSet.has(post.id);
-                  return (
-                    <tr
-                      key={post.id}
-                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30"
-                    >
-                      <td className="py-3 px-6 font-medium text-slate-900 dark:text-white whitespace-nowrap">
+          <>
+            <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+              {posts.slice(0, 6).map((post) => {
+                const isHidden = hiddenSet.has(post.id);
+                return (
+                  <div key={post.id} className="p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                         {post.authorName}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                      </span>
+                      <span
+                        className={`text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md shrink-0 ${
+                          isHidden
+                            ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400'
+                            : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        {isHidden ? 'HIDDEN' : 'LIVE'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                      {post.caption || post.mediaTitle || 'Media attachment'}
+                    </p>
+                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 pt-1">
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
                         {post.category}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">
-                        {post.caption || post.mediaTitle || 'Media attachment'}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
-                        {post.likesCount} likes · {post.commentsCount} comments
-                      </td>
-                      <td className="py-3 px-6 text-right whitespace-nowrap">
-                        <span
-                          className={`text-xs font-mono font-semibold ${
-                            isHidden
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : 'text-emerald-700 dark:text-emerald-400'
-                          }`}
-                        >
-                          {isHidden ? 'HIDDEN' : 'LIVE'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </span>
+                      <span className="font-mono tabular-nums">
+                        {post.likesCount} likes · {post.commentsCount} replies
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                    <th className="py-3 px-6 font-semibold">Author</th>
+                    <th className="py-3 px-4 font-semibold">Category</th>
+                    <th className="py-3 px-4 font-semibold">Excerpt</th>
+                    <th className="py-3 px-4 font-semibold text-right">Engagement</th>
+                    <th className="py-3 px-6 font-semibold text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {posts.slice(0, 6).map((post) => {
+                    const isHidden = hiddenSet.has(post.id);
+                    return (
+                      <tr
+                        key={post.id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30"
+                      >
+                        <td className="py-3 px-6 font-medium text-slate-900 dark:text-white whitespace-nowrap">
+                          {post.authorName}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                          {post.category}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">
+                          {post.caption || post.mediaTitle || 'Media attachment'}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
+                          {post.likesCount} likes · {post.commentsCount} comments
+                        </td>
+                        <td className="py-3 px-6 text-right whitespace-nowrap">
+                          <span
+                            className={`text-xs font-mono font-semibold ${
+                              isHidden
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : 'text-emerald-700 dark:text-emerald-400'
+                            }`}
+                          >
+                            {isHidden ? 'HIDDEN' : 'LIVE'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </div>

@@ -298,3 +298,89 @@ export function isConsentRecordValid(
     record.acceptedAtMs > 0
   );
 }
+
+export interface GuidelinesConfigInput {
+  version?: string;
+  summary?: string;
+  rulesText?: string;
+  updatedAtMs?: number;
+}
+
+export function buildLiveGuidelinesDocument(
+  config?: GuidelinesConfigInput | null
+): LegalDocumentContent {
+  const base = LEGAL_DOCUMENTS.guidelines;
+  if (!config) return base;
+
+  const version = (config.version || '').trim() || base.version;
+  const summary = (config.summary || '').trim() || base.summary;
+  const rawRules = (config.rulesText || '').trim();
+
+  const effectiveDate =
+    config.updatedAtMs && config.updatedAtMs > 0
+      ? new Date(config.updatedAtMs).toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        })
+      : base.effectiveDate;
+
+  if (!rawRules) {
+    return {
+      ...base,
+      version,
+      summary,
+      effectiveDate,
+    };
+  }
+
+  const blocks = rawRules
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  const sections: LegalSection[] = blocks.map((block, index) => {
+    const lines = block
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const firstLine = lines[0] || `Section ${index + 1}`;
+    const hasHeading = lines.length > 1 || /^[0-9]+[.)]\s+/.test(firstLine);
+    const title = hasHeading
+      ? firstLine.replace(/^[0-9]+[.)]\s*/, '')
+      : `Guideline ${index + 1}`;
+    const bodyLines = hasHeading ? lines.slice(1) : lines;
+    const paragraphs: string[] = [];
+    const bullets: string[] = [];
+
+    for (const line of bodyLines) {
+      if (/^[-*•]\s+/.test(line)) {
+        bullets.push(line.replace(/^[-*•]\s+/, '').trim());
+      } else {
+        paragraphs.push(line);
+      }
+    }
+
+    if (paragraphs.length === 0 && bullets.length === 0) {
+      paragraphs.push(firstLine);
+    }
+
+    return {
+      id: `guideline-${index + 1}`,
+      number: String(index + 1).padStart(2, '0'),
+      title,
+      paragraphs,
+      ...(bullets.length > 0 ? { bullets } : {}),
+    };
+  });
+
+  return {
+    ...base,
+    version,
+    summary,
+    effectiveDate,
+    sections: sections.length > 0 ? sections : base.sections,
+  };
+}
+
+

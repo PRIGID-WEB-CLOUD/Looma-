@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, CheckCircle2, Megaphone, Plus, ShieldCheck } from 'lucide-react';
+import { BookOpen, CheckCircle2, Megaphone, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '../../src/utils/socialLogic';
 import {
   ADMIN_EMAILS,
@@ -21,6 +21,7 @@ interface GovernanceSectionProps {
     audience: AnnouncementAudience;
   }) => Promise<{ ok: boolean; error?: string }>;
   onToggleAnnouncement: (id: string) => Promise<void>;
+  onDeleteAnnouncement?: (id: string) => Promise<void>;
   onSaveGuidelines: (input: {
     version: string;
     summary: string;
@@ -35,6 +36,7 @@ export function GovernanceSection({
   inquiries,
   onPublishAnnouncement,
   onToggleAnnouncement,
+  onDeleteAnnouncement,
   onSaveGuidelines,
   onUpdateInquiryStatus,
 }: GovernanceSectionProps) {
@@ -234,17 +236,30 @@ export function GovernanceSection({
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void onToggleAnnouncement(item.id)}
-                    className={`min-h-[34px] px-3 rounded-lg border text-xs font-semibold shrink-0 cursor-pointer ${
-                      item.active
-                        ? 'border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {item.active ? 'Active (Pause)' : 'Paused (Activate)'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void onToggleAnnouncement(item.id)}
+                      className={`min-h-[38px] px-3 rounded-lg border text-xs font-semibold cursor-pointer ${
+                        item.active
+                          ? 'border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {item.active ? 'Active (Pause)' : 'Paused (Activate)'}
+                    </button>
+                    {onDeleteAnnouncement && (
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteAnnouncement(item.id)}
+                        aria-label={`Delete announcement ${item.title}`}
+                        className="min-h-[38px] px-3 rounded-lg border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Delete</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

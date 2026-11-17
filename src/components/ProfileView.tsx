@@ -14,6 +14,7 @@ import { MediaGalleryGrid } from './MediaGalleryGrid';
 import { MediaViewerModal } from './MediaViewerModal';
 import { PostCard } from './PostCard';
 import { RichText } from './RichText';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface ProfileViewProps {
   profile: UserProfile;
@@ -34,8 +35,10 @@ interface ProfileViewProps {
   ) => Promise<void>;
   onDeletePost?: (post: Post) => Promise<void>;
   onDeleteComment?: (post: Post, commentId: string) => Promise<void>;
-  onShareToStory: (post: Post) => Promise<unknown> | void;
+  onShareToStory?: (post: Post) => Promise<unknown> | void;
   onShareToChat?: (thread: ChatThread, post: Post) => Promise<void>;
+  onReportPost?: (post: Post, category: 'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other', reason: string) => Promise<void>;
+  storiesEnabled?: boolean;
   onOpenSettings: () => void;
   onOpenConnections: (tab: ConnectionsTab) => void;
   onAuthorClick: (post: Post) => void;
@@ -61,6 +64,8 @@ export function ProfileView({
   onDeleteComment,
   onShareToStory,
   onShareToChat,
+  onReportPost,
+  storiesEnabled = true,
   onOpenSettings,
   onOpenConnections,
   onAuthorClick,
@@ -93,8 +98,9 @@ export function ProfileView({
               size="xl"
             />
             <div className="min-w-0">
-              <h1 className="font-display text-xl font-bold text-slate-900 dark:text-white">
-                {profile.displayName}
+              <h1 className="font-display text-xl font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <span className="truncate">{profile.displayName}</span>
+                {profile.isVerified && <VerifiedBadge size={16} />}
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 @{profile.handle}
@@ -259,8 +265,9 @@ export function ProfileView({
               onUpdatePost={onUpdatePost}
               onDeletePost={onDeletePost}
               onDeleteComment={onDeleteComment}
-              onShareToStory={onShareToStory}
+              onShareToStory={storiesEnabled ? onShareToStory : undefined}
               onShareToChat={onShareToChat}
+              onReportPost={onReportPost}
               onAuthorClick={onAuthorClick}
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}

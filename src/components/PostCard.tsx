@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   ExternalLink,
+  Flag,
   Globe,
   Heart,
   ImageOff,
@@ -63,6 +64,11 @@ interface PostCardProps {
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
   onOpenMedia?: (post: Post) => void;
+  onReportPost?: (
+    post: Post,
+    category: 'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other',
+    reason: string
+  ) => Promise<void>;
 }
 
 export function PostCard({
@@ -84,6 +90,7 @@ export function PostCard({
   onSelectHashtag,
   onMentionClick,
   onOpenMedia,
+  onReportPost,
 }: PostCardProps) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -111,6 +118,14 @@ export function PostCard({
   const [editCategory, setEditCategory] = useState<PostCategory>(post.category);
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportCategory, setReportCategory] = useState<
+    'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other'
+  >('spam');
+  const [reportReason, setReportReason] = useState('');
+  const [reportingPost, setReportingPost] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSubmitted, setReportSubmitted] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -260,6 +275,26 @@ export function PostCard({
       setCommentError(err instanceof Error ? err.message : 'Unable to delete comment.');
     } finally {
       setDeletingCommentId(null);
+    }
+  };
+
+  const handleSubmitPostReport = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!onReportPost || reportingPost) return;
+    if (!reportReason.trim()) {
+      setReportError('Please describe why you are reporting this post.');
+      return;
+    }
+    setReportError(null);
+    setReportingPost(true);
+    try {
+      await onReportPost(post, reportCategory, reportReason.trim());
+      setReportSubmitted(true);
+      setReportReason('');
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Unable to submit report.');
+    } finally {
+      setReportingPost(false);
     }
   };
 
@@ -850,6 +885,22 @@ export function PostCard({
             </button>
           )}
 
+          {!isOwnPost && onReportPost && (
+            <button
+              type="button"
+              onClick={() => {
+                setReportError(null);
+                setReportSubmitted(false);
+                setReportModalOpen(true);
+              }}
+              aria-label={`Report post by ${post.authorName}`}
+              className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            >
+              <Flag className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="hidden sm:inline">Report</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleOpenShareModal}
@@ -1133,6 +1184,116 @@ export function PostCard({
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {reportModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Report post by ${post.authorName}`}
+          data-testid="report-post-modal"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Report Post
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Flag content by @{post.authorHandle} for moderation review
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReportModalOpen(false)}
+                aria-label="Close report modal"
+                className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            {reportSubmitted ? (
+              <div className="p-5 space-y-4">
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 p-4 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
+                  <p className="font-semibold">Report submitted to moderators</p>
+                  <p>Thank you for helping keep the Looma community safe. Our trust &amp; safety team will review this post.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReportModalOpen(false)}
+                  className="w-full min-h-[42px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitPostReport} className="p-5 space-y-4">
+                <div>
+                  <label
+                    htmlFor={`report-cat-${post.id}`}
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
+                  >
+                    Category
+                  </label>
+                  <select
+                    id={`report-cat-${post.id}`}
+                    value={reportCategory}
+                    onChange={(e) => setReportCategory(e.target.value as any)}
+                    className="w-full min-h-[40px] px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  >
+                    <option value="spam">Spam or unsolicited promotion</option>
+                    <option value="harassment">Harassment or abusive language</option>
+                    <option value="misinformation">Misinformation</option>
+                    <option value="nudity">Inappropriate or sensitive media</option>
+                    <option value="copyright">Copyright or attribution issue</option>
+                    <option value="other">Other guideline violation</option>
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor={`report-reason-${post.id}`}
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
+                  >
+                    Details for moderators
+                  </label>
+                  <textarea
+                    id={`report-reason-${post.id}`}
+                    rows={3}
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    maxLength={500}
+                    placeholder="Share context so reviewers can act quickly..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+                  />
+                </div>
+                {reportError && (
+                  <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                    {reportError}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={reportingPost}
+                    onClick={() => setReportModalOpen(false)}
+                    className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={reportingPost}
+                    className="min-h-[40px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                  >
+                    {reportingPost ? 'Submitting...' : 'Submit Report'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

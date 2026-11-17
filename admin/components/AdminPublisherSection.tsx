@@ -7,6 +7,11 @@ import { VerifiedBadge } from '../../src/components/VerifiedBadge';
 
 interface AdminPublisherSectionProps {
   currentProfile: UserProfile;
+  communityUsers?: UserProfile[];
+  savedHashtags?: string[];
+  onCreateHashtag?: (
+    rawTag: string
+  ) => Promise<{ ok: boolean; tag?: string; error?: string }>;
   onPublishPost: (input: {
     caption: string;
     category: PostCategory;
@@ -21,14 +26,17 @@ interface AdminPublisherSectionProps {
 }
 
 const SAMPLE_IMAGE_PRESETS = [
-  { label: 'Modern Architecture', url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80' },
-  { label: 'Minimalist Interior', url: 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80' },
-  { label: 'Urban Sunset', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80' },
-  { label: 'Studio Workspace', url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1200&q=80' },
+  { label: 'Modern Architecture', url: '/images/post_architecture_1794518948238.jpg' },
+  { label: 'Alpine Trail', url: '/images/post_alpine_trail_1794518949014.jpg' },
+  { label: 'Studio Workspace', url: '/images/post_cafe_workspace_1794518949649.jpg' },
+  { label: 'Portrait Feature', url: '/images/avatar_elena_1794518948136.jpg' },
 ];
 
 export function AdminPublisherSection({
   currentProfile,
+  communityUsers = [],
+  savedHashtags = [],
+  onCreateHashtag,
   onPublishPost,
   onPublishAnnouncement,
 }: AdminPublisherSectionProps) {
@@ -38,6 +46,8 @@ export function AdminPublisherSection({
   const [postCaption, setPostCaption] = useState('');
   const [postCategory, setPostCategory] = useState<PostCategory>('Architecture');
   const [postImageUrl, setPostImageUrl] = useState(SAMPLE_IMAGE_PRESETS[0].url);
+  const [newTagInput, setNewTagInput] = useState('');
+  const [savingTag, setSavingTag] = useState(false);
   const [postSubmitting, setPostSubmitting] = useState(false);
   const [postFeedback, setPostFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -96,6 +106,26 @@ export function AdminPublisherSection({
   const insertMention = (handle: string) => {
     setPostCaption((prev) => (prev ? `${prev} @${handle}` : `@${handle}`));
   };
+
+  const handleSaveCustomTag = async () => {
+    if (!onCreateHashtag || !newTagInput.trim() || savingTag) return;
+    setSavingTag(true);
+    setPostFeedback(null);
+    const res = await onCreateHashtag(newTagInput);
+    setSavingTag(false);
+    if (!res.ok || !res.tag) {
+      setPostFeedback({ type: 'err', text: res.error || 'Could not save hashtag.' });
+      return;
+    }
+    setNewTagInput('');
+    insertTag(res.tag);
+    setPostFeedback({ type: 'ok', text: `Saved #${res.tag} to community hashtags.` });
+  };
+
+  const displayTags = savedHashtags.length > 0
+    ? savedHashtags.slice(0, 10)
+    : ['architecture', 'design', 'looma', 'urban', 'release'];
+  const mentionMembers = communityUsers.filter((u) => u.uid !== currentProfile.uid).slice(0, 8);
 
   return (
     <div className="space-y-6">
@@ -193,14 +223,25 @@ export function AdminPublisherSection({
             </label>
 
             <label className="block space-y-1.5">
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Media Image URL
-              </span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Media Image URL (optional)
+                </span>
+                {postImageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setPostImageUrl('')}
+                    className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                  >
+                    Text Only
+                  </button>
+                )}
+              </div>
               <input
-                type="url"
+                type="text"
                 value={postImageUrl}
                 onChange={(e) => setPostImageUrl(e.target.value)}
-                placeholder="https://images.unsplash.com/..."
+                placeholder="/images/post_architecture_1794518948238.jpg or leave empty"
                 className="w-full min-h-[42px] px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-900 dark:text-white"
               />
             </label>
@@ -248,30 +289,70 @@ export function AdminPublisherSection({
             />
           </label>
 
-          {/* Quick Hasbtags & Mentions helpers */}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Quick Tags:</span>
-            {['Architecture', 'Design', 'Looma', 'Urban', 'Release'].map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => insertTag(tag)}
-                className="min-h-[28px] px-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 text-xs font-mono font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer"
-              >
-                #{tag}
-              </button>
-            ))}
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            {['admin', 'community', 'moderator'].map((handle) => (
-              <button
-                key={handle}
-                type="button"
-                onClick={() => insertMention(handle)}
-                className="min-h-[28px] px-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-mono font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-              >
-                @{handle}
-              </button>
-            ))}
+          {/* Hashtags & Member Mentions Builder */}
+          <div className="space-y-3 pt-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Saved Tags:</span>
+              {displayTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => insertTag(tag)}
+                  className="min-h-[30px] px-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 text-xs font-mono font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer"
+                >
+                  #{tag}
+                </button>
+              ))}
+            </div>
+
+            {onCreateHashtag && (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  placeholder="New hashtag (e.g. looma_release)"
+                  aria-label="Create and save new hashtag"
+                  className="min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+                <button
+                  type="button"
+                  disabled={savingTag || !newTagInput.trim()}
+                  onClick={() => void handleSaveCustomTag()}
+                  className="min-h-[38px] px-3.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>{savingTag ? 'Saving...' : 'Create & Save Hashtag'}</span>
+                </button>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Mention Member:</span>
+              {mentionMembers.length > 0 ? (
+                mentionMembers.map((member) => (
+                  <button
+                    key={member.uid}
+                    type="button"
+                    onClick={() => insertMention(member.handle)}
+                    className="min-h-[30px] px-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-mono font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    @{member.handle}
+                  </button>
+                ))
+              ) : (
+                ['admin', 'community', 'moderator'].map((handle) => (
+                  <button
+                    key={handle}
+                    type="button"
+                    onClick={() => insertMention(handle)}
+                    className="min-h-[30px] px-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-mono font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    @{handle}
+                  </button>
+                ))
+              )}
+            </div>
           </div>
 
           <div className="flex justify-end pt-2">

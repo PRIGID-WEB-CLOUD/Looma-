@@ -91,6 +91,8 @@ interface ChatViewProps {
   onOpenPublicProfile: (uid: string) => void;
   onStartCall: (thread: ChatThread, isAudioOnly: boolean) => void;
   onStartInstantCall: (title: string, isAudioOnly: boolean) => void;
+  callsEnabled?: boolean;
+  voiceNotesEnabled?: boolean;
 }
 
 function VoiceNoteBubble({
@@ -248,11 +250,13 @@ function CallBubble({
   isAudioOnly,
   title,
   mine,
+  disabled = false,
   onJoin,
 }: {
   isAudioOnly: boolean;
   title: string;
   mine: boolean;
+  disabled?: boolean;
   onJoin: () => void;
 }) {
   return (
@@ -274,15 +278,16 @@ function CallBubble({
       </div>
       <button
         type="button"
+        disabled={disabled}
         onClick={onJoin}
-        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition ${
+        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed ${
           mine
             ? 'bg-white text-blue-600 hover:bg-white/90 shadow-sm'
             : 'bg-blue-600 hover:bg-blue-700 text-white'
         }`}
       >
         {isAudioOnly ? <Phone className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-        <span>Join Call</span>
+        <span>{disabled ? 'Calls Paused' : 'Join Call'}</span>
       </button>
     </div>
   );
@@ -292,11 +297,13 @@ function MissedCallBubble({
   isAudioOnly,
   title,
   mine,
+  disabled = false,
   onCallBack,
 }: {
   isAudioOnly: boolean;
   title: string;
   mine: boolean;
+  disabled?: boolean;
   onCallBack: () => void;
 }) {
   return (
@@ -318,15 +325,16 @@ function MissedCallBubble({
       </div>
       <button
         type="button"
+        disabled={disabled}
         onClick={onCallBack}
-        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition ${
+        className={`w-full min-h-[38px] px-4 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed ${
           mine
             ? 'bg-white text-rose-600 hover:bg-white/90 shadow-sm'
             : 'bg-rose-600 hover:bg-rose-700 text-white'
         }`}
       >
         {isAudioOnly ? <Phone className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-        <span>Call Back</span>
+        <span>{disabled ? 'Calls Paused' : 'Call Back'}</span>
       </button>
     </div>
   );
@@ -388,6 +396,8 @@ export function ChatView({
   onOpenPublicProfile,
   onStartCall,
   onStartInstantCall,
+  callsEnabled = true,
+  voiceNotesEnabled = true,
 }: ChatViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(
     initialThreadId || threads[0]?.id || null
@@ -672,6 +682,10 @@ export function ChatView({
 
   const handleStartVoiceRecording = async () => {
     setChatComposerError(null);
+    if (!voiceNotesEnabled) {
+      setChatComposerError('Voice notes are currently paused by administrators.');
+      return;
+    }
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
         setChatComposerError('Voice recording is not supported in this browser.');
@@ -1092,22 +1106,26 @@ export function ChatView({
                     <UserPlus className="w-4 h-4" aria-hidden="true" />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => onStartCall(activeThread, true)}
-                  aria-label="Start audio call"
-                  className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
-                >
-                  <Phone className="w-4 h-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onStartCall(activeThread, false)}
-                  aria-label="Start video call"
-                  className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
-                >
-                  <Video className="w-4 h-4" aria-hidden="true" />
-                </button>
+                {callsEnabled && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onStartCall(activeThread, true)}
+                      aria-label="Start audio call"
+                      className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
+                    >
+                      <Phone className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onStartCall(activeThread, false)}
+                      aria-label="Start video call"
+                      className="min-h-[38px] w-[38px] rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-center cursor-pointer transition-colors"
+                    >
+                      <Video className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowChatInfo(true)}
@@ -1238,14 +1256,16 @@ export function ChatView({
                               isAudioOnly={callData.isAudioOnly}
                               title={callData.title}
                               mine={mine}
-                              onJoin={() => onStartCall(activeThread, callData.isAudioOnly)}
+                              disabled={!callsEnabled}
+                              onJoin={() => callsEnabled && onStartCall(activeThread, callData.isAudioOnly)}
                             />
                           ) : missedCallData ? (
                             <MissedCallBubble
                               isAudioOnly={missedCallData.isAudioOnly}
                               title={missedCallData.title}
                               mine={mine}
-                              onCallBack={() => onStartCall(activeThread, missedCallData.isAudioOnly)}
+                              disabled={!callsEnabled}
+                              onCallBack={() => callsEnabled && onStartCall(activeThread, missedCallData.isAudioOnly)}
                             />
                           ) : (
                             <div>
@@ -1438,15 +1458,17 @@ export function ChatView({
                 </button>
 
                 {/* Voice Note Mic Button */}
-                <button
-                  type="button"
-                  onClick={handleStartVoiceRecording}
-                  title="Record Voice Note"
-                  aria-label="Record voice note"
-                  className="min-h-[40px] min-w-[40px] rounded-full text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition cursor-pointer"
-                >
-                  <Mic className="w-5 h-5" />
-                </button>
+                {voiceNotesEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleStartVoiceRecording}
+                    title="Record Voice Note"
+                    aria-label="Record voice note"
+                    className="min-h-[40px] min-w-[40px] rounded-full text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition cursor-pointer"
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                )}
 
                 <label htmlFor="chat-message-input" className="sr-only">
                   Type a message
@@ -1495,22 +1517,26 @@ export function ChatView({
                 <Users className="w-4 h-4" aria-hidden="true" />
                 <span>Browse People</span>
               </button>
-              <button
-                type="button"
-                onClick={() => onStartInstantCall('Studio Video Call', false)}
-                className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 cursor-pointer"
-              >
-                <Video className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                <span>Start Video Room</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onStartInstantCall('Studio Audio Call', true)}
-                className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 cursor-pointer"
-              >
-                <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-                <span>Audio Room</span>
-              </button>
+              {callsEnabled && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onStartInstantCall('Studio Video Call', false)}
+                    className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 cursor-pointer"
+                  >
+                    <Video className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                    <span>Start Video Room</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onStartInstantCall('Studio Audio Call', true)}
+                    className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 cursor-pointer"
+                  >
+                    <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                    <span>Audio Room</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

@@ -1,8 +1,10 @@
 import { ArrowLeft, Check, Mail, Moon, Sun } from 'lucide-react';
 import type { ThemeMode } from '../types/social';
 import {
+  buildLiveGuidelinesDocument,
   LEGAL_CONTACT_EMAIL,
   LEGAL_DOCUMENTS,
+  type GuidelinesConfigInput,
   type LegalDocId,
 } from '../utils/legalLogic';
 import { LoomaLogo } from './LoomaLogo';
@@ -10,6 +12,7 @@ import { LoomaLogo } from './LoomaLogo';
 interface LegalDocumentViewProps {
   activeDocId: LegalDocId;
   theme: ThemeMode;
+  guidelinesConfig?: GuidelinesConfigInput | null;
   fromAuthSignup?: boolean;
   consentAlreadyAccepted?: boolean;
   onSelectDoc: (docId: LegalDocId) => void;
@@ -23,6 +26,7 @@ const DOC_ORDER: LegalDocId[] = ['terms', 'privacy', 'guidelines'];
 export function LegalDocumentView({
   activeDocId,
   theme,
+  guidelinesConfig,
   fromAuthSignup = false,
   consentAlreadyAccepted = false,
   onSelectDoc,
@@ -30,7 +34,10 @@ export function LegalDocumentView({
   onBack,
   onAcceptAndReturn,
 }: LegalDocumentViewProps) {
-  const doc = LEGAL_DOCUMENTS[activeDocId];
+  const doc =
+    activeDocId === 'guidelines'
+      ? buildLiveGuidelinesDocument(guidelinesConfig)
+      : LEGAL_DOCUMENTS[activeDocId];
 
   return (
     <div

@@ -55,7 +55,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid', 'displayName', 'handle', 'bio', 'avatarUrl',
           'location', 'interests', 'followersCount', 'followingCount',
-          'onboardingCompleted', 'createdAt', 'updatedAt'
+          'onboardingCompleted', 'isVerified', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid)
         && data.uid == request.auth.uid
@@ -69,6 +69,7 @@ service cloud.firestore {
         && data.followersCount is int && data.followersCount >= 0
         && data.followingCount is int && data.followingCount >= 0
         && data.onboardingCompleted is bool
+        && (!('isVerified' in data) || data.isVerified is bool)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -104,7 +105,7 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'authorId', 'authorName', 'authorHandle', 'authorAvatar',
+          'id', 'authorId', 'authorName', 'authorHandle', 'authorAvatar', 'authorVerified',
           'caption', 'imageUrl', 'videoUrl', 'audioUrl', 'linkUrl', 'mediaTitle',
           'category', 'likesCount', 'commentsCount', 'createdAt', 'updatedAt'
         ])
@@ -113,6 +114,7 @@ service cloud.firestore {
         && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
         && isValidHandle(data.authorHandle)
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
+        && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.caption is string && data.caption.size() <= 1200
         && data.imageUrl is string && data.imageUrl.size() <= 600000
         && (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 750000))
@@ -531,9 +533,11 @@ service cloud.firestore {
         && isValidId(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == userId
+        && (!('isVerified' in incoming()) || incoming().isVerified == false || isAdmin())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
+      allow update: if (
+        isVerifiedUser()
         && isOwner(userId)
         && isValidId(userId)
         && isValidUserProfile(incoming())
@@ -541,10 +545,23 @@ service cloud.firestore {
         && incoming().followersCount == existing().followersCount
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
+        && (
+          !incoming().diff(existing()).affectedKeys().hasAny(['isVerified'])
+          || isAdmin()
+        )
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'handle', 'bio', 'avatarUrl', 'location',
-          'interests', 'followingCount', 'onboardingCompleted', 'updatedAt'
-        ]);
+          'interests', 'followingCount', 'onboardingCompleted', 'isVerified', 'updatedAt'
+        ])
+      ) || (
+        isAdmin()
+        && isValidId(userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().isVerified is bool
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isVerified', 'updatedAt'])
+      );
       allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
 
       match /private/{docId} {
@@ -590,7 +607,7 @@ service cloud.firestore {
         allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(notificationId);
         allow list: if isVerifiedUser() && isOwner(userId) && resource.data.recipientId == request.auth.uid;
         allow create: if isVerifiedUser()
-          && isOwner(userId)
+          && (isOwner(userId) || incoming().type == 'mention' || isAdmin())
           && isValidId(userId)
           && isValidId(notificationId)
           && isValidAppNotification(incoming(), userId)
@@ -646,6 +663,7 @@ service cloud.firestore {
         && isValidPost(incoming())
         && incoming().id == postId
         && incoming().authorId == request.auth.uid
+        && (!('authorVerified' in incoming()) || incoming().authorVerified == false || isAdmin())
         && incoming().likesCount == 0
         && incoming().commentsCount == 0
         && incoming().createdAt == request.time
@@ -1053,7 +1071,10 @@ service cloud.firestore {
     }
 
     match /adminConfig/{configId} {
-      allow get: if isVerifiedUser() && isValidId(configId);
+      allow get: if isValidId(configId) && (
+        isVerifiedUser()
+        || configId in ['featureFlags', 'guidelines']
+      );
       allow list: if isAdmin();
       allow create, update: if isAdmin()
         && isValidId(configId)
@@ -1078,10 +1099,11 @@ service cloud.firestore {
     match /accessInquiries/{inquiryId} {
       allow get: if isAdmin() && isValidId(inquiryId);
       allow list: if isAdmin();
-      allow create: if isAdmin()
-        && isValidId(inquiryId)
+      allow create: if isValidId(inquiryId)
         && isValidAccessInquiry(incoming())
         && incoming().id == inquiryId
+        && incoming().status == 'pending'
+        && incoming().reviewedBy == ''
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isAdmin()

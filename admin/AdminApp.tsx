@@ -24,6 +24,14 @@ import {
   testFirestoreConnection,
 } from '../src/services/firebase';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
+import { ADMIN_SYNC_STORAGE_KEYS } from '../src/hooks/useSocialStore';
+import {
+  extractHashtags,
+  extractMentions,
+  mergeSavedHashtags,
+  normalizeHashtag,
+  POPULAR_HASHTAGS,
+} from '../src/utils/socialLogic';
 import type { Post, PostCategory, StoryGroup, StoryItem, ThemeMode, UserProfile } from '../src/types/social';
 import {
   ADMIN_ROLE_PERMISSIONS,
@@ -32,6 +40,7 @@ import {
   appendAuditEntry,
   assignAdminRole,
   countExpiredStories,
+  isAllowlistedAdminEmail,
   reviewAppealDecision,
   revokeAdminRole,
   setMemberModerationStatus,
@@ -58,6 +67,22 @@ import {
   type ReportStatus,
   type SystemHealthProbe,
 } from './adminLogic';
+
+function sanitizeAdminHandle(raw: string | undefined): string {
+  const cleaned = (raw || 'admin').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (cleaned.length >= 3) return cleaned.slice(0, 32);
+  return `${cleaned}_op`.slice(0, 32).padEnd(3, '_');
+}
+
+function mirrorAdminStorage(key: string, value: unknown) {
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -162,6 +187,7 @@ function AdminAppInner(_props: AdminAppProps) {
   const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(DEFAULT_FEATURE_FLAGS);
   const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
   const [inquiries, setInquiries] = useState<AdminAccessInquiry[]>([]);
+  const [savedHashtags, setSavedHashtags] = useState<string[]>(POPULAR_HASHTAGS);
 
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [healthProbes, setHealthProbes] = useState<SystemHealthProbe[]>(() => [
@@ -226,6 +252,35 @@ function AdminAppInner(_props: AdminAppProps) {
       // Ignore
     }
   }, [theme]);
+
+  // Mirror admin governance state to localStorage for local/autostart tab sync
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.FEATURE_FLAGS, featureFlags);
+  }, [featureFlags]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.HIDDEN_POSTS, moderation.hiddenPostIds);
+  }, [moderation.hiddenPostIds]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.GUIDELINES, guidelines);
+  }, [guidelines]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS, announcements);
+  }, [announcements]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.USER_MODERATION, memberModerationRecords);
+  }, [memberModerationRecords]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.REPORTS, reports);
+  }, [reports]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.APPEALS, appeals);
+  }, [appeals]);
 
   const runHealthProbes = useCallback(async () => {
     setCheckingHealth(true);
@@ -352,26 +407,47 @@ function AdminAppInner(_props: AdminAppProps) {
             isVerified: true,
           });
           if (!profileData.isVerified) {
-            setDoc(doc(db, 'users', u.uid), { isVerified: true, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+            updateDoc(doc(db, 'users', u.uid), {
+              isVerified: true,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
           }
         } else {
+          const safeHandle = sanitizeAdminHandle(u.email?.split('@')[0] || 'admin');
+          const safeDisplayName = (u.displayName || u.email?.split('@')[0] || 'Master Admin')
+            .trim()
+            .slice(0, 60);
           const newProfile: UserProfile = {
             uid: u.uid,
-            displayName: u.displayName || u.email?.split('@')[0] || 'Master Admin',
-            handle: u.email?.split('@')[0] || 'admin',
+            displayName: safeDisplayName,
+            handle: safeHandle,
             avatarUrl: u.photoURL || '',
             bio: 'Master Admin Operator & Workspace Publisher',
             location: 'Looma HQ',
             interests: ['Architecture', 'Design', 'Governance'],
-            followersCount: 1,
-            followingCount: 1,
+            followersCount: 0,
+            followingCount: 0,
             isVerified: true,
             createdAtMs: Date.now(),
             updatedAtMs: Date.now(),
             onboardingCompleted: true,
           };
           setCurrentProfile(newProfile);
-          setDoc(doc(db, 'users', u.uid), { ...newProfile, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          setDoc(doc(db, 'users', u.uid), {
+            uid: u.uid,
+            displayName: safeDisplayName,
+            handle: safeHandle,
+            bio: newProfile.bio,
+            avatarUrl: newProfile.avatarUrl,
+            location: newProfile.location,
+            interests: newProfile.interests,
+            followersCount: 0,
+            followingCount: 0,
+            onboardingCompleted: true,
+            isVerified: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
         }
       } catch {
         setCurrentProfile({
@@ -478,6 +554,7 @@ function AdminAppInner(_props: AdminAppProps) {
             list.push({
               ...(raw as unknown as UserProfile),
               uid: d.id,
+              isVerified: Boolean(raw.isVerified) || d.id === firebaseUser.uid,
               createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
               updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
             });
@@ -499,6 +576,8 @@ function AdminAppInner(_props: AdminAppProps) {
             list.push({
               ...(raw as unknown as Omit<Post, 'id'>),
               id: d.id,
+              authorVerified:
+                Boolean(raw.authorVerified) || raw.authorId === firebaseUser.uid,
               createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
               updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
             });
@@ -506,6 +585,24 @@ function AdminAppInner(_props: AdminAppProps) {
           setPosts(list);
         },
         (err) => reportSyncError(err, 'posts')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'hashtags'),
+        (snap) => {
+          clearSyncError('hashtags');
+          const dynamicTags: string[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as { tag?: string };
+            if (typeof raw.tag === 'string' && raw.tag.trim()) {
+              dynamicTags.push(raw.tag.trim());
+            }
+          });
+          setSavedHashtags(mergeSavedHashtags(POPULAR_HASHTAGS, dynamicTags));
+        },
+        (err) => reportSyncError(err, 'hashtags')
       )
     );
 
@@ -1098,6 +1195,35 @@ function AdminAppInner(_props: AdminAppProps) {
     return { ok: true };
   };
 
+  const handleCreateHashtag = async (
+    rawTag: string
+  ): Promise<{ ok: boolean; tag?: string; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const clean = normalizeHashtag(rawTag);
+    if (!clean) {
+      return { ok: false, error: 'Enter 1-40 lowercase letters, numbers, or underscores.' };
+    }
+    setSavedHashtags((prev) => mergeSavedHashtags(prev, [clean]));
+    try {
+      const ref = doc(db, 'hashtags', clean);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
+          tag: clean,
+          createdBy: firebaseUser.uid,
+          createdAt: serverTimestamp(),
+        });
+        await recordAudit('hashtag.create', 'hashtag', clean, `Saved community hashtag #${clean}.`);
+      }
+      return { ok: true, tag: clean };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `hashtags/${clean}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
   const handleAdminPublishPost = async (input: {
     caption: string;
     category: PostCategory;
@@ -1106,20 +1232,28 @@ function AdminAppInner(_props: AdminAppProps) {
     if (!firebaseUser || !adminAuth.isAdmin) {
       return { ok: false, error: 'Administrator authentication is required.' };
     }
-    if (!input.caption.trim()) {
-      return { ok: false, error: 'Post caption is required.' };
+    const cleanCaption = input.caption.trim();
+    const cleanImageUrl = input.imageUrl.trim();
+    if (!cleanCaption && !cleanImageUrl) {
+      return { ok: false, error: 'Post caption or media URL is required.' };
     }
     const now = Date.now();
     const postId = `post_${now}_${Math.random().toString(36).slice(2, 6)}`;
+    const safeHandle = sanitizeAdminHandle(currentProfile.handle);
+    const isMasterAdmin = Boolean(
+      firebaseUser.email && isAllowlistedAdminEmail(firebaseUser.email)
+    );
+    const authorVerified = isMasterAdmin || Boolean(currentProfile.isVerified) || true;
+
     const newPost: Post = {
       id: postId,
       authorId: firebaseUser.uid,
       authorName: currentProfile.displayName,
-      authorHandle: currentProfile.handle,
+      authorHandle: safeHandle,
       authorAvatar: currentProfile.avatarUrl,
-      authorVerified: true,
-      caption: input.caption.trim(),
-      imageUrl: input.imageUrl.trim() || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
+      authorVerified,
+      caption: cleanCaption,
+      imageUrl: cleanImageUrl,
       category: input.category,
       likesCount: 0,
       commentsCount: 0,
@@ -1128,24 +1262,54 @@ function AdminAppInner(_props: AdminAppProps) {
     };
 
     setPosts((prev) => [newPost, ...prev]);
-    await recordAudit('post.create', 'post', postId, `Admin published post "${input.caption.slice(0, 40)}..."`);
+    await recordAudit('post.create', 'post', postId, `Admin published post "${cleanCaption.slice(0, 40)}..."`);
 
     try {
       await setDoc(doc(db, 'posts', postId), {
         id: postId,
         authorId: firebaseUser.uid,
         authorName: currentProfile.displayName,
-        authorHandle: currentProfile.handle,
+        authorHandle: safeHandle,
         authorAvatar: currentProfile.avatarUrl,
-        authorVerified: true,
-        caption: input.caption.trim(),
-        imageUrl: newPost.imageUrl,
+        authorVerified,
+        caption: cleanCaption,
+        imageUrl: cleanImageUrl,
         category: input.category,
         likesCount: 0,
         commentsCount: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+
+      // Persist new hashtags automatically
+      const tags = extractHashtags(cleanCaption);
+      for (const tag of tags) {
+        await handleCreateHashtag(tag);
+      }
+
+      // Dispatch mention notifications to referenced users
+      const mentionedHandles = extractMentions(cleanCaption);
+      for (const handle of mentionedHandles) {
+        const targetUser = communityUsers.find(
+          (u) => u.handle.toLowerCase() === handle.toLowerCase() && u.uid !== firebaseUser.uid
+        );
+        if (targetUser) {
+          const notifId = `notif_${now}_${Math.random().toString(36).slice(2, 7)}`;
+          await setDoc(doc(db, 'users', targetUser.uid, 'notifications', notifId), {
+            id: notifId,
+            recipientId: targetUser.uid,
+            actorId: firebaseUser.uid,
+            actorName: currentProfile.displayName,
+            actorAvatar: currentProfile.avatarUrl || '',
+            type: 'mention',
+            title: `${currentProfile.displayName} mentioned you`,
+            body: cleanCaption.slice(0, 220) || 'Tagged you in an official post.',
+            targetPostId: postId,
+            read: false,
+            createdAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `posts/${postId}`);
       return { ok: false, error: (err as Error).message || String(err) };
@@ -1230,6 +1394,23 @@ function AdminAppInner(_props: AdminAppProps) {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `announcements/${id}`);
+    }
+  };
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
+    const existing = announcements.find((a) => a.id === id);
+    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
+    await recordAudit(
+      'announcement.delete',
+      'announcement',
+      id,
+      `Deleted announcement "${existing?.title || id}".`
+    );
+    try {
+      await deleteDoc(doc(db, 'announcements', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `announcements/${id}`);
     }
   };
 
@@ -1439,6 +1620,7 @@ function AdminAppInner(_props: AdminAppProps) {
       onReviewAppeal={handleReviewAppeal}
       onPublishAnnouncement={handlePublishAnnouncement}
       onToggleAnnouncement={handleToggleAnnouncement}
+      onDeleteAnnouncement={handleDeleteAnnouncement}
       onSaveGuidelines={handleSaveGuidelines}
       onUpdateInquiryStatus={handleUpdateInquiryStatus}
       onToggleFeatureFlag={handleToggleFeatureFlag}
@@ -1446,6 +1628,8 @@ function AdminAppInner(_props: AdminAppProps) {
       onRunBackgroundJob={handleRunBackgroundJob}
       onToggleVerify={handleToggleVerify}
       onPublishPost={handleAdminPublishPost}
+      savedHashtags={savedHashtags}
+      onCreateHashtag={handleCreateHashtag}
     />
   );
 }

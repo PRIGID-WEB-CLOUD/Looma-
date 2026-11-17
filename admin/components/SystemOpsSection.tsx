@@ -236,9 +236,9 @@ export function SystemOpsSection({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
+            <div className="relative flex-1 sm:flex-initial">
               <Search
-                className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+                className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                 aria-hidden="true"
               />
               <input
@@ -247,7 +247,7 @@ export function SystemOpsSection({
                 value={logSearch}
                 onChange={(e) => setLogSearch(e.target.value)}
                 placeholder="Search actor, target, summary"
-                className="min-h-[36px] pl-9 pr-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="w-full sm:w-56 min-h-[38px] pl-9 pr-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
 
@@ -255,7 +255,7 @@ export function SystemOpsSection({
               aria-label="Filter audit logs by action"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              className="min-h-[36px] px-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono"
+              className="min-h-[38px] px-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono"
             >
               <option value="all">All Actions</option>
               {uniqueActions.map((act) => (
@@ -272,43 +272,66 @@ export function SystemOpsSection({
             No audit events match the current filter.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs sm:text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
-                  <th className="py-3 px-5 font-semibold">Timestamp</th>
-                  <th className="py-3 px-4 font-semibold">Actor</th>
-                  <th className="py-3 px-4 font-semibold">Action</th>
-                  <th className="py-3 px-4 font-semibold">Target</th>
-                  <th className="py-3 px-5 font-semibold">Summary</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {visibleLogs.map((entry) => (
-                  <tr
-                    key={entry.id}
-                    className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30"
-                  >
-                    <td className="py-2.5 px-5 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
-                      {formatRelativeTime(entry.createdAtMs)}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-xs text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      {entry.actorEmail}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-xs font-semibold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+          <>
+            <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+              {visibleLogs.map((entry) => (
+                <div key={entry.id} className="p-4 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-semibold text-blue-600 dark:text-blue-400 truncate">
                       {entry.action}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-xs text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                      {entry.targetType}:{entry.targetId}
-                    </td>
-                    <td className="py-2.5 px-5 text-xs text-slate-700 dark:text-slate-300">
-                      {entry.summary}
-                    </td>
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 tabular-nums shrink-0">
+                      {formatRelativeTime(entry.createdAtMs)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
+                    {entry.summary}
+                  </p>
+                  <p className="font-mono text-[11px] text-slate-500 dark:text-slate-400 break-all">
+                    {entry.actorEmail} → {entry.targetType}:{entry.targetId}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                    <th className="py-3 px-5 font-semibold">Timestamp</th>
+                    <th className="py-3 px-4 font-semibold">Actor</th>
+                    <th className="py-3 px-4 font-semibold">Action</th>
+                    <th className="py-3 px-4 font-semibold">Target</th>
+                    <th className="py-3 px-5 font-semibold">Summary</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {visibleLogs.map((entry) => (
+                    <tr
+                      key={entry.id}
+                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30"
+                    >
+                      <td className="py-2.5 px-5 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
+                        {formatRelativeTime(entry.createdAtMs)}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-xs text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                        {entry.actorEmail}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-xs font-semibold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                        {entry.action}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-xs text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {entry.targetType}:{entry.targetId}
+                      </td>
+                      <td className="py-2.5 px-5 text-xs text-slate-700 dark:text-slate-300">
+                        {entry.summary}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </div>

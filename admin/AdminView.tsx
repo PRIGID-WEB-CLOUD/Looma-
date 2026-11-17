@@ -43,7 +43,7 @@ import {
   type SystemHealthProbe,
 } from './adminLogic';
 import { OverviewAnalyticsSection } from './components/OverviewAnalyticsSection';
-import { MembersRolesSection } from './components/MembersRolesSection';
+import { TeamRolesSection } from './components/TeamRolesSection';
 import { UsersDirectorySection } from './components/UsersDirectorySection';
 import { ContentModerationSection } from './components/ContentModerationSection';
 import { ReportsAppealsSection } from './components/ReportsAppealsSection';
@@ -125,6 +125,7 @@ interface AdminViewProps {
     audience: AnnouncementAudience;
   }) => Promise<{ ok: boolean; error?: string }>;
   onToggleAnnouncement: (id: string) => Promise<void>;
+  onDeleteAnnouncement?: (id: string) => Promise<void>;
   onSaveGuidelines: (input: {
     version: string;
     summary: string;
@@ -145,6 +146,10 @@ interface AdminViewProps {
     category: PostCategory;
     imageUrl: string;
   }) => Promise<{ ok: boolean; error?: string }>;
+  savedHashtags?: string[];
+  onCreateHashtag?: (
+    rawTag: string
+  ) => Promise<{ ok: boolean; tag?: string; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -203,6 +208,7 @@ export function AdminView({
   onReviewAppeal,
   onPublishAnnouncement,
   onToggleAnnouncement,
+  onDeleteAnnouncement,
   onSaveGuidelines,
   onUpdateInquiryStatus,
   onToggleFeatureFlag,
@@ -210,6 +216,8 @@ export function AdminView({
   onRunBackgroundJob,
   onToggleVerify,
   onPublishPost,
+  savedHashtags = [],
+  onCreateHashtag,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
   const [showEmailLogin, setShowEmailLogin] = useState(false);
@@ -698,24 +706,19 @@ export function AdminView({
           {section === 'publisher' && (
             <AdminPublisherSection
               currentProfile={currentProfile}
+              communityUsers={allMembers}
+              savedHashtags={savedHashtags}
+              onCreateHashtag={onCreateHashtag}
               onPublishPost={onPublishPost}
               onPublishAnnouncement={onPublishAnnouncement}
             />
           )}
 
           {section === 'members' && (
-            <MembersRolesSection
+            <TeamRolesSection
               currentAdminUid={currentProfile.uid}
-              members={filteredMembers}
-              memberSearch={memberSearch}
-              memberFilter={memberFilter}
-              onlineSet={onlineSet}
-              restrictedSet={restrictedSet}
-              moderationRecords={memberModerationRecords}
               adminRoles={adminRoles}
-              onChangeSearch={setMemberSearch}
-              onChangeFilter={setMemberFilter}
-              onSetMemberStatus={onSetMemberStatus}
+              communityUsers={allMembers}
               onAssignRole={onAssignRole}
               onRevokeRole={onRevokeRole}
             />
@@ -764,6 +767,7 @@ export function AdminView({
               inquiries={inquiries}
               onPublishAnnouncement={onPublishAnnouncement}
               onToggleAnnouncement={onToggleAnnouncement}
+              onDeleteAnnouncement={onDeleteAnnouncement}
               onSaveGuidelines={onSaveGuidelines}
               onUpdateInquiryStatus={onUpdateInquiryStatus}
             />

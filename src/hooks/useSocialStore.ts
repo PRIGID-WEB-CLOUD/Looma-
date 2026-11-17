@@ -42,7 +42,18 @@ import {
   buildFallbackUserProfile,
   isTransientFirestoreError,
 } from '../utils/firebaseResilience';
-import { isAllowlistedAdminEmail } from '../../admin/adminLogic';
+import {
+  DEFAULT_COMMUNITY_GUIDELINES,
+  DEFAULT_FEATURE_FLAGS,
+  isAllowlistedAdminEmail,
+  type AdminFeatureFlags,
+  type CommunityGuidelinesConfig,
+  type ContentReport,
+  type MemberModerationRecord,
+  type ModerationAppeal,
+  type PlatformAnnouncement,
+  type ReportCategory,
+} from '../../admin/adminLogic';
 import {
   createInitialMemberProfile,
   isDemoPostId,
@@ -88,6 +99,8 @@ import {
   createGroupThreadRecord,
   deleteNotificationItem,
   DIRECT_CHAT_SHARED_TITLE,
+  enrichPostWithVerifiedAuthor,
+  extractFirstUrl,
   extractHashtags,
   extractMentions,
   formatCallMessage,
@@ -108,11 +121,14 @@ import {
   resolvePublicProfile,
   sanitizeHandle,
   sanitizeMediaTitle,
+  shouldAutoQueuePostReport,
+  shouldBlockActionByModeration,
   shouldDispatchChatPushNotification,
   toggleFollowState,
   validateGroupChatInput,
   validatePasswordResetEmail,
   validatePostInput,
+  type ModerationActionKind,
 } from '../utils/socialLogic';
 import {
   reconcileCallSessionWithPeers,
@@ -149,6 +165,16 @@ const STORAGE_KEYS = {
   THEME: 'looma_theme_v1',
   PUSH_ENABLED: 'looma_push_enabled_v1',
   TERMS_CONSENT: 'looma_terms_consent_v1',
+};
+
+export const ADMIN_SYNC_STORAGE_KEYS = {
+  FEATURE_FLAGS: 'looma_admin_feature_flags_v1',
+  HIDDEN_POSTS: 'looma_admin_hidden_posts_v1',
+  GUIDELINES: 'looma_admin_guidelines_v1',
+  ANNOUNCEMENTS: 'looma_admin_announcements_v1',
+  USER_MODERATION: 'looma_admin_user_moderation_v1',
+  REPORTS: 'looma_admin_reports_v1',
+  APPEALS: 'looma_admin_appeals_v1',
 };
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -292,13 +318,12 @@ export function useSocialStore() {
           authorId: 'creator_sophia',
           authorName: 'Sophia Chen',
           authorHandle: 'sophia.studio',
-          authorAvatar:
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          authorAvatar: '/images/avatar_maya_1794518947315.jpg',
+          authorVerified: true,
           caption:
             'Morning architectural walk around the pavilion #Design #Architecture. Loving the light and clean lines.',
           category: 'Architecture',
-          imageUrl:
-            'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800',
+          imageUrl: '/images/post_architecture_1794518948238.jpg',
           likesCount: 24,
           commentsCount: 3,
           createdAtMs: Date.now() - 1000 * 60 * 60 * 2,
@@ -309,13 +334,11 @@ export function useSocialStore() {
           authorId: 'creator_marcus',
           authorName: 'Marcus Vance',
           authorHandle: 'marcus.vance',
-          authorAvatar:
-            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          authorAvatar: '/images/avatar_kenji_1794518947553.jpg',
           caption:
             'Capturing dawn mist in the Cascade Mountains. Nature never ceases to amaze me. #Photography #Travel',
           category: 'Photography',
-          imageUrl:
-            'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800',
+          imageUrl: '/images/post_alpine_trail_1794518949014.jpg',
           likesCount: 42,
           commentsCount: 7,
           createdAtMs: Date.now() - 1000 * 60 * 60 * 5,
@@ -362,13 +385,13 @@ export function useSocialStore() {
           uid: 'creator_sophia',
           displayName: 'Sophia Chen',
           handle: 'sophia.studio',
-          avatarUrl:
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          avatarUrl: '/images/avatar_maya_1794518947315.jpg',
           bio: 'Senior UX Architect & Design Lead',
           location: 'San Francisco, CA',
           interests: ['Design', 'Architecture'],
           followersCount: 1420,
           followingCount: 380,
+          isVerified: true,
           onboardingCompleted: true,
           createdAtMs: Date.now() - 86400000 * 30,
           updatedAtMs: Date.now(),
@@ -377,8 +400,7 @@ export function useSocialStore() {
           uid: 'creator_marcus',
           displayName: 'Marcus Vance',
           handle: 'marcus.vance',
-          avatarUrl:
-            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          avatarUrl: '/images/avatar_kenji_1794518947553.jpg',
           bio: 'Landscape & Architectural Photographer',
           location: 'Seattle, WA',
           interests: ['Photography', 'Travel'],
@@ -453,8 +475,7 @@ export function useSocialStore() {
             chatId: 'chat_sophia_direct',
             senderId: 'creator_sophia',
             senderName: 'Sophia Chen',
-            senderAvatar:
-              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+            senderAvatar: '/images/avatar_maya_1794518947315.jpg',
             text: 'Hey Alex! Loved your latest post on the feed. Here is a quick voice note about our upcoming sprint!',
             memberIds: [profile.uid, 'creator_sophia'],
             createdAtMs: Date.now() - 1000 * 60 * 15,
@@ -464,8 +485,7 @@ export function useSocialStore() {
             chatId: 'chat_sophia_direct',
             senderId: 'creator_sophia',
             senderName: 'Sophia Chen',
-            senderAvatar:
-              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+            senderAvatar: '/images/avatar_maya_1794518947315.jpg',
             text: formatVoiceNote(
               'https://cdn.freesound.org/previews/612/612082_5674468-lq.mp3',
               14
@@ -505,6 +525,47 @@ export function useSocialStore() {
   );
   const [savedHashtags, setSavedHashtags] = useState<string[]>(() =>
     mergeSavedHashtags([], readStorage<string[]>(STORAGE_KEYS.HASHTAGS, []))
+  );
+
+  const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(() => {
+    const saved = readStorage<Partial<AdminFeatureFlags> | null>(
+      ADMIN_SYNC_STORAGE_KEYS.FEATURE_FLAGS,
+      null
+    );
+    return saved ? { ...DEFAULT_FEATURE_FLAGS, ...saved } : DEFAULT_FEATURE_FLAGS;
+  });
+  const [hiddenPostIds, setHiddenPostIds] = useState<string[]>(() =>
+    readStorage<string[]>(ADMIN_SYNC_STORAGE_KEYS.HIDDEN_POSTS, [])
+  );
+  const [guidelines, setGuidelines] = useState<CommunityGuidelinesConfig>(() => {
+    const saved = readStorage<Partial<CommunityGuidelinesConfig> | null>(
+      ADMIN_SYNC_STORAGE_KEYS.GUIDELINES,
+      null
+    );
+    return saved
+      ? { ...DEFAULT_COMMUNITY_GUIDELINES, ...saved }
+      : DEFAULT_COMMUNITY_GUIDELINES;
+  });
+  const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>(() =>
+    readStorage<PlatformAnnouncement[]>(ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS, [])
+  );
+  const [memberModeration, setMemberModeration] =
+    useState<MemberModerationRecord | null>(() => {
+      const map = readStorage<Record<string, MemberModerationRecord>>(
+        ADMIN_SYNC_STORAGE_KEYS.USER_MODERATION,
+        {}
+      );
+      return map[profile.uid] || null;
+    });
+  const [userReports, setUserReports] = useState<ContentReport[]>(() =>
+    readStorage<ContentReport[]>(ADMIN_SYNC_STORAGE_KEYS.REPORTS, []).filter(
+      (r) => r.reporterUid === profile.uid
+    )
+  );
+  const [userAppeals, setUserAppeals] = useState<ModerationAppeal[]>(() =>
+    readStorage<ModerationAppeal[]>(ADMIN_SYNC_STORAGE_KEYS.APPEALS, []).filter(
+      (a) => a.appellantUid === profile.uid
+    )
   );
 
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
@@ -1061,6 +1122,7 @@ export function useSocialStore() {
         if (snap.metadata.fromCache) return;
         if (snap.exists()) {
           const d = snap.data();
+          const isAdminUser = isAllowlistedAdminEmail(firebaseUser.email);
           const synced: UserProfile = {
             uid: d.uid || firebaseUser.uid,
             displayName: d.displayName || profileRef.current.displayName,
@@ -1073,6 +1135,7 @@ export function useSocialStore() {
             interests: Array.isArray(d.interests) ? d.interests : [],
             followersCount: Number(d.followersCount || 0),
             followingCount: Number(d.followingCount || 0),
+            isVerified: Boolean(d.isVerified || isAdminUser),
             onboardingCompleted: Boolean(d.onboardingCompleted),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
@@ -1122,6 +1185,7 @@ export function useSocialStore() {
             authorName: d.authorName,
             authorHandle: d.authorHandle,
             authorAvatar: normalizeAssetUrl(d.authorAvatar || ''),
+            authorVerified: Boolean(d.authorVerified),
             caption: d.caption || '',
             imageUrl: normalizeAssetUrl(d.imageUrl || ''),
             videoUrl: d.videoUrl || '',
@@ -1314,6 +1378,7 @@ export function useSocialStore() {
               interests: Array.isArray(d.interests) ? d.interests : [],
               followersCount: Number(d.followersCount || 0),
               followingCount: Number(d.followingCount || 0),
+              isVerified: Boolean(d.isVerified),
               onboardingCompleted: Boolean(d.onboardingCompleted),
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
@@ -1531,6 +1596,114 @@ export function useSocialStore() {
       }
     );
 
+    const unsubHiddenPosts = onSnapshot(
+      doc(db, 'adminConfig', 'hiddenPosts'),
+      (snap) => {
+        if (!snap.exists()) {
+          setHiddenPostIds([]);
+          return;
+        }
+        const data = snap.data() as { hiddenPostIds?: unknown };
+        setHiddenPostIds(
+          Array.isArray(data.hiddenPostIds)
+            ? data.hiddenPostIds.filter((id): id is string => typeof id === 'string')
+            : []
+        );
+      },
+      () => {}
+    );
+
+    const unsubUserModeration = onSnapshot(
+      doc(db, 'userModeration', firebaseUser.uid),
+      (snap) => {
+        if (!snap.exists()) {
+          setMemberModeration(null);
+          return;
+        }
+        const raw = snap.data() as Record<string, unknown>;
+        setMemberModeration({
+          uid: String(raw.uid || firebaseUser.uid),
+          status:
+            raw.status === 'suspended'
+              ? 'suspended'
+              : raw.status === 'restricted'
+                ? 'restricted'
+                : 'active',
+          reason: String(raw.reason || ''),
+          updatedBy: String(raw.updatedBy || ''),
+          updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+        });
+      },
+      () => {}
+    );
+
+    const unsubAnnouncements = onSnapshot(
+      query(collection(db, 'announcements'), where('active', '==', true)),
+      (snapshot) => {
+        const mapped: PlatformAnnouncement[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data() as Record<string, unknown>;
+          return {
+            id: String(d.id || docSnap.id),
+            title: String(d.title || ''),
+            body: String(d.body || ''),
+            severity:
+              d.severity === 'maintenance'
+                ? 'maintenance'
+                : d.severity === 'warning'
+                  ? 'warning'
+                  : 'info',
+            audience:
+              d.audience === 'admins'
+                ? 'admins'
+                : d.audience === 'verified'
+                  ? 'verified'
+                  : 'all',
+            active: Boolean(d.active),
+            authorUid: String(d.authorUid || ''),
+            authorName: String(d.authorName || 'Admin'),
+            createdAtMs: timestampToMs(d.createdAtMs ?? d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAtMs ?? d.updatedAt),
+          };
+        });
+        setAnnouncements(mapped);
+      },
+      () => {}
+    );
+
+    const unsubReports = onSnapshot(
+      query(collection(db, 'reports'), where('reporterUid', '==', firebaseUser.uid)),
+      (snapshot) => {
+        const mapped: ContentReport[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data() as Record<string, unknown>;
+          return {
+            ...(d as unknown as Omit<ContentReport, 'id'>),
+            id: String(d.id || docSnap.id),
+            createdAtMs: timestampToMs(d.createdAtMs ?? d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAtMs ?? d.updatedAt),
+          };
+        });
+        setUserReports(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
+      },
+      () => {}
+    );
+
+    const unsubAppeals = onSnapshot(
+      query(collection(db, 'appeals'), where('appellantUid', '==', firebaseUser.uid)),
+      (snapshot) => {
+        const mapped: ModerationAppeal[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data() as Record<string, unknown>;
+          return {
+            ...(d as unknown as Omit<ModerationAppeal, 'id'>),
+            id: String(d.id || docSnap.id),
+            createdAtMs: timestampToMs(d.createdAtMs ?? d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAtMs ?? d.updatedAt),
+          };
+        });
+        setUserAppeals(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
+      },
+      () => {}
+    );
+
     return () => {
       window.clearInterval(presenceInterval);
       unsubOwnProfile();
@@ -1545,8 +1718,103 @@ export function useSocialStore() {
       unsubPresence();
       unsubCalls();
       unsubHashtags();
+      unsubHiddenPosts();
+      unsubUserModeration();
+      unsubAnnouncements();
+      unsubReports();
+      unsubAppeals();
     };
   }, [authReady, firebaseUser]);
+
+  // Public adminConfig subscriptions (readable before sign-in per firestore.rules)
+  useEffect(() => {
+    const unsubFlags = onSnapshot(
+      doc(db, 'adminConfig', 'featureFlags'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const raw = snap.data() as Record<string, unknown>;
+        setFeatureFlags((prev) => ({
+          ...DEFAULT_FEATURE_FLAGS,
+          ...prev,
+          ...(raw as Partial<AdminFeatureFlags>),
+          updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+        }));
+      },
+      () => {}
+    );
+
+    const unsubGuidelines = onSnapshot(
+      doc(db, 'adminConfig', 'guidelines'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const raw = snap.data() as Record<string, unknown>;
+        setGuidelines((prev) => ({
+          ...DEFAULT_COMMUNITY_GUIDELINES,
+          ...prev,
+          ...(raw as Partial<CommunityGuidelinesConfig>),
+          updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+        }));
+      },
+      () => {}
+    );
+
+    return () => {
+      unsubFlags();
+      unsubGuidelines();
+    };
+  }, []);
+
+  // Keep autostart / local governance state synchronized via shared localStorage keys
+  useEffect(() => {
+    if (firebaseUser) return;
+    const syncLocalGovernance = () => {
+      const savedFlags = readStorage<Partial<AdminFeatureFlags> | null>(
+        ADMIN_SYNC_STORAGE_KEYS.FEATURE_FLAGS,
+        null
+      );
+      if (savedFlags) {
+        setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...savedFlags });
+      }
+      const savedHidden = readStorage<string[] | null>(
+        ADMIN_SYNC_STORAGE_KEYS.HIDDEN_POSTS,
+        null
+      );
+      if (Array.isArray(savedHidden)) {
+        setHiddenPostIds(savedHidden);
+      }
+      const savedGuidelines = readStorage<Partial<CommunityGuidelinesConfig> | null>(
+        ADMIN_SYNC_STORAGE_KEYS.GUIDELINES,
+        null
+      );
+      if (savedGuidelines) {
+        setGuidelines({ ...DEFAULT_COMMUNITY_GUIDELINES, ...savedGuidelines });
+      }
+      const savedAnnouncements = readStorage<PlatformAnnouncement[] | null>(
+        ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS,
+        null
+      );
+      if (Array.isArray(savedAnnouncements)) {
+        setAnnouncements(savedAnnouncements);
+      }
+      const modMap = readStorage<Record<string, MemberModerationRecord> | null>(
+        ADMIN_SYNC_STORAGE_KEYS.USER_MODERATION,
+        null
+      );
+      if (modMap) {
+        setMemberModeration(modMap[profileRef.current.uid] || null);
+      }
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (
+        !event.key ||
+        Object.values(ADMIN_SYNC_STORAGE_KEYS).includes(event.key)
+      ) {
+        syncLocalGovernance();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [firebaseUser]);
 
   // Hydrate individual chat participant profiles that may not be in communityUsers yet
   useEffect(() => {
@@ -1590,6 +1858,7 @@ export function useSocialStore() {
             interests: Array.isArray(d.interests) ? d.interests : [],
             followersCount: Number(d.followersCount || 0),
             followingCount: Number(d.followingCount || 0),
+            isVerified: Boolean(d.isVerified),
             onboardingCompleted: Boolean(d.onboardingCompleted),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
@@ -1671,7 +1940,13 @@ export function useSocialStore() {
     };
   }, [authReady, firebaseUser, remotePosts]);
 
-  const posts: Post[] = firebaseUser ? remotePosts : localPosts;
+  const posts: Post[] = useMemo(() => {
+    const raw = firebaseUser ? remotePosts : localPosts;
+    const hiddenSet = new Set(hiddenPostIds);
+    return raw
+      .filter((p) => !hiddenSet.has(p.id))
+      .map((p) => enrichPostWithVerifiedAuthor(p, communityUsers, profile));
+  }, [communityUsers, firebaseUser, hiddenPostIds, localPosts, profile, remotePosts]);
 
   const nowMs = Date.now();
   const stories: StoryItem[] = (firebaseUser ? remoteStories : localStories).filter(
@@ -1689,6 +1964,16 @@ export function useSocialStore() {
       throw new Error('Unauthorized: Sign in with a verified Google account.');
     }
   }, [isAuthorized]);
+
+  const requireModerationAllowed = useCallback(
+    (action: ModerationActionKind) => {
+      const check = shouldBlockActionByModeration(memberModeration?.status, action);
+      if (check.blocked) {
+        throw new Error(check.reason || 'This action is restricted by moderation.');
+      }
+    },
+    [memberModeration?.status]
+  );
 
   const recordLegalConsent = useCallback(
     (authMethod: 'email' | 'google' | 'apple') => {
@@ -2259,12 +2544,16 @@ export function useSocialStore() {
       }
     ) => {
       requireAuthorized();
+      requireModerationAllowed('post');
       const postId = makeSafeId('post');
       const now = Date.now();
       const videoUrl = extra?.videoUrl || '';
       const audioUrl = extra?.audioUrl || '';
       const linkUrl = extra?.linkUrl || '';
       const mediaTitle = sanitizeMediaTitle(extra?.mediaTitle);
+      const isAuthorAdminVerified = Boolean(
+        firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)
+      );
 
       const newPost: Post = {
         id: postId,
@@ -2272,6 +2561,9 @@ export function useSocialStore() {
         authorName: profile.displayName,
         authorHandle: profile.handle,
         authorAvatar: profile.avatarUrl,
+        ...(profile.isVerified || isAuthorAdminVerified
+          ? { authorVerified: true }
+          : {}),
         caption: caption.trim(),
         imageUrl,
         videoUrl,
@@ -2294,6 +2586,7 @@ export function useSocialStore() {
             authorName: profile.displayName,
             authorHandle: profile.handle,
             authorAvatar: profile.avatarUrl,
+            ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
             caption: newPost.caption,
             imageUrl: newPost.imageUrl,
             videoUrl: newPost.videoUrl,
@@ -2316,6 +2609,54 @@ export function useSocialStore() {
 
       void saveHashtagsFromText(newPost.caption);
 
+      if (
+        shouldAutoQueuePostReport(
+          newPost.caption,
+          newPost.linkUrl || extractFirstUrl(newPost.caption) || undefined,
+          featureFlags.strictModerationQueue
+        )
+      ) {
+        const autoReportId = makeSafeId('rep_auto');
+        const autoReport: ContentReport = {
+          id: autoReportId,
+          targetType: 'post',
+          targetId: postId,
+          targetAuthorUid: profile.uid,
+          targetSummary:
+            newPost.caption.slice(0, 140) || 'External link post queued',
+          reporterUid: profile.uid,
+          reporterName: profile.displayName,
+          category: 'other',
+          severity: 'medium',
+          reason:
+            'Auto-queued by strict moderation policy because the post contains an external link.',
+          status: 'open',
+          resolutionAction: '',
+          reviewedBy: '',
+          reviewedAtMs: 0,
+          createdAtMs: now,
+          updatedAtMs: now,
+        };
+        setUserReports((prev) => [autoReport, ...prev]);
+        const existingLocalReports = readStorage<ContentReport[]>(
+          ADMIN_SYNC_STORAGE_KEYS.REPORTS,
+          []
+        );
+        writeStorage(ADMIN_SYNC_STORAGE_KEYS.REPORTS, [
+          autoReport,
+          ...existingLocalReports,
+        ]);
+        if (firebaseUser) {
+          void setDoc(doc(db, 'reports', autoReportId), {
+            ...autoReport,
+            reporterUid: firebaseUser.uid,
+            targetAuthorUid: firebaseUser.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+
       await triggerNotification({
         actorId: profile.uid,
         actorName: profile.displayName,
@@ -2329,21 +2670,52 @@ export function useSocialStore() {
       const mentionedHandles = extractMentions(newPost.caption);
       for (const handle of mentionedHandles) {
         if (handle !== profile.handle.toLowerCase()) {
-          await triggerNotification({
-            actorId: profile.uid,
-            actorName: profile.displayName,
-            actorAvatar: profile.avatarUrl,
-            type: 'mention',
-            title: `${profile.displayName} mentioned you in a post`,
-            body: newPost.caption.slice(0, 90),
-            targetPostId: postId,
-          });
+          const mentionedUser = communityUsersRef.current.find(
+            (u) => u.handle.toLowerCase() === handle
+          );
+          if (firebaseUser && mentionedUser) {
+            const mentionNotifId = makeSafeId('notif_mention');
+            void setDoc(
+              doc(db, 'users', mentionedUser.uid, 'notifications', mentionNotifId),
+              {
+                id: mentionNotifId,
+                recipientId: mentionedUser.uid,
+                actorId: firebaseUser.uid,
+                actorName: profile.displayName,
+                actorAvatar: profile.avatarUrl,
+                type: 'mention',
+                title: `${profile.displayName} mentioned you in a post`,
+                body: newPost.caption.slice(0, 90) || 'Mentioned you in a post.',
+                targetPostId: postId,
+                read: false,
+                createdAt: serverTimestamp(),
+              }
+            ).catch(() => {});
+          } else {
+            await triggerNotification({
+              actorId: profile.uid,
+              actorName: profile.displayName,
+              actorAvatar: profile.avatarUrl,
+              type: 'mention',
+              title: `${profile.displayName} mentioned @${handle}`,
+              body: newPost.caption.slice(0, 90) || 'Mentioned in a post.',
+              targetPostId: postId,
+            });
+          }
         }
       }
 
       return newPost;
     },
-    [firebaseUser, profile, requireAuthorized, saveHashtagsFromText, triggerNotification]
+    [
+      featureFlags.strictModerationQueue,
+      firebaseUser,
+      profile,
+      requireAuthorized,
+      requireModerationAllowed,
+      saveHashtagsFromText,
+      triggerNotification,
+    ]
   );
 
   const updatePost = useCallback(
@@ -2495,6 +2867,7 @@ export function useSocialStore() {
   const addComment = useCallback(
     async (post: Post, text: string) => {
       requireAuthorized();
+      requireModerationAllowed('comment');
       const commentId = makeSafeId('cmt');
       const now = Date.now();
       const newComment: PostComment = {
@@ -2873,6 +3246,7 @@ export function useSocialStore() {
   const sendChatMessage = useCallback(
     async (thread: ChatThread, text: string) => {
       requireAuthorized();
+      requireModerationAllowed('message');
       const trimmed = text.trim();
       if (!trimmed) return;
       const msgId = makeSafeId('msg');
@@ -3522,6 +3896,7 @@ export function useSocialStore() {
               interests: Array.isArray(d.interests) ? d.interests : [],
               followersCount: Number(d.followersCount || 0),
               followingCount: Number(d.followingCount || 0),
+              isVerified: Boolean(d.isVerified),
               onboardingCompleted: Boolean(d.onboardingCompleted),
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
@@ -3608,6 +3983,10 @@ export function useSocialStore() {
   const addStory = useCallback(
     async (caption: string, imageUrl: string) => {
       requireAuthorized();
+      requireModerationAllowed('story');
+      if (!featureFlags.storiesEnabled) {
+        throw new Error('Stories are currently paused by platform administrators.');
+      }
       const now = Date.now();
       const storyId = makeSafeId('story');
       const trimmedCaption = caption.trim();
@@ -3657,16 +4036,27 @@ export function useSocialStore() {
       });
       return newStory;
     },
-    [firebaseUser, profile, requireAuthorized, triggerNotification]
+    [
+      featureFlags.storiesEnabled,
+      firebaseUser,
+      profile,
+      requireAuthorized,
+      requireModerationAllowed,
+      triggerNotification,
+    ]
   );
 
   const sharePostToStory = useCallback(
     async (post: Post) => {
       requireAuthorized();
+      requireModerationAllowed('story');
+      if (!featureFlags.storiesEnabled) {
+        throw new Error('Stories are currently paused by platform administrators.');
+      }
       const { imageUrl, caption } = buildStoryFromPost(post);
       return await addStory(caption, imageUrl);
     },
-    [addStory, requireAuthorized]
+    [addStory, featureFlags.storiesEnabled, requireAuthorized, requireModerationAllowed]
   );
 
   const markStoryViewed = useCallback((storyId: string) => {
@@ -3772,6 +4162,10 @@ export function useSocialStore() {
   const startCall = useCallback(
     async (thread: ChatThread, isAudioOnly: boolean) => {
       requireAuthorized();
+      requireModerationAllowed('call');
+      if (!featureFlags.callsEnabled) {
+        throw new Error('Voice & video calls are currently disabled by platform administrators.');
+      }
       const resolvedThread = resolveChatThreadForViewer(
         thread,
         profile.uid,
@@ -3850,6 +4244,10 @@ export function useSocialStore() {
   const startInstantCall = useCallback(
     async (title: string = 'Studio Live Room', isAudioOnly: boolean = false) => {
       requireAuthorized();
+      requireModerationAllowed('call');
+      if (!featureFlags.callsEnabled) {
+        throw new Error('Voice & video calls are currently disabled by platform administrators.');
+      }
       const callId = makeSafeId('call');
       const roomChatId = makeSafeId('room');
       const safeTitle = title.trim().slice(0, 80) || 'Studio Live Room';
@@ -3915,6 +4313,10 @@ export function useSocialStore() {
   const acceptIncomingCall = useCallback(
     async (invite: IncomingCallInvite) => {
       requireAuthorized();
+      requireModerationAllowed('call');
+      if (!featureFlags.callsEnabled) {
+        throw new Error('Voice & video calls are currently disabled by platform administrators.');
+      }
       setIncomingCallInvite(null);
       const safeDisplayName =
         (profile.displayName || 'Looma Member').trim().slice(0, 60) || 'Looma Member';
@@ -4227,6 +4629,132 @@ export function useSocialStore() {
     setCallSession((prev) => (prev ? { ...prev, isScreenSharing: !prev.isScreenSharing } : null));
   }, []);
 
+  const submitContentReport = useCallback(
+    async (input: {
+      targetType: 'post' | 'story' | 'comment' | 'user';
+      targetId: string;
+      targetAuthorUid: string;
+      targetSummary: string;
+      category: ReportCategory;
+      reason: string;
+    }) => {
+      requireAuthorized();
+      const cleanReason = input.reason.trim().slice(0, 500);
+      if (!cleanReason) {
+        throw new Error('Please describe why you are reporting this content.');
+      }
+      const now = Date.now();
+      const reportId = makeSafeId('rep');
+      const safeReporterName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) ||
+        'Looma Member';
+      const newReport: ContentReport = {
+        id: reportId,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        targetAuthorUid: input.targetAuthorUid.slice(0, 128),
+        targetSummary: input.targetSummary.trim().slice(0, 240),
+        reporterUid: profile.uid,
+        reporterName: safeReporterName,
+        category: input.category,
+        severity:
+          input.category === 'harassment' || input.category === 'nudity'
+            ? 'high'
+            : 'medium',
+        reason: cleanReason,
+        status: 'open',
+        resolutionAction: '',
+        reviewedBy: '',
+        reviewedAtMs: 0,
+        createdAtMs: now,
+        updatedAtMs: now,
+      };
+      setUserReports((prev) => [newReport, ...prev]);
+      const existingLocal = readStorage<ContentReport[]>(
+        ADMIN_SYNC_STORAGE_KEYS.REPORTS,
+        []
+      );
+      writeStorage(ADMIN_SYNC_STORAGE_KEYS.REPORTS, [newReport, ...existingLocal]);
+
+      if (firebaseUser) {
+        await setDoc(doc(db, 'reports', reportId), {
+          id: newReport.id,
+          targetType: newReport.targetType,
+          targetId: newReport.targetId,
+          targetAuthorUid: newReport.targetAuthorUid,
+          targetSummary: newReport.targetSummary,
+          reporterUid: firebaseUser.uid,
+          reporterName: newReport.reporterName,
+          category: newReport.category,
+          severity: newReport.severity,
+          reason: newReport.reason,
+          status: 'open',
+          resolutionAction: '',
+          reviewedBy: '',
+          reviewedAtMs: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return newReport;
+    },
+    [firebaseUser, profile.displayName, profile.uid, requireAuthorized]
+  );
+
+  const submitModerationAppeal = useCallback(
+    async (input: { reason: string; reportId?: string; targetId?: string }) => {
+      requireAuthorized();
+      const cleanReason = input.reason.trim().slice(0, 600);
+      if (!cleanReason) {
+        throw new Error('Please explain why your account restriction should be lifted.');
+      }
+      const now = Date.now();
+      const appealId = makeSafeId('app');
+      const safeName =
+        (profile.displayName || 'Looma Member').trim().slice(0, 60) ||
+        'Looma Member';
+      const newAppeal: ModerationAppeal = {
+        id: appealId,
+        appellantUid: profile.uid,
+        appellantName: safeName,
+        appellantHandle: (profile.handle || '').slice(0, 32),
+        reportId: (input.reportId || '').slice(0, 128),
+        targetId: (input.targetId || profile.uid).slice(0, 128),
+        reason: cleanReason,
+        status: 'pending',
+        reviewerUid: '',
+        reviewerNote: '',
+        createdAtMs: now,
+        updatedAtMs: now,
+      };
+      setUserAppeals((prev) => [newAppeal, ...prev]);
+      const existingLocal = readStorage<ModerationAppeal[]>(
+        ADMIN_SYNC_STORAGE_KEYS.APPEALS,
+        []
+      );
+      writeStorage(ADMIN_SYNC_STORAGE_KEYS.APPEALS, [newAppeal, ...existingLocal]);
+
+      if (firebaseUser) {
+        await setDoc(doc(db, 'appeals', appealId), {
+          id: newAppeal.id,
+          appellantUid: firebaseUser.uid,
+          appellantName: newAppeal.appellantName,
+          appellantHandle: newAppeal.appellantHandle,
+          reportId: newAppeal.reportId,
+          targetId: newAppeal.targetId,
+          reason: newAppeal.reason,
+          status: 'pending',
+          reviewerUid: '',
+          reviewerNote: '',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return newAppeal;
+    },
+    [firebaseUser, profile.displayName, profile.handle, profile.uid, requireAuthorized]
+  );
+
   const connections = computeConnections(
     communityUsers,
     followerUserIds,
@@ -4340,5 +4868,14 @@ export function useSocialStore() {
     toggleCallMute,
     toggleCallVideo,
     toggleCallScreenShare,
+    featureFlags,
+    hiddenPostIds,
+    guidelines,
+    announcements,
+    memberModeration,
+    userReports,
+    userAppeals,
+    submitContentReport,
+    submitModerationAppeal,
   };
 }

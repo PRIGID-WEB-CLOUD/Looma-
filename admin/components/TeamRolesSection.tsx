@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { KeyRound, ShieldCheck, UserPlus, Sparkles } from 'lucide-react';
+import { KeyRound, ShieldCheck, UserPlus } from 'lucide-react';
 import { Avatar } from '../../src/components/Avatar';
+import type { UserProfile } from '../../src/types/social';
 import {
   ADMIN_EMAILS,
   ADMIN_ROLE_PERMISSIONS,
@@ -11,6 +12,7 @@ import {
 interface TeamRolesSectionProps {
   currentAdminUid: string;
   adminRoles: AdminRoleEntry[];
+  communityUsers?: UserProfile[];
   onAssignRole: (input: {
     uid: string;
     email: string;
@@ -23,6 +25,7 @@ interface TeamRolesSectionProps {
 export function TeamRolesSection({
   currentAdminUid,
   adminRoles,
+  communityUsers = [],
   onAssignRole,
   onRevokeRole,
 }: TeamRolesSectionProps) {
@@ -37,8 +40,22 @@ export function TeamRolesSection({
     displayName: '',
     role: 'moderator',
   });
+  const [selectedMemberUid, setSelectedMemberUid] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [busyUid, setBusyUid] = useState<string | null>(null);
+
+  const selectableMembers = communityUsers.filter((u) => u.uid !== currentAdminUid);
+
+  const handleSelectMember = (uid: string) => {
+    setSelectedMemberUid(uid);
+    const member = selectableMembers.find((m) => m.uid === uid);
+    if (!member) return;
+    setRoleForm((prev) => ({
+      ...prev,
+      uid: member.uid,
+      displayName: member.displayName || prev.displayName,
+    }));
+  };
 
   const handleGrantRoleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,6 +70,7 @@ export function TeamRolesSection({
       text: `Assigned ${roleForm.role.replace('_', ' ')} permissions to ${roleForm.email}.`,
     });
     setRoleForm({ uid: '', email: '', displayName: '', role: 'moderator' });
+    setSelectedMemberUid('');
   };
 
   const handleRevoke = async (uid: string, email: string) => {
@@ -117,14 +135,14 @@ export function TeamRolesSection({
         </section>
 
         <section className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-          <div className="px-5 sm:px-6 py-4.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+          <div className="px-5 sm:px-6 py-4.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400 min-w-0">
               <KeyRound className="w-5 h-5 shrink-0" aria-hidden="true" />
-              <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              <h2 className="font-display text-base font-bold text-slate-900 dark:text-white truncate">
                 Assigned Team Operators
               </h2>
             </div>
-            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums font-semibold px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 shrink-0">
               {adminRoles.length} assigned
             </span>
           </div>
@@ -155,10 +173,10 @@ export function TeamRolesSection({
                             {entry.role.replace('_', ' ')}
                           </span>
                         </div>
-                        <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
+                        <p className="text-xs font-mono text-slate-500 dark:text-slate-400 break-all sm:truncate">
                           {entry.email} · UID: {entry.uid}
                         </p>
-                        <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                        <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 break-words sm:truncate">
                           Scopes: {entry.permissions.join(', ')}
                         </p>
                       </div>
@@ -169,7 +187,7 @@ export function TeamRolesSection({
                         type="button"
                         disabled={isBusy}
                         onClick={() => void handleRevoke(entry.uid, entry.email)}
-                        className="min-h-[38px] px-3.5 rounded-xl border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 shrink-0 cursor-pointer disabled:opacity-60 self-start sm:self-center"
+                        className="min-h-[40px] px-3.5 rounded-xl border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 shrink-0 cursor-pointer disabled:opacity-60 self-start sm:self-center"
                       >
                         {isBusy ? 'Revoking...' : 'Revoke Role'}
                       </button>
@@ -183,7 +201,7 @@ export function TeamRolesSection({
       </div>
 
       {/* Grant Operator Role Form Card */}
-      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-5 max-w-xl shadow-sm">
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 space-y-5 max-w-xl shadow-sm">
         <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
           <UserPlus className="w-5 h-5 shrink-0" aria-hidden="true" />
           <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
@@ -192,6 +210,30 @@ export function TeamRolesSection({
         </div>
 
         <form onSubmit={handleGrantRoleSubmit} className="space-y-4">
+          {selectableMembers.length > 0 && (
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Quick Select Existing Community Member (Optional)
+              </span>
+              <select
+                aria-label="Quick Select Existing Community Member"
+                value={selectedMemberUid}
+                onChange={(e) => handleSelectMember(e.target.value)}
+                className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                <option value="">Choose a member to autofill UID &amp; name...</option>
+                {selectableMembers.map((member) => (
+                  <option key={member.uid} value={member.uid}>
+                    {member.displayName} (@{member.handle}) — {member.uid}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Selecting a member populates their Firebase UID and display name; enter their verified login email below.
+              </p>
+            </label>
+          )}
+
           <label className="block space-y-1.5">
             <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               Team Member Firebase UID
@@ -200,8 +242,11 @@ export function TeamRolesSection({
               type="text"
               required
               value={roleForm.uid}
-              onChange={(e) => setRoleForm((prev) => ({ ...prev, uid: e.target.value }))}
-              placeholder="e.g. u_operator_abc123"
+              onChange={(e) => {
+                setSelectedMemberUid('');
+                setRoleForm((prev) => ({ ...prev, uid: e.target.value }));
+              }}
+              placeholder="e.g. JC4GQxv4fnPAQ4EJuapgNDrfh4a2"
               className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>

@@ -2082,9 +2082,102 @@ export function validatePasswordResetEmail(rawEmail: string): {
   return { valid: true, email: clean };
 }
 
+export interface GovernanceAnnouncementItem {
+  id: string;
+  title: string;
+  body: string;
+  severity: 'info' | 'warning' | 'maintenance';
+  audience: 'all' | 'verified' | 'admins';
+  active: boolean;
+  createdAtMs?: number;
+}
 
+export function filterActiveAnnouncementsForMember<
+  T extends GovernanceAnnouncementItem
+>(
+  announcements: T[],
+  options: {
+    isVerified?: boolean;
+    isAdmin?: boolean;
+    dismissedIds?: string[];
+  }
+): T[] {
+  const dismissed = new Set(options.dismissedIds || []);
+  return announcements
+    .filter((item) => {
+      if (!item.active || dismissed.has(item.id)) return false;
+      if (item.audience === 'admins') return Boolean(options.isAdmin);
+      if (item.audience === 'verified') {
+        return Boolean(options.isVerified || options.isAdmin);
+      }
+      return true;
+    })
+    .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+}
 
+export type ModerationActionKind =
+  | 'post'
+  | 'comment'
+  | 'story'
+  | 'message'
+  | 'call'
+  | 'like'
+  | 'follow';
 
+export function shouldBlockActionByModeration(
+  moderationStatus: 'active' | 'restricted' | 'suspended' | null | undefined,
+  action: ModerationActionKind
+): { blocked: boolean; reason?: string } {
+  if (!moderationStatus || moderationStatus === 'active') {
+    return { blocked: false };
+  }
+  if (moderationStatus === 'suspended') {
+    return {
+      blocked: true,
+      reason:
+        'Your account is currently suspended. Submit an appeal or sign out.',
+    };
+  }
+  if (
+    moderationStatus === 'restricted' &&
+    (action === 'post' ||
+      action === 'comment' ||
+      action === 'story' ||
+      action === 'message' ||
+      action === 'call')
+  ) {
+    return {
+      blocked: true,
+      reason:
+        'Your account is in restricted read-only mode. Submit an appeal from the restriction banner to restore publishing and messaging.',
+    };
+  }
+  return { blocked: false };
+}
 
+export function enrichPostWithVerifiedAuthor(
+  post: Post,
+  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
+  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+): Post {
+  if (post.authorVerified) return post;
+  if (currentProfile && currentProfile.uid === post.authorId && currentProfile.isVerified) {
+    return { ...post, authorVerified: true };
+  }
+  const matched = communityUsers.find((u) => u.uid === post.authorId);
+  if (matched?.isVerified) {
+    return { ...post, authorVerified: true };
+  }
+  return post;
+}
 
+export function shouldAutoQueuePostReport(
+  caption: string,
+  linkUrl: string | undefined,
+  strictModerationQueue: boolean
+): boolean {
+  if (!strictModerationQueue) return false;
+  if (linkUrl && linkUrl.trim().length > 0) return true;
+  return Boolean(extractFirstUrl(caption));
+}
 
