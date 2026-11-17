@@ -99,6 +99,11 @@ async function startDevServer(): Promise<void> {
     }
 
     if (!isProd && viteMiddlewares) {
+      if (pathname === '/admin') {
+        req.url = '/admin/';
+      } else if (pathname === '/landingpage') {
+        req.url = '/landingpage/';
+      }
       viteMiddlewares(req, res, () => {
         void honoListener(req, res);
       });
