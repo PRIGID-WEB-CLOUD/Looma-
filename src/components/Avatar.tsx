@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 interface AvatarProps {
-  src: string;
+  src?: string;
   name: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   online?: boolean;

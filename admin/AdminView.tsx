@@ -42,6 +42,7 @@ import {
 } from './adminLogic';
 import { OverviewAnalyticsSection } from './components/OverviewAnalyticsSection';
 import { MembersRolesSection } from './components/MembersRolesSection';
+import { UsersDirectorySection } from './components/UsersDirectorySection';
 import { ContentModerationSection } from './components/ContentModerationSection';
 import { ReportsAppealsSection } from './components/ReportsAppealsSection';
 import { GovernanceSection } from './components/GovernanceSection';
@@ -50,6 +51,7 @@ import { SystemOpsSection } from './components/SystemOpsSection';
 export type AdminSectionId =
   | 'overview'
   | 'members'
+  | 'users'
   | 'moderation'
   | 'reports'
   | 'governance'
@@ -130,6 +132,10 @@ interface AdminViewProps {
   ) => Promise<void>;
   onRunHealthProbes: () => Promise<void>;
   onRunBackgroundJob: (jobId: string) => Promise<void>;
+  onToggleVerify?: (
+    targetUid: string,
+    isVerified: boolean
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -138,7 +144,8 @@ const SECTION_NAV: Array<{
   icon: typeof LayoutDashboard;
 }> = [
   { id: 'overview', label: 'Overview & Analytics', icon: LayoutDashboard },
-  { id: 'members', label: 'Members & Roles', icon: Users },
+  { id: 'members', label: 'Team & Roles', icon: ShieldAlert },
+  { id: 'users', label: 'Community Users', icon: Users },
   { id: 'moderation', label: 'Feed & Stories', icon: FileWarning },
   { id: 'reports', label: 'Reports & Appeals', icon: Flag },
   { id: 'governance', label: 'Governance & Policy', icon: Megaphone },
@@ -191,6 +198,7 @@ export function AdminView({
   onToggleFeatureFlag,
   onRunHealthProbes,
   onRunBackgroundJob,
+  onToggleVerify,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
   const [showEmailLogin, setShowEmailLogin] = useState(false);
@@ -691,6 +699,18 @@ export function AdminView({
               onSetMemberStatus={onSetMemberStatus}
               onAssignRole={onAssignRole}
               onRevokeRole={onRevokeRole}
+            />
+          )}
+
+          {section === 'users' && (
+            <UsersDirectorySection
+              currentAdminUid={currentProfile.uid}
+              communityUsers={communityUsers}
+              onlineUserIds={onlineUserIds}
+              restrictedSet={restrictedSet}
+              moderationRecords={memberModerationRecords}
+              onSetMemberStatus={onSetMemberStatus}
+              onToggleVerify={onToggleVerify}
             />
           )}
 

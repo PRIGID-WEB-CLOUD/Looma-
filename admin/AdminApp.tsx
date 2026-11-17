@@ -1061,6 +1061,34 @@ function AdminAppInner(_props: AdminAppProps) {
     return { ok: true };
   };
 
+  const handleToggleVerify = async (
+    targetUid: string,
+    isVerified: boolean
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    setCommunityUsers((prev) =>
+      prev.map((u) => (u.uid === targetUid ? { ...u, isVerified } : u))
+    );
+    await recordAudit(
+      isVerified ? 'user.verify' : 'user.revokeVerify',
+      'user',
+      targetUid,
+      `${isVerified ? 'Granted' : 'Revoked'} verified blue tick badge for ${targetUid}.`
+    );
+    try {
+      await updateDoc(doc(db, 'users', targetUid), {
+        isVerified,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+    return { ok: true };
+  };
+
   const handlePublishAnnouncement = async (input: {
     title: string;
     body: string;
@@ -1352,6 +1380,7 @@ function AdminAppInner(_props: AdminAppProps) {
       onToggleFeatureFlag={handleToggleFeatureFlag}
       onRunHealthProbes={runHealthProbes}
       onRunBackgroundJob={handleRunBackgroundJob}
+      onToggleVerify={handleToggleVerify}
     />
   );
 }

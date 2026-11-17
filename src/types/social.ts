@@ -33,6 +33,7 @@ export interface UserProfile {
   followersCount: number;
   followingCount: number;
   onboardingCompleted: boolean;
+  isVerified?: boolean;
   createdAtMs: number;
   updatedAtMs: number;
 }
@@ -58,6 +59,7 @@ export interface PostComment {
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
+  authorVerified?: boolean;
   text: string;
   createdAtMs: number;
 }
@@ -68,6 +70,7 @@ export interface Post {
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
+  authorVerified?: boolean;
   caption: string;
   imageUrl: string;
   videoUrl?: string;
