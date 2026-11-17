@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, ShieldCheck, UserPlus } from 'lucide-react';
+import { KeyRound, ShieldCheck, UserPlus, Sparkles } from 'lucide-react';
 import { Avatar } from '../../src/components/Avatar';
 import {
   ADMIN_EMAILS,
@@ -69,12 +69,13 @@ export function TeamRolesSection({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-bold text-slate-900 dark:text-white">
+      {/* Header */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm">
+        <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
           Team &amp; Administrator Roles
         </h1>
-        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-          Manage real workspace operators, bootstrap allowlist members, and assign RBAC role scopes.
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Manage workspace operators, bootstrap root allowlist accounts, and assign RBAC role permissions.
         </p>
       </div>
 
@@ -91,23 +92,23 @@ export function TeamRolesSection({
         </div>
       )}
 
-      {/* Bootstrap Allowlist + Assigned Operators Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+      {/* Root Allowlist & Assigned Team Operators Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 space-y-4 shadow-sm">
+          <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+            <ShieldCheck className="w-5 h-5 shrink-0" aria-hidden="true" />
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
               Root Allowlist
             </h2>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            Root administrator emails with direct console bootstrap access:
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            Root administrator emails with secure console bootstrap privileges:
           </p>
           <ul className="space-y-2 text-xs font-mono text-slate-800 dark:text-slate-200">
             {ADMIN_EMAILS.map((addr) => (
               <li
                 key={addr}
-                className="flex items-center gap-2 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 truncate"
+                className="flex items-center gap-2 py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 truncate"
               >
                 <span className="truncate">{addr}</span>
               </li>
@@ -115,21 +116,21 @@ export function TeamRolesSection({
           </ul>
         </section>
 
-        <section className="lg:col-span-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+        <section className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+          <div className="px-5 sm:px-6 py-4.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+              <KeyRound className="w-5 h-5 shrink-0" aria-hidden="true" />
               <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
                 Assigned Team Operators
               </h2>
             </div>
-            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
               {adminRoles.length} assigned
             </span>
           </div>
 
           {adminRoles.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+            <div className="p-12 text-center text-sm text-slate-500 dark:text-slate-400">
               No team operator roles assigned yet.
             </div>
           ) : (
@@ -140,24 +141,24 @@ export function TeamRolesSection({
                 return (
                   <div
                     key={entry.uid}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                   >
-                    <div className="min-w-0 space-y-1 flex items-center gap-3">
-                      <Avatar name={entry.displayName} size="sm" />
-                      <div className="min-w-0">
+                    <div className="min-w-0 space-y-1.5 flex items-start gap-3.5">
+                      <Avatar name={entry.displayName} size="md" />
+                      <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                             {entry.displayName}
                             {isSelf ? ' (You)' : ''}
                           </span>
-                          <span className="font-mono text-[11px] uppercase font-semibold text-blue-600 dark:text-blue-400">
+                          <span className="font-mono text-[11px] uppercase font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
                             {entry.role.replace('_', ' ')}
                           </span>
                         </div>
                         <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
                           {entry.email} · UID: {entry.uid}
                         </p>
-                        <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                        <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
                           Scopes: {entry.permissions.join(', ')}
                         </p>
                       </div>
@@ -168,7 +169,7 @@ export function TeamRolesSection({
                         type="button"
                         disabled={isBusy}
                         onClick={() => void handleRevoke(entry.uid, entry.email)}
-                        className="min-h-[34px] px-3 rounded-lg border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 shrink-0 cursor-pointer disabled:opacity-60"
+                        className="min-h-[38px] px-3.5 rounded-xl border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 shrink-0 cursor-pointer disabled:opacity-60 self-start sm:self-center"
                       >
                         {isBusy ? 'Revoking...' : 'Revoke Role'}
                       </button>
@@ -181,18 +182,18 @@ export function TeamRolesSection({
         </section>
       </div>
 
-      {/* Grant Operator Role Form */}
-      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4 max-w-xl">
-        <div className="flex items-center gap-2">
-          <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+      {/* Grant Operator Role Form Card */}
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-5 max-w-xl shadow-sm">
+        <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+          <UserPlus className="w-5 h-5 shrink-0" aria-hidden="true" />
           <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
             Grant Operator Role to Team Member
           </h2>
         </div>
 
-        <form onSubmit={handleGrantRoleSubmit} className="space-y-3">
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+        <form onSubmit={handleGrantRoleSubmit} className="space-y-4">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               Team Member Firebase UID
             </span>
             <input
@@ -201,12 +202,12 @@ export function TeamRolesSection({
               value={roleForm.uid}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, uid: e.target.value }))}
               placeholder="e.g. u_operator_abc123"
-              className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               Verified Team Email
             </span>
             <input
@@ -215,12 +216,12 @@ export function TeamRolesSection({
               value={roleForm.email}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, email: e.target.value }))}
               placeholder="operator@domain.com"
-              className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               Display Name
             </span>
             <input
@@ -229,12 +230,12 @@ export function TeamRolesSection({
               value={roleForm.displayName}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, displayName: e.target.value }))}
               placeholder="Operator Full Name"
-              className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>
 
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               Role Scope
             </span>
             <select
@@ -242,7 +243,7 @@ export function TeamRolesSection({
               onChange={(e) =>
                 setRoleForm((prev) => ({ ...prev, role: e.target.value as AdminRoleLevel }))
               }
-              className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
               <option value="moderator">Moderator ({ADMIN_ROLE_PERMISSIONS.moderator.length} scopes)</option>
               <option value="analyst">Analyst ({ADMIN_ROLE_PERMISSIONS.analyst.length} scope)</option>
@@ -250,12 +251,14 @@ export function TeamRolesSection({
             </select>
           </label>
 
-          <button
-            type="submit"
-            className="w-full min-h-[40px] px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
-          >
-            Grant Role &amp; Sync Firestore
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              className="w-full min-h-[42px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold cursor-pointer shadow-lg shadow-blue-600/20 transition-colors"
+            >
+              Grant Role &amp; Sync Firestore
+            </button>
+          </div>
         </form>
       </section>
     </div>

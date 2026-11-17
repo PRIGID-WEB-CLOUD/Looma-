@@ -42,6 +42,7 @@ import {
   buildFallbackUserProfile,
   isTransientFirestoreError,
 } from '../utils/firebaseResilience';
+import { isAllowlistedAdminEmail } from '../../admin/adminLogic';
 import {
   createInitialMemberProfile,
   isDemoPostId,
@@ -895,6 +896,7 @@ export function useSocialStore() {
           const resolvedAvatar = normalizeAssetUrl(
             d.avatarUrl || user.photoURL || ''
           );
+          const isAdminUser = isAllowlistedAdminEmail(user.email);
           hydratedProfile = {
             uid: d.uid || user.uid,
             displayName: resolvedDisplayName,
@@ -905,23 +907,28 @@ export function useSocialStore() {
             interests: Array.isArray(d.interests) ? d.interests : [],
             followersCount: Number(d.followersCount || 0),
             followingCount: Number(d.followingCount || 0),
+            isVerified: Boolean(d.isVerified || isAdminUser),
             onboardingCompleted: Boolean(d.onboardingCompleted),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
           };
           if (
             resolvedDisplayName !== d.displayName ||
-            resolvedAvatar !== d.avatarUrl
+            resolvedAvatar !== d.avatarUrl ||
+            (isAdminUser && !d.isVerified)
           ) {
             updateDoc(userRef, {
               displayName: resolvedDisplayName,
               avatarUrl: resolvedAvatar,
+              ...(isAdminUser ? { isVerified: true } : {}),
               updatedAt: serverTimestamp(),
             }).catch(() => {});
           }
         } else if (snap && !snap.exists()) {
+          const isAdminUser = isAllowlistedAdminEmail(user.email);
           const newProfile: UserProfile = {
             ...fallbackProfile,
+            isVerified: Boolean(fallbackProfile.isVerified || isAdminUser),
             createdAtMs: Date.now(),
             updatedAtMs: Date.now(),
           };
@@ -936,6 +943,7 @@ export function useSocialStore() {
             interests: newProfile.interests,
             followersCount: 0,
             followingCount: 0,
+            isVerified: newProfile.isVerified,
             onboardingCompleted: newProfile.onboardingCompleted,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
