@@ -24,7 +24,7 @@ import {
   testFirestoreConnection,
 } from '../src/services/firebase';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
-import type { Post, StoryGroup, StoryItem, ThemeMode, UserProfile } from '../src/types/social';
+import type { Post, PostCategory, StoryGroup, StoryItem, ThemeMode, UserProfile } from '../src/types/social';
 import {
   ADMIN_ROLE_PERMISSIONS,
   DEFAULT_COMMUNITY_GUIDELINES,
@@ -345,37 +345,46 @@ function AdminAppInner(_props: AdminAppProps) {
       try {
         const userDoc = await getDoc(doc(db, 'users', u.uid));
         if (userDoc.exists()) {
+          const profileData = userDoc.data() as UserProfile;
           setCurrentProfile({
-            ...(userDoc.data() as UserProfile),
+            ...profileData,
             uid: u.uid,
+            isVerified: true,
           });
+          if (!profileData.isVerified) {
+            setDoc(doc(db, 'users', u.uid), { isVerified: true, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          }
         } else {
-          setCurrentProfile({
+          const newProfile: UserProfile = {
             uid: u.uid,
-            displayName: u.displayName || u.email?.split('@')[0] || 'Admin Operator',
+            displayName: u.displayName || u.email?.split('@')[0] || 'Master Admin',
             handle: u.email?.split('@')[0] || 'admin',
             avatarUrl: u.photoURL || '',
-            bio: '',
-            location: '',
-            interests: [],
-            followersCount: 0,
-            followingCount: 0,
+            bio: 'Master Admin Operator & Workspace Publisher',
+            location: 'Looma HQ',
+            interests: ['Architecture', 'Design', 'Governance'],
+            followersCount: 1,
+            followingCount: 1,
+            isVerified: true,
             createdAtMs: Date.now(),
             updatedAtMs: Date.now(),
             onboardingCompleted: true,
-          });
+          };
+          setCurrentProfile(newProfile);
+          setDoc(doc(db, 'users', u.uid), { ...newProfile, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } catch {
         setCurrentProfile({
           uid: u.uid,
-          displayName: u.displayName || u.email?.split('@')[0] || 'Admin Operator',
+          displayName: u.displayName || u.email?.split('@')[0] || 'Master Admin',
           handle: u.email?.split('@')[0] || 'admin',
           avatarUrl: u.photoURL || '',
-          bio: '',
-          location: '',
-          interests: [],
-          followersCount: 0,
-          followingCount: 0,
+          bio: 'Master Admin Operator & Workspace Publisher',
+          location: 'Looma HQ',
+          interests: ['Architecture', 'Design', 'Governance'],
+          followersCount: 1,
+          followingCount: 1,
+          isVerified: true,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
           onboardingCompleted: true,
@@ -1089,6 +1098,61 @@ function AdminAppInner(_props: AdminAppProps) {
     return { ok: true };
   };
 
+  const handleAdminPublishPost = async (input: {
+    caption: string;
+    category: PostCategory;
+    imageUrl: string;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    if (!input.caption.trim()) {
+      return { ok: false, error: 'Post caption is required.' };
+    }
+    const now = Date.now();
+    const postId = `post_${now}_${Math.random().toString(36).slice(2, 6)}`;
+    const newPost: Post = {
+      id: postId,
+      authorId: firebaseUser.uid,
+      authorName: currentProfile.displayName,
+      authorHandle: currentProfile.handle,
+      authorAvatar: currentProfile.avatarUrl,
+      authorVerified: true,
+      caption: input.caption.trim(),
+      imageUrl: input.imageUrl.trim() || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
+      category: input.category,
+      likesCount: 0,
+      commentsCount: 0,
+      createdAtMs: now,
+      updatedAtMs: now,
+    };
+
+    setPosts((prev) => [newPost, ...prev]);
+    await recordAudit('post.create', 'post', postId, `Admin published post "${input.caption.slice(0, 40)}..."`);
+
+    try {
+      await setDoc(doc(db, 'posts', postId), {
+        id: postId,
+        authorId: firebaseUser.uid,
+        authorName: currentProfile.displayName,
+        authorHandle: currentProfile.handle,
+        authorAvatar: currentProfile.avatarUrl,
+        authorVerified: true,
+        caption: input.caption.trim(),
+        imageUrl: newPost.imageUrl,
+        category: input.category,
+        likesCount: 0,
+        commentsCount: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `posts/${postId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+    return { ok: true };
+  };
+
   const handlePublishAnnouncement = async (input: {
     title: string;
     body: string;
@@ -1381,6 +1445,7 @@ function AdminAppInner(_props: AdminAppProps) {
       onRunHealthProbes={runHealthProbes}
       onRunBackgroundJob={handleRunBackgroundJob}
       onToggleVerify={handleToggleVerify}
+      onPublishPost={handleAdminPublishPost}
     />
   );
 }

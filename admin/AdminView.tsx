@@ -9,6 +9,8 @@ import {
   Megaphone,
   Moon,
   ShieldAlert,
+  Sparkles,
+  Send,
   Sun,
   Users,
 } from 'lucide-react';
@@ -47,11 +49,13 @@ import { ContentModerationSection } from './components/ContentModerationSection'
 import { ReportsAppealsSection } from './components/ReportsAppealsSection';
 import { GovernanceSection } from './components/GovernanceSection';
 import { SystemOpsSection } from './components/SystemOpsSection';
+import { AdminPublisherSection } from './components/AdminPublisherSection';
 
 export type AdminSectionId =
   | 'overview'
   | 'members'
   | 'users'
+  | 'publisher'
   | 'moderation'
   | 'reports'
   | 'governance'
@@ -136,6 +140,11 @@ interface AdminViewProps {
     targetUid: string,
     isVerified: boolean
   ) => Promise<{ ok: boolean; error?: string }>;
+  onPublishPost: (input: {
+    caption: string;
+    category: PostCategory;
+    imageUrl: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -144,6 +153,7 @@ const SECTION_NAV: Array<{
   icon: typeof LayoutDashboard;
 }> = [
   { id: 'overview', label: 'Overview & Analytics', icon: LayoutDashboard },
+  { id: 'publisher', label: 'Publisher Hub', icon: Sparkles },
   { id: 'members', label: 'Team & Roles', icon: ShieldAlert },
   { id: 'users', label: 'Community Users', icon: Users },
   { id: 'moderation', label: 'Feed & Stories', icon: FileWarning },
@@ -199,6 +209,7 @@ export function AdminView({
   onRunHealthProbes,
   onRunBackgroundJob,
   onToggleVerify,
+  onPublishPost,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
   const [showEmailLogin, setShowEmailLogin] = useState(false);
@@ -681,6 +692,14 @@ export function AdminView({
               announcements={announcements}
               accountLabel={accountLabel}
               onNavigateSection={setSection}
+            />
+          )}
+
+          {section === 'publisher' && (
+            <AdminPublisherSection
+              currentProfile={currentProfile}
+              onPublishPost={onPublishPost}
+              onPublishAnnouncement={onPublishAnnouncement}
             />
           )}
 
