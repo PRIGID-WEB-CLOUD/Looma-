@@ -74,11 +74,24 @@ function serveDistAsset(req: http.IncomingMessage, res: http.ServerResponse): vo
     }
   }
 
+  if (!fs.existsSync(targetPath)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Not found');
+    return;
+  }
+
   const ext = path.extname(targetPath).toLowerCase();
   res.writeHead(200, {
     'Content-Type': MIME_BY_EXT[ext] || 'application/octet-stream',
   });
-  fs.createReadStream(targetPath).pipe(res);
+  fs.createReadStream(targetPath)
+    .on('error', () => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Server error');
+      }
+    })
+    .pipe(res);
 }
 
 async function startDevServer(): Promise<void> {
@@ -92,18 +105,27 @@ async function startDevServer(): Promise<void> {
   let viteMiddlewares: ((req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void) | null = null;
 
   const httpServer = http.createServer((req, res) => {
-    const pathname = (req.url || '').split('?')[0];
+    const rawUrl = req.url || '/';
+    const [pathname, search] = rawUrl.split('?');
+    const queryString = search ? `?${search}` : '';
+
+    if (pathname === '/admin') {
+      res.writeHead(302, { Location: `/admin/${queryString}` });
+      res.end();
+      return;
+    }
+    if (pathname === '/landingpage') {
+      res.writeHead(302, { Location: `/landingpage/${queryString}` });
+      res.end();
+      return;
+    }
+
     if (pathname.startsWith('/api/')) {
       void honoListener(req, res);
       return;
     }
 
     if (!isProd && viteMiddlewares) {
-      if (pathname === '/admin') {
-        req.url = '/admin/';
-      } else if (pathname === '/landingpage') {
-        req.url = '/landingpage/';
-      }
       viteMiddlewares(req, res, () => {
         void honoListener(req, res);
       });

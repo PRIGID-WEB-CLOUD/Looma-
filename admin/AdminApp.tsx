@@ -1186,13 +1186,34 @@ function AdminAppInner() {
         await signOutAccount();
       }}
       onBackToWorkspace={() => {
-        window.location.href = 'https://looma.prigidcollection.workers.dev/feed';
+        const isLocal =
+          typeof window !== 'undefined' &&
+          (window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '0.0.0.0');
+        window.location.href = isLocal
+          ? '/feed'
+          : 'https://looma.prigidcollection.workers.dev/feed';
       }}
       onOpenAuth={() => {
-        window.location.href = 'https://looma.prigidcollection.workers.dev/auth';
+        const isLocal =
+          typeof window !== 'undefined' &&
+          (window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '0.0.0.0');
+        window.location.href = isLocal
+          ? '/auth'
+          : 'https://looma.prigidcollection.workers.dev/auth';
       }}
       onOpenPublicProfile={(uid) => {
-        window.location.href = `https://looma.prigidcollection.workers.dev/feed?profile=${uid}`;
+        const isLocal =
+          typeof window !== 'undefined' &&
+          (window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '0.0.0.0');
+        window.location.href = isLocal
+          ? `/feed?profile=${uid}`
+          : `https://looma.prigidcollection.workers.dev/feed?profile=${uid}`;
       }}
       onToggleHidePost={handleToggleHidePost}
       onDeletePost={handleDeletePost}

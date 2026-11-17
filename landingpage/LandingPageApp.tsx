@@ -26,13 +26,25 @@ export default function LandingPageApp() {
     setTheme(nextTheme);
   };
 
+  const resolveTargetUrl = (targetPath: string) => {
+    if (typeof window === 'undefined') return targetPath;
+    const isLocal =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === '0.0.0.0';
+    if (isLocal) {
+      return targetPath;
+    }
+    return `https://looma.prigidcollection.workers.dev${targetPath}`;
+  };
+
   const handleNavigateToAuth = (mode?: 'signin' | 'signup') => {
     const q = mode === 'signup' ? '?auth=signup' : '';
-    window.location.href = `https://looma.prigidcollection.workers.dev/auth${q}`;
+    window.location.href = resolveTargetUrl(`/auth${q}`);
   };
 
   const handleNavigateToProtectedPath = (path: '/feed' | '/messages' | '/settings' | '/admin') => {
-    window.location.href = `https://looma.prigidcollection.workers.dev${path}`;
+    window.location.href = resolveTargetUrl(path);
   };
 
   const handleOpenLegal = (docId: string) => {
