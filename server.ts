@@ -56,11 +56,22 @@ const MIME_BY_EXT: Record<string, string> = {
 function serveDistAsset(req: http.IncomingMessage, res: http.ServerResponse): void {
   const distDir = path.resolve(process.cwd(), 'dist');
   const reqUrl = new URL(req.url || '/', 'http://localhost');
-  const cleanRel = decodeURIComponent(reqUrl.pathname).replace(/^\/+/, '');
+  let cleanRel = decodeURIComponent(reqUrl.pathname).replace(/^\/+/, '');
   let targetPath = path.resolve(distDir, cleanRel || 'index.html');
 
+  if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+    targetPath = path.join(targetPath, 'index.html');
+  }
+
   if (!targetPath.startsWith(distDir) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
-    targetPath = path.join(distDir, 'index.html');
+    // Check if it's an admin or landing subpath
+    if (cleanRel.startsWith('admin')) {
+      targetPath = path.join(distDir, 'admin', 'index.html');
+    } else if (cleanRel.startsWith('landingpage')) {
+      targetPath = path.join(distDir, 'landingpage', 'index.html');
+    } else {
+      targetPath = path.join(distDir, 'index.html');
+    }
   }
 
   const ext = path.extname(targetPath).toLowerCase();

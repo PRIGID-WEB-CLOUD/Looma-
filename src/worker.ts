@@ -1453,7 +1453,27 @@ export function createWorkerApp() {
   // Static Assets / SPA Fallback in Cloudflare Workers runtime
   app.all('*', async (c) => {
     if (c.env.ASSETS) {
-      return c.env.ASSETS.fetch(c.req.raw as unknown as Parameters<Fetcher['fetch']>[0]) as unknown as Promise<Response>;
+      const url = new URL(c.req.url);
+      const pathname = url.pathname;
+      
+      // If requesting /admin or /landingpage directory without trailing slash or specific asset, route to index.html
+      if (pathname === '/admin' || pathname === '/admin/') {
+        return c.env.ASSETS.fetch(new Request(new URL('/admin/index.html', url.origin), c.req.raw));
+      }
+      if (pathname === '/landingpage' || pathname === '/landingpage/') {
+        return c.env.ASSETS.fetch(new Request(new URL('/landingpage/index.html', url.origin), c.req.raw));
+      }
+
+      const res = await c.env.ASSETS.fetch(c.req.raw as unknown as Parameters<Fetcher['fetch']>[0]);
+      if (res.status === 404) {
+        if (pathname.startsWith('/admin')) {
+          return c.env.ASSETS.fetch(new Request(new URL('/admin/index.html', url.origin), c.req.raw));
+        }
+        if (pathname.startsWith('/landingpage')) {
+          return c.env.ASSETS.fetch(new Request(new URL('/landingpage/index.html', url.origin), c.req.raw));
+        }
+      }
+      return res as unknown as Response;
     }
     return c.text('Not found', 404);
   });

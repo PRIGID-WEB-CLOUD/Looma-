@@ -1,13 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "looma-landing",
-  "main": "src/worker.ts",
   "compatibility_date": "2026-04-01",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
   "assets": {
     "directory": "./dist-landing",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
   "observability": {
