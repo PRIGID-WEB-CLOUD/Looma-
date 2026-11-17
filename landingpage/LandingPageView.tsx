@@ -6,14 +6,12 @@ import {
   ImageOff,
   Lock,
   MessageSquare,
-  Mic,
   Moon,
   Shield,
   ShieldCheck,
   Sparkles,
   Sun,
   Users,
-  Video,
 } from 'lucide-react';
 import heroWorkspaceImg from '../src/assets/images/hero_looma_workspace_1794784020527.jpg';
 import landingGalleryImg from '../src/assets/images/landing_community_gallery_1794784021354.jpg';
@@ -32,14 +30,7 @@ import {
 
 interface LandingPageViewProps {
   theme: ThemeMode;
-  isAuthorized: boolean;
-  isAdmin?: boolean;
-  userDisplayName?: string;
   onSetTheme: (theme: ThemeMode) => void;
-  onNavigateToAuth: (mode?: 'signin' | 'signup') => void;
-  onNavigateToProtectedPath: (
-    path: '/feed' | '/messages' | '/settings' | '/admin'
-  ) => void;
   onOpenLegal: (docId: LegalDocId) => void;
   onSubmitAccessInquiry?: (inquiry: AccessInquiry) => void;
 }
@@ -81,12 +72,7 @@ function EditorialPhoto({
 
 export function LandingPageView({
   theme,
-  isAuthorized,
-  isAdmin = false,
-  userDisplayName,
   onSetTheme,
-  onNavigateToAuth,
-  onNavigateToProtectedPath,
   onOpenLegal,
   onSubmitAccessInquiry,
 }: LandingPageViewProps) {
@@ -132,12 +118,12 @@ export function LandingPageView({
       data-testid="landing-page"
       className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors looma-stage-enter font-sans selection:bg-blue-600 selection:text-white"
     >
-      {/* Professional Sticky Header */}
+      {/* Sticky Marketing Header */}
       <header className="sticky top-0 z-40 h-20 px-4 md:px-8 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto h-full flex items-center justify-between gap-8">
           <div className="flex items-center gap-8">
             <a
-              href="/"
+              href="#top"
               onClick={(e) => {
                 e.preventDefault();
                 window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -155,19 +141,13 @@ export function LandingPageView({
                 href="#workspace"
                 className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap"
               >
-                Workspace
-              </a>
-              <a
-                href="#capabilities"
-                className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap"
-              >
-                Features
+                Capabilities
               </a>
               <a
                 href="#security"
                 className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap"
               >
-                Security &amp; Auth
+                Security Architecture
               </a>
               <a
                 href="#request-access"
@@ -194,17 +174,12 @@ export function LandingPageView({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() =>
-                isAuthorized
-                  ? onNavigateToProtectedPath('/feed')
-                  : onNavigateToAuth('signin')
-              }
-              className="min-h-[44px] px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold transition-all shadow-sm shadow-blue-600/20 cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+            <a
+              href="#request-access"
+              className="min-h-[44px] px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold inline-flex items-center transition-all shadow-sm shadow-blue-600/20 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
             >
-              {isAuthorized ? 'Open Feed' : 'Sign In'}
-            </button>
+              Request Access
+            </a>
           </div>
         </div>
       </header>
@@ -252,36 +227,19 @@ export function LandingPageView({
 
                 <div className="space-y-4 pt-2">
                   <div className="flex flex-wrap items-center gap-3.5">
-                    {isAuthorized ? (
-                      <button
-                        type="button"
-                        onClick={() => onNavigateToProtectedPath('/feed')}
-                        className="min-h-[52px] px-7 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-base font-semibold inline-flex items-center gap-2.5 shadow-lg shadow-blue-600/25 transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        <span>
-                          Continue as {userDisplayName || 'Authenticated Member'}
-                        </span>
-                        <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onNavigateToAuth('signup')}
-                          className="min-h-[52px] px-7 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-base font-semibold inline-flex items-center gap-2.5 shadow-lg shadow-blue-600/25 transition-all cursor-pointer whitespace-nowrap"
-                        >
-                          <span>Create Member Account</span>
-                          <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onNavigateToAuth('signin')}
-                          className="min-h-[52px] px-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 text-base font-semibold transition-colors cursor-pointer whitespace-nowrap"
-                        >
-                          Sign In
-                        </button>
-                      </>
-                    )}
+                    <a
+                      href="#request-access"
+                      className="min-h-[52px] px-7 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-base font-semibold inline-flex items-center gap-2.5 shadow-lg shadow-blue-600/25 transition-all whitespace-nowrap"
+                    >
+                      <span>Request Studio Access</span>
+                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </a>
+                    <a
+                      href="#workspace"
+                      className="min-h-[52px] px-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 text-base font-semibold inline-flex items-center transition-colors whitespace-nowrap"
+                    >
+                      Explore Capabilities
+                    </a>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -390,18 +348,13 @@ export function LandingPageView({
                       {LANDING_CAPABILITIES[0].detail}
                     </p>
                   </div>
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
+                  <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
                     <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                      Route: /feed · Verified Members
+                      {LANDING_CAPABILITIES[0].highlight}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onNavigateToProtectedPath('/feed')}
-                      className="min-h-[44px] px-5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-blue-600 dark:hover:bg-blue-400 dark:hover:text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
-                    >
-                      <span>{isAuthorized ? 'Open Feed' : 'Explore Feed'}</span>
-                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                    </button>
+                    <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                      01
+                    </span>
                   </div>
                 </div>
               </article>
@@ -432,16 +385,11 @@ export function LandingPageView({
                   </div>
                   <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
                     <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                      /messages
+                      {LANDING_CAPABILITIES[1].highlight}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onNavigateToProtectedPath('/messages')}
-                      className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-                    >
-                      <span>{isAuthorized ? 'Open Chat' : 'Member Login'}</span>
-                      <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
+                    <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                      02
+                    </span>
                   </div>
                 </div>
               </article>
@@ -464,18 +412,11 @@ export function LandingPageView({
                 </div>
                 <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
                   <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                    /settings
+                    {LANDING_CAPABILITIES[2].highlight}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onNavigateToProtectedPath('/settings')}
-                    className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <span>
-                      {isAuthorized ? 'Open Settings' : 'Settings'}
-                    </span>
-                    <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
+                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    03
+                  </span>
                 </div>
               </article>
 
@@ -497,16 +438,11 @@ export function LandingPageView({
                 </div>
                 <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
                   <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                    Route: /admin · Verified Administrators Only
+                    {LANDING_CAPABILITIES[3].highlight}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onNavigateToProtectedPath('/admin')}
-                    className="min-h-[44px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <span>Open Admin Console</span>
-                    <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                  </button>
+                  <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                    04
+                  </span>
                 </div>
               </article>
             </div>
@@ -550,7 +486,7 @@ export function LandingPageView({
                         {boundary.title}
                       </h3>
                       <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 tabular-nums">
-                        {boundary.path}
+                        {boundary.scopeTag}
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">
@@ -580,9 +516,8 @@ export function LandingPageView({
                 Request studio onboarding &amp; operator review.
               </h2>
               <p className="text-base text-slate-600 dark:text-slate-400 leading-relaxed">
-                Already registered? Head directly to the Auth Page. Teams connecting
-                dedicated architectural or creative practices can submit a workspace
-                inquiry here for review inside the Admin Console.
+                Teams connecting dedicated architectural or creative practices can
+                submit a studio onboarding inquiry below for network review.
               </p>
 
               <div className="pt-4 space-y-3 text-sm text-slate-600 dark:text-slate-400">
@@ -622,29 +557,22 @@ export function LandingPageView({
                         Workspace Inquiry Successfully Recorded
                       </h3>
                       <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                        Submitted for{' '}
+                        Thank you,{' '}
                         <span className="font-semibold text-slate-900 dark:text-white">
                           {submittedInquiry.fullName}
                         </span>{' '}
-                        ({submittedInquiry.email}). Administrators can review and approve
-                        this inquiry in the Admin Console.
+                        ({submittedInquiry.email}). Our studio onboarding team will
+                        follow up directly via email.
                       </p>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 pt-2">
                     <button
                       type="button"
-                      onClick={() => onNavigateToAuth('signup')}
-                      className="min-h-[48px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold cursor-pointer shadow-md shadow-blue-600/20"
-                    >
-                      Continue to Sign Up
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => setSubmittedInquiry(null)}
                       className="min-h-[48px] px-5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                     >
-                      Submit Another Note
+                      Submit Another Inquiry
                     </button>
                   </div>
                 </div>
@@ -746,47 +674,44 @@ export function LandingPageView({
         </section>
       </main>
 
-      {/* Professional Multi-Column Footer */}
+      {/* Clean Marketing Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 py-16 px-4 md:px-8">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
-          <div className="space-y-4 md:col-span-1">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10 mb-12">
+          <div className="space-y-4">
             <LoomaLogo />
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
-              Authenticated social feed, direct messaging, ephemeral stories, and studio administration for verified professional networks.
+              Authenticated social feed, direct messaging, ephemeral stories, and studio collaboration for verified professional networks.
             </p>
           </div>
 
           <div className="space-y-3">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-              Platform
+              Overview
             </p>
             <ul className="space-y-2 text-xs sm:text-sm text-slate-600 dark:text-slate-400">
               <li>
-                <button
-                  type="button"
-                  onClick={() => onNavigateToProtectedPath('/feed')}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                <a
+                  href="#workspace"
+                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                 >
-                  Member Feed
-                </button>
+                  Platform Capabilities
+                </a>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onNavigateToProtectedPath('/messages')}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                <a
+                  href="#security"
+                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                 >
-                  Direct Messaging
-                </button>
+                  Security Architecture
+                </a>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onNavigateToProtectedPath('/admin')}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                <a
+                  href="#request-access"
+                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                 >
-                  Admin Console
-                </button>
+                  Studio Inquiries
+                </a>
               </li>
             </ul>
           </div>
@@ -825,37 +750,11 @@ export function LandingPageView({
               </li>
             </ul>
           </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-              Authentication &amp; Access
-            </p>
-            <ul className="space-y-2 text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onNavigateToAuth('signin')}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
-                >
-                  Sign In to Account
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onNavigateToAuth('signup')}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
-                >
-                  Create Member Profile
-                </button>
-              </li>
-            </ul>
-          </div>
         </div>
 
         <div className="max-w-7xl mx-auto pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
           <p>© {new Date().getFullYear()} Looma Studio Network. All rights reserved.</p>
-          <p>Protected Workspace Access enforced by Firebase Auth &amp; Firestore Rules.</p>
+          <p>Zero-trust workspace isolation for verified creative studios.</p>
         </div>
       </footer>
     </div>

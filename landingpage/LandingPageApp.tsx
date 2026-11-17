@@ -8,19 +8,10 @@ import type { AccessInquiry } from './landingData';
 
 export interface LandingPageAppProps {
   embedded?: boolean;
-  isAuthorized?: boolean;
-  isAdmin?: boolean;
-  userDisplayName?: string;
-  onNavigateToPath?: (path: string) => void;
   onOpenLegal?: (docId: LegalDocId) => void;
 }
 
 export default function LandingPageApp({
-  embedded = false,
-  isAuthorized = false,
-  isAdmin = false,
-  userDisplayName,
-  onNavigateToPath,
   onOpenLegal,
 }: LandingPageAppProps) {
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredThemePreference());
@@ -43,50 +34,6 @@ export default function LandingPageApp({
 
   const handleSetTheme = (nextTheme: ThemeMode) => {
     setTheme(nextTheme);
-  };
-
-  const navigateTo = (targetPath: string) => {
-    if (typeof window === 'undefined') return;
-    const currentParams = new URLSearchParams(window.location.search);
-    const hasAutostart = currentParams.get('autostart') === '1';
-    const url = new URL(targetPath, window.location.origin);
-    if (hasAutostart && !url.searchParams.has('autostart')) {
-      url.searchParams.set('autostart', '1');
-    }
-    const finalRelPath = `${url.pathname}${url.search}`;
-
-    if (embedded) {
-      if (onNavigateToPath) {
-        onNavigateToPath(finalRelPath);
-      } else {
-        window.history.pushState({}, '', finalRelPath);
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      }
-      return;
-    }
-
-    const host = window.location.hostname;
-    const isDedicatedLandingWorker =
-      host.includes('looma-landing.') || host.startsWith('landing.');
-
-    if (isDedicatedLandingWorker) {
-      if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
-        window.location.href = 'https://looma-admin.prigidcollection.workers.dev/';
-        return;
-      }
-      window.location.href = `https://looma.prigidcollection.workers.dev${finalRelPath}`;
-      return;
-    }
-
-    window.location.href = finalRelPath;
-  };
-
-  const handleNavigateToAuth = (mode?: 'signin' | 'signup') => {
-    navigateTo(mode === 'signup' ? '/auth?mode=signup' : '/auth');
-  };
-
-  const handleNavigateToProtectedPath = (path: '/feed' | '/messages' | '/settings' | '/admin') => {
-    navigateTo(path === '/admin' ? '/admin/' : path);
   };
 
   const handleOpenLegal = (docId: LegalDocId) => {
@@ -122,12 +69,7 @@ export default function LandingPageApp({
   return (
     <LandingPageView
       theme={theme}
-      isAuthorized={isAuthorized}
-      isAdmin={isAdmin}
-      userDisplayName={userDisplayName}
       onSetTheme={handleSetTheme}
-      onNavigateToAuth={handleNavigateToAuth}
-      onNavigateToProtectedPath={handleNavigateToProtectedPath}
       onOpenLegal={handleOpenLegal}
       onSubmitAccessInquiry={handleSubmitAccessInquiry}
     />

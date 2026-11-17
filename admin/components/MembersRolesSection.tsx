@@ -22,7 +22,6 @@ interface MembersRolesSectionProps {
   adminRoles: AdminRoleEntry[];
   onChangeSearch: (q: string) => void;
   onChangeFilter: (mode: AdminMemberFilter) => void;
-  onInspectProfile: (uid: string) => void;
   onSetMemberStatus: (
     targetUid: string,
     status: MemberAccountStatus,
@@ -57,11 +56,11 @@ export function MembersRolesSection({
   adminRoles,
   onChangeSearch,
   onChangeFilter,
-  onInspectProfile,
   onSetMemberStatus,
   onAssignRole,
   onRevokeRole,
 }: MembersRolesSectionProps) {
+  const [inspectedMember, setInspectedMember] = useState<UserProfile | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<UserProfile | null>(null);
   const [suspendReason, setSuspendReason] = useState('');
   const [roleForm, setRoleForm] = useState<{
@@ -255,6 +254,65 @@ export function MembersRolesSection({
         </form>
       )}
 
+      {/* Inline Member Details Inspection Panel */}
+      {inspectedMember && (
+        <div
+          data-testid="admin-member-details"
+          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <Avatar
+                src={inspectedMember.avatarUrl}
+                name={inspectedMember.displayName}
+                size="md"
+                online={onlineSet.has(inspectedMember.uid)}
+              />
+              <div className="min-w-0">
+                <h2 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                  {inspectedMember.displayName}
+                </h2>
+                <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
+                  @{inspectedMember.handle} · UID: {inspectedMember.uid}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectedMember(null)}
+              className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300">
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3">
+              <p className="text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400">Location</p>
+              <p className="mt-1 font-medium text-slate-900 dark:text-white">
+                {inspectedMember.location || 'Not specified'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3">
+              <p className="text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400">Network</p>
+              <p className="mt-1 font-medium text-slate-900 dark:text-white tabular-nums">
+                {inspectedMember.followersCount} followers · {inspectedMember.followingCount} following
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3">
+              <p className="text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400">Onboarding</p>
+              <p className="mt-1 font-medium text-slate-900 dark:text-white">
+                {inspectedMember.onboardingCompleted ? 'Completed' : 'Pending'}
+              </p>
+            </div>
+          </div>
+          {inspectedMember.bio && (
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              {inspectedMember.bio}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Member Directory Table */}
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
         {members.length === 0 ? (
@@ -359,10 +417,14 @@ export function MembersRolesSection({
                         <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => onInspectProfile(member.uid)}
+                            onClick={() =>
+                              setInspectedMember((prev) =>
+                                prev?.uid === member.uid ? null : member
+                              )
+                            }
                             className="min-h-[34px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                           >
-                            Profile
+                            {inspectedMember?.uid === member.uid ? 'Hide' : 'Details'}
                           </button>
 
                           {!isSelf && (

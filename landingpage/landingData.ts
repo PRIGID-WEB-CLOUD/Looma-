@@ -4,14 +4,14 @@ export interface LandingCapability {
   title: string;
   summary: string;
   detail: string;
-  protectedTarget: '/feed' | '/messages' | '/settings' | '/admin';
+  highlight: string;
   featured?: boolean;
 }
 
 export interface ProtectedBoundaryItem {
   id: string;
   title: string;
-  path: '/feed' | '/messages' | '/settings' | '/admin';
+  scopeTag: string;
   requirement: string;
   description: string;
 }
@@ -37,7 +37,7 @@ export const LANDING_CAPABILITIES: LandingCapability[] = [
       'High-resolution photo journals, studio notes, and 24-hour visual stories reserved exclusively for verified members.',
     detail:
       'Automatic client-side compression, Cloudflare R2 media delivery, topic filters, bookmarks, and threaded comments.',
-    protectedTarget: '/feed',
+    highlight: 'R2 Signed Media Pipeline',
     featured: true,
   },
   {
@@ -48,7 +48,7 @@ export const LANDING_CAPABILITIES: LandingCapability[] = [
       'Private 1-on-1 conversations, studio channels, voice notes, and WebRTC audio or video calls scoped strictly to participants.',
     detail:
       'Firestore member-bound chat rules paired with ephemeral Cloudflare TURN credentials.',
-    protectedTarget: '/messages',
+    highlight: 'Ephemeral TURN Relay',
   },
   {
     id: 'settings',
@@ -58,17 +58,17 @@ export const LANDING_CAPABILITIES: LandingCapability[] = [
       'Owner-only controls for profile visibility, direct-message privacy, push alert preferences, and account deletion.',
     detail:
       'PII and notification preferences live in a dedicated private subcollection accessible only to the signed-in owner.',
-    protectedTarget: '/settings',
+    highlight: 'Private Subcollection Isolation',
   },
   {
     id: 'admin',
     number: '04',
-    title: 'Workspace Admin Console',
+    title: 'Studio Governance & Safety',
     summary:
-      'Dedicated administrative governance for verified operators: member directory, content moderation, and inquiry review.',
+      'Structured moderation queues, community policy controls, and studio onboarding review for network operators.',
     detail:
-      'Protected by verified-email RBAC checks and isolated inside its own role-gated /admin workspace.',
-    protectedTarget: '/admin',
+      'Protected by verified-email RBAC checks and dedicated audit logging across workspace actions.',
+    highlight: 'Verified RBAC Governance',
   },
 ];
 
@@ -76,31 +76,31 @@ export const PROTECTED_WORKSPACE_BOUNDARIES: ProtectedBoundaryItem[] = [
   {
     id: 'boundary-feed',
     title: 'Feed Posts & Stories',
-    path: '/feed',
-    requirement: 'Authenticated & verified session via /auth',
+    scopeTag: 'Members Only',
+    requirement: 'Authenticated & verified session required',
     description:
       'Unauthenticated visitors cannot read member streams, post captions, comments, or 24-hour stories.',
   },
   {
     id: 'boundary-messages',
     title: 'Direct Messages & Calls',
-    path: '/messages',
-    requirement: 'Verified member + thread participant UID',
+    scopeTag: 'Participant Scoped',
+    requirement: 'Verified member + explicit thread participant UID',
     description:
       'Every thread, message, and WebRTC room enforces explicit memberIds checks in Firestore and backend APIs.',
   },
   {
     id: 'boundary-settings',
     title: 'Profile Settings & PII',
-    path: '/settings',
+    scopeTag: 'Owner Isolated',
     requirement: 'Owner-only verified authentication',
     description:
-      'Account preferences, email address, and deletion controls require an active owner session from the auth page.',
+      'Account preferences, email address, and deletion controls require an active owner session.',
   },
   {
     id: 'boundary-admin',
-    title: 'Admin Console',
-    path: '/admin',
+    title: 'Operator Governance',
+    scopeTag: 'RBAC Enforced',
     requirement: 'Verified administrator privileges',
     description:
       'Workspace metrics, moderation actions, and inquiry queues reject unauthenticated users and standard member accounts.',

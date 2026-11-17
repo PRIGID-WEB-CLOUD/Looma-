@@ -491,10 +491,6 @@ export default function App() {
         <Suspense fallback={<RouteLoadingFallback />}>
           <LandingPageApp
             embedded
-            isAuthorized={store.isAuthorized}
-            isAdmin={isUserAdmin}
-            userDisplayName={store.profile.displayName}
-            onNavigateToPath={(target) => navigateToPath(target)}
             onOpenLegal={openLegalDocument}
           />
         </Suspense>
@@ -506,10 +502,7 @@ export default function App() {
     return (
       <div className="looma-stage-enter">
         <Suspense fallback={<RouteLoadingFallback />}>
-          <AdminApp
-            embedded
-            onNavigateToPath={(target) => navigateToPath(target)}
-          />
+          <AdminApp embedded />
         </Suspense>
       </div>
     );

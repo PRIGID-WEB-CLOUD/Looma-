@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
   Activity,
-  ArrowLeft,
   FileWarning,
   Flag,
   LayoutDashboard,
@@ -87,9 +86,6 @@ interface AdminViewProps {
   onSignInGoogle: () => Promise<void>;
   onSignInEmail?: (email: string, password: string) => Promise<void>;
   onSignOut: () => Promise<void>;
-  onBackToWorkspace: () => void;
-  onOpenAuth: () => void;
-  onOpenPublicProfile: (uid: string) => void;
   onToggleHidePost: (postId: string) => void;
   onDeletePost: (postId: string) => Promise<void>;
   onDeleteStory: (storyId: string) => Promise<void>;
@@ -180,9 +176,6 @@ export function AdminView({
   onSignInGoogle,
   onSignInEmail,
   onSignOut,
-  onBackToWorkspace,
-  onOpenAuth,
-  onOpenPublicProfile,
   onToggleHidePost,
   onDeletePost,
   onDeleteStory,
@@ -344,15 +337,10 @@ export function AdminView({
       >
         <header className="h-16 px-4 md:px-8 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBackToWorkspace}
-              className="min-h-[40px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-              <span>Workspace</span>
-            </button>
             <LoomaLogo />
+            <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-md border border-slate-200 dark:border-slate-800 text-[11px] font-mono font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+              Admin Console
+            </span>
           </div>
 
           <button
@@ -432,24 +420,6 @@ export function AdminView({
                   className="min-h-[44px] px-5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold cursor-pointer"
                 >
                   Sign Out &amp; Switch Account
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={onBackToWorkspace}
-                className="min-h-[44px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                Member Feed
-              </button>
-
-              {isUnauthenticated && (
-                <button
-                  type="button"
-                  onClick={onOpenAuth}
-                  className="min-h-[44px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Open Main Auth
                 </button>
               )}
             </div>
@@ -589,20 +559,11 @@ export function AdminView({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onBackToWorkspace}
-            className="w-full min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Back to Member Feed</span>
-          </button>
-
           {!isLocalAutostart && (
             <button
               type="button"
               onClick={() => void onSignOut()}
-              className="w-full min-h-[36px] px-3 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              className="w-full min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
               <span>Sign Out</span>
@@ -613,22 +574,14 @@ export function AdminView({
 
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Top Bar: Breadcrumbs Left + 1-2 Actions Right */}
+        {/* Top Bar: Breadcrumbs Left + Admin Actions Right */}
         <header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
           <div className="h-16 px-4 md:px-8 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0">
-              <button
-                type="button"
-                onClick={onBackToWorkspace}
-                className="lg:hidden min-h-[38px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1 cursor-pointer shrink-0"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>App</span>
-              </button>
-              <span className="hidden sm:inline font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+              <span className="font-semibold text-slate-500 dark:text-slate-400 shrink-0">
                 Looma Admin
               </span>
-              <span className="hidden sm:inline text-slate-400 shrink-0" aria-hidden="true">
+              <span className="text-slate-400 shrink-0" aria-hidden="true">
                 /
               </span>
               <span className="font-display font-bold text-slate-900 dark:text-white truncate">
@@ -637,14 +590,16 @@ export function AdminView({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={onBackToWorkspace}
-                className="min-h-[38px] sm:min-h-[40px] px-3 sm:px-4 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <span className="hidden sm:inline">Open Member Feed</span>
-                <span className="sm:hidden">Feed</span>
-              </button>
+              {!isLocalAutostart && (
+                <button
+                  type="button"
+                  onClick={() => void onSignOut()}
+                  className="lg:hidden min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Sign Out</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -726,7 +681,6 @@ export function AdminView({
               adminRoles={adminRoles}
               onChangeSearch={setMemberSearch}
               onChangeFilter={setMemberFilter}
-              onInspectProfile={onOpenPublicProfile}
               onSetMemberStatus={onSetMemberStatus}
               onAssignRole={onAssignRole}
               onRevokeRole={onRevokeRole}

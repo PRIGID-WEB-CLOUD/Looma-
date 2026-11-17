@@ -117,10 +117,9 @@ function isLocalhostPreview(): boolean {
 
 export interface AdminAppProps {
   embedded?: boolean;
-  onNavigateToPath?: (path: string) => void;
 }
 
-function AdminAppInner({ embedded = false, onNavigateToPath }: AdminAppProps) {
+function AdminAppInner(_props: AdminAppProps) {
   const isLocalAutostart = isLocalhostPreview();
   const initialSeed = isLocalAutostart ? createAutostartAdminSeed() : null;
 
@@ -1203,70 +1202,6 @@ function AdminAppInner({ embedded = false, onNavigateToPath }: AdminAppProps) {
       }}
       onSignOut={async () => {
         await signOutAccount();
-      }}
-      onBackToWorkspace={() => {
-        const target = isLocalAutostart ? '/feed?autostart=1' : '/feed';
-        if (embedded) {
-          if (onNavigateToPath) {
-            onNavigateToPath(target);
-          } else {
-            window.history.pushState({}, '', target);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }
-          return;
-        }
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        const isDedicatedAdminWorker =
-          host.includes('looma-admin.') || host.startsWith('admin.');
-        if (isDedicatedAdminWorker) {
-          window.location.href = `https://looma.prigidcollection.workers.dev${target}`;
-          return;
-        }
-        window.location.href = target;
-      }}
-      onOpenAuth={() => {
-        const target = isLocalAutostart
-          ? '/auth?redirect=/admin/&autostart=1'
-          : '/auth?redirect=/admin/';
-        if (embedded) {
-          if (onNavigateToPath) {
-            onNavigateToPath(target);
-          } else {
-            window.history.pushState({}, '', target);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }
-          return;
-        }
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        const isDedicatedAdminWorker =
-          host.includes('looma-admin.') || host.startsWith('admin.');
-        if (isDedicatedAdminWorker) {
-          window.location.href = 'https://looma.prigidcollection.workers.dev/auth?redirect=https%3A%2F%2Flooma-admin.prigidcollection.workers.dev%2F';
-          return;
-        }
-        window.location.href = target;
-      }}
-      onOpenPublicProfile={(uid) => {
-        const target = isLocalAutostart
-          ? `/feed?profile=${uid}&autostart=1`
-          : `/feed?profile=${uid}`;
-        if (embedded) {
-          if (onNavigateToPath) {
-            onNavigateToPath(target);
-          } else {
-            window.history.pushState({}, '', target);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }
-          return;
-        }
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        const isDedicatedAdminWorker =
-          host.includes('looma-admin.') || host.startsWith('admin.');
-        if (isDedicatedAdminWorker) {
-          window.location.href = `https://looma.prigidcollection.workers.dev${target}`;
-          return;
-        }
-        window.location.href = target;
       }}
       onToggleHidePost={handleToggleHidePost}
       onDeletePost={handleDeletePost}

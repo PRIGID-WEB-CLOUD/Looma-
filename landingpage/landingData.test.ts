@@ -7,18 +7,18 @@ import {
   validateAccessInquiry,
 } from './landingData';
 
-test('landing capabilities and protected workspace boundaries cover feed, messages, settings, and admin', () => {
-  const capabilityTargets = new Set(LANDING_CAPABILITIES.map((c) => c.protectedTarget));
-  assert.equal(capabilityTargets.has('/feed'), true);
-  assert.equal(capabilityTargets.has('/messages'), true);
-  assert.equal(capabilityTargets.has('/settings'), true);
-  assert.equal(capabilityTargets.has('/admin'), true);
+test('landing capabilities and protected workspace boundaries cover feed, messaging, settings, and governance', () => {
+  const capabilityIds = new Set(LANDING_CAPABILITIES.map((c) => c.id));
+  assert.equal(capabilityIds.has('feed'), true);
+  assert.equal(capabilityIds.has('messaging'), true);
+  assert.equal(capabilityIds.has('settings'), true);
+  assert.equal(capabilityIds.has('admin'), true);
 
-  const boundaryTargets = new Set(PROTECTED_WORKSPACE_BOUNDARIES.map((b) => b.path));
-  assert.equal(boundaryTargets.has('/feed'), true);
-  assert.equal(boundaryTargets.has('/messages'), true);
-  assert.equal(boundaryTargets.has('/settings'), true);
-  assert.equal(boundaryTargets.has('/admin'), true);
+  const boundaryIds = new Set(PROTECTED_WORKSPACE_BOUNDARIES.map((b) => b.id));
+  assert.equal(boundaryIds.has('boundary-feed'), true);
+  assert.equal(boundaryIds.has('boundary-messages'), true);
+  assert.equal(boundaryIds.has('boundary-settings'), true);
+  assert.equal(boundaryIds.has('boundary-admin'), true);
 });
 
 test('validateAccessInquiry enforces name, email, and note constraints', () => {
