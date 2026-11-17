@@ -1,11 +1,30 @@
 import { useState, useEffect } from 'react';
 import { LandingPageView } from './LandingPageView';
+import { LegalDocumentView } from '../src/components/LegalDocumentView';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
 import type { ThemeMode } from '../src/types/social';
+import type { LegalDocId } from '../src/utils/legalLogic';
 import type { AccessInquiry } from './landingData';
 
-export default function LandingPageApp() {
+export interface LandingPageAppProps {
+  embedded?: boolean;
+  isAuthorized?: boolean;
+  isAdmin?: boolean;
+  userDisplayName?: string;
+  onNavigateToPath?: (path: string) => void;
+  onOpenLegal?: (docId: LegalDocId) => void;
+}
+
+export default function LandingPageApp({
+  embedded = false,
+  isAuthorized = false,
+  isAdmin = false,
+  userDisplayName,
+  onNavigateToPath,
+  onOpenLegal,
+}: LandingPageAppProps) {
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredThemePreference());
+  const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocId | null>(null);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -26,29 +45,56 @@ export default function LandingPageApp() {
     setTheme(nextTheme);
   };
 
-  const resolveTargetUrl = (targetPath: string) => {
-    if (typeof window === 'undefined') return targetPath;
-    const isLocal =
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1' ||
-      window.location.hostname === '0.0.0.0';
-    if (isLocal) {
-      return targetPath;
+  const navigateTo = (targetPath: string) => {
+    if (typeof window === 'undefined') return;
+    const currentParams = new URLSearchParams(window.location.search);
+    const hasAutostart = currentParams.get('autostart') === '1';
+    const url = new URL(targetPath, window.location.origin);
+    if (hasAutostart && !url.searchParams.has('autostart')) {
+      url.searchParams.set('autostart', '1');
     }
-    return `https://looma.prigidcollection.workers.dev${targetPath}`;
+    const finalRelPath = `${url.pathname}${url.search}`;
+
+    if (embedded) {
+      if (onNavigateToPath) {
+        onNavigateToPath(finalRelPath);
+      } else {
+        window.history.pushState({}, '', finalRelPath);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
+      return;
+    }
+
+    const host = window.location.hostname;
+    const isDedicatedLandingWorker =
+      host.includes('looma-landing.') || host.startsWith('landing.');
+
+    if (isDedicatedLandingWorker) {
+      if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+        window.location.href = 'https://looma-admin.prigidcollection.workers.dev/';
+        return;
+      }
+      window.location.href = `https://looma.prigidcollection.workers.dev${finalRelPath}`;
+      return;
+    }
+
+    window.location.href = finalRelPath;
   };
 
   const handleNavigateToAuth = (mode?: 'signin' | 'signup') => {
-    const q = mode === 'signup' ? '?auth=signup' : '';
-    window.location.href = resolveTargetUrl(`/auth${q}`);
+    navigateTo(mode === 'signup' ? '/auth?mode=signup' : '/auth');
   };
 
   const handleNavigateToProtectedPath = (path: '/feed' | '/messages' | '/settings' | '/admin') => {
-    window.location.href = resolveTargetUrl(path);
+    navigateTo(path === '/admin' ? '/admin/' : path);
   };
 
-  const handleOpenLegal = (docId: string) => {
-    window.location.href = `/legal/${docId}`;
+  const handleOpenLegal = (docId: LegalDocId) => {
+    if (onOpenLegal) {
+      onOpenLegal(docId);
+      return;
+    }
+    setActiveLegalDoc(docId);
   };
 
   const handleSubmitAccessInquiry = (inquiry: AccessInquiry) => {
@@ -61,11 +107,24 @@ export default function LandingPageApp() {
     }
   };
 
+  if (activeLegalDoc) {
+    return (
+      <LegalDocumentView
+        activeDocId={activeLegalDoc}
+        theme={theme}
+        onSelectDoc={setActiveLegalDoc}
+        onSetTheme={handleSetTheme}
+        onBack={() => setActiveLegalDoc(null)}
+      />
+    );
+  }
+
   return (
     <LandingPageView
       theme={theme}
-      isAuthorized={false}
-      isAdmin={false}
+      isAuthorized={isAuthorized}
+      isAdmin={isAdmin}
+      userDisplayName={userDisplayName}
       onSetTheme={handleSetTheme}
       onNavigateToAuth={handleNavigateToAuth}
       onNavigateToProtectedPath={handleNavigateToProtectedPath}

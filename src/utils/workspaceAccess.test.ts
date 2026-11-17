@@ -91,24 +91,44 @@ test('authenticated and onboarded member accesses workspace tabs without admin o
   });
   assert.equal(messages.surface, 'workspace');
   assert.equal(messages.tab, 'messages');
+});
 
-  const externalAdminPath = resolveRouteAccess({
-    pathname: '/admin',
-    isAuthorized: true,
-    onboardingCompleted: true,
-    authReady: true,
-  });
-  assert.equal(externalAdminPath.surface, 'workspace');
-  assert.equal(externalAdminPath.tab, 'feed');
+test('admin and landing routes resolve directly to their dedicated surfaces without bouncing', () => {
+  for (const path of ['/admin', '/admin/', '/admin/index.html']) {
+    const unauth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: false,
+      onboardingCompleted: false,
+      authReady: true,
+    });
+    assert.equal(unauth.surface, 'admin', `expected ${path} to resolve to admin surface for unauth`);
 
-  const externalLandingPath = resolveRouteAccess({
-    pathname: '/landing',
-    isAuthorized: true,
-    onboardingCompleted: true,
-    authReady: true,
-  });
-  assert.equal(externalLandingPath.surface, 'workspace');
-  assert.equal(externalLandingPath.tab, 'feed');
+    const auth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: true,
+      onboardingCompleted: true,
+      authReady: true,
+    });
+    assert.equal(auth.surface, 'admin', `expected ${path} to resolve to admin surface for auth`);
+  }
+
+  for (const path of ['/landingpage', '/landingpage/', '/landing', '/landing/']) {
+    const unauth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: false,
+      onboardingCompleted: false,
+      authReady: true,
+    });
+    assert.equal(unauth.surface, 'landing', `expected ${path} to resolve to landing surface for unauth`);
+
+    const auth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: true,
+      onboardingCompleted: true,
+      authReady: true,
+    });
+    assert.equal(auth.surface, 'landing', `expected ${path} to resolve to landing surface for auth`);
+  }
 });
 
 test('authenticated user who has not completed onboarding is gated to onboarding for protected routes', () => {

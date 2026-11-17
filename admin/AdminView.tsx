@@ -85,6 +85,7 @@ interface AdminViewProps {
   checkingHealth: boolean;
   onSetTheme: (theme: ThemeMode) => void;
   onSignInGoogle: () => Promise<void>;
+  onSignInEmail?: (email: string, password: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   onBackToWorkspace: () => void;
   onOpenAuth: () => void;
@@ -177,6 +178,7 @@ export function AdminView({
   checkingHealth,
   onSetTheme,
   onSignInGoogle,
+  onSignInEmail,
   onSignOut,
   onBackToWorkspace,
   onOpenAuth,
@@ -198,6 +200,10 @@ export function AdminView({
   onRunBackgroundJob,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
+  const [showEmailLogin, setShowEmailLogin] = useState(false);
+  const [adminLoginEmail, setAdminLoginEmail] = useState('');
+  const [adminLoginPassword, setAdminLoginPassword] = useState('');
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
   const [memberFilter, setMemberFilter] = useState<AdminMemberFilter>('all');
   const [postSearch, setPostSearch] = useState('');
@@ -400,14 +406,25 @@ export function AdminView({
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
               {isUnauthenticated ? (
-                <button
-                  type="button"
-                  onClick={() => void onSignInGoogle()}
-                  className="min-h-[44px] px-5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
-                >
-                  <LogIn className="w-4 h-4" aria-hidden="true" />
-                  <span>Sign in with Google</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void onSignInGoogle()}
+                    className="min-h-[44px] px-5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <LogIn className="w-4 h-4" aria-hidden="true" />
+                    <span>Sign in with Google</span>
+                  </button>
+                  {onSignInEmail && (
+                    <button
+                      type="button"
+                      onClick={() => setShowEmailLogin((prev) => !prev)}
+                      className="min-h-[44px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      {showEmailLogin ? 'Hide Email Sign In' : 'Use Email & Password'}
+                    </button>
+                  )}
+                </>
               ) : (
                 <button
                   type="button"
@@ -436,6 +453,64 @@ export function AdminView({
                 </button>
               )}
             </div>
+
+            {isUnauthenticated && onSignInEmail && showEmailLogin && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!adminLoginEmail.trim() || !adminLoginPassword) return;
+                  setEmailSubmitting(true);
+                  try {
+                    await onSignInEmail(adminLoginEmail.trim(), adminLoginPassword);
+                  } finally {
+                    setEmailSubmitting(false);
+                  }
+                }}
+                className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3"
+              >
+                <div>
+                  <label
+                    htmlFor="admin-login-email"
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                  >
+                    Operator Email
+                  </label>
+                  <input
+                    id="admin-login-email"
+                    type="email"
+                    required
+                    value={adminLoginEmail}
+                    onChange={(e) => setAdminLoginEmail(e.target.value)}
+                    placeholder="operator@studio.com"
+                    className="w-full min-h-[42px] px-3.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="admin-login-password"
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+                  >
+                    Password
+                  </label>
+                  <input
+                    id="admin-login-password"
+                    type="password"
+                    required
+                    value={adminLoginPassword}
+                    onChange={(e) => setAdminLoginPassword(e.target.value)}
+                    placeholder="Enter operator password"
+                    className="w-full min-h-[42px] px-3.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={emailSubmitting}
+                  className="w-full min-h-[42px] px-4 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-blue-600 dark:hover:bg-blue-500 dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  {emailSubmitting ? 'Signing in...' : 'Sign In to Admin Console'}
+                </button>
+              </form>
+            )}
           </section>
         </main>
       </div>

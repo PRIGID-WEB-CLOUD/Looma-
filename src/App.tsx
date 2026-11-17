@@ -80,6 +80,9 @@ const PublicProfileView = lazy(() =>
     default: m.PublicProfileView,
   }))
 );
+const AdminApp = lazy(() => import('../admin/AdminApp'));
+const LandingPageApp = lazy(() => import('../landingpage/LandingPageApp'));
+import { isAllowlistedAdminEmail } from '../admin/adminLogic';
 
 function RouteLoadingFallback() {
   return (
@@ -125,6 +128,10 @@ export default function App() {
     typeof window !== 'undefined'
       ? parseLegalRoute(window.location.pathname, window.location.search)
       : null
+  );
+
+  const isUserAdmin = Boolean(
+    store.firebaseUser?.email && isAllowlistedAdminEmail(store.firebaseUser.email)
   );
   const legalReturnPathRef = useRef<string>('/');
   const pendingProtectedPathRef = useRef<string | null>(null);
@@ -274,6 +281,32 @@ export default function App() {
   };
 
   const navigateAfterAuthentication = () => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search || '');
+      const rawRedirect = (params.get('redirect') || '').trim();
+      if (rawRedirect) {
+        if (
+          rawRedirect === 'https://looma-admin.prigidcollection.workers.dev/' ||
+          rawRedirect === 'https://looma-admin.prigidcollection.workers.dev' ||
+          rawRedirect === 'https://admin.prigidcollection.workers.dev/' ||
+          rawRedirect === 'https://admin.prigidcollection.workers.dev'
+        ) {
+          window.location.href = rawRedirect;
+          return;
+        }
+        if (
+          rawRedirect === '/admin' ||
+          rawRedirect === '/admin/' ||
+          rawRedirect === '/landingpage' ||
+          rawRedirect === '/landingpage/'
+        ) {
+          pendingProtectedPathRef.current = null;
+          setProtectedRedirectNotice(null);
+          navigateToPath(rawRedirect.endsWith('/') ? rawRedirect : `${rawRedirect}/`, true);
+          return;
+        }
+      }
+    }
     const target = pendingProtectedPathRef.current || '/feed';
     pendingProtectedPathRef.current = null;
     setProtectedRedirectNotice(null);
@@ -452,6 +485,36 @@ export default function App() {
     );
   }
 
+  if (routeAccess.surface === 'landing') {
+    return (
+      <div className="looma-stage-enter">
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <LandingPageApp
+            embedded
+            isAuthorized={store.isAuthorized}
+            isAdmin={isUserAdmin}
+            userDisplayName={store.profile.displayName}
+            onNavigateToPath={(target) => navigateToPath(target)}
+            onOpenLegal={openLegalDocument}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (routeAccess.surface === 'admin') {
+    return (
+      <div className="looma-stage-enter">
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <AdminApp
+            embedded
+            onNavigateToPath={(target) => navigateToPath(target)}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
   if (appStage === 'loading') {
     return (
       <>
@@ -566,6 +629,9 @@ export default function App() {
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
+        isAdmin={isUserAdmin}
+        onOpenAdmin={() => navigateToPath('/admin/')}
+        onOpenLanding={() => navigateToPath('/landingpage/')}
       />
 
       <PushToast
@@ -957,6 +1023,9 @@ export default function App() {
                 onUpdateProfile={store.updateProfile}
                 onUpdatePrivateSettings={store.updatePrivateSettings}
                 onBack={() => selectWorkspaceTab('profile')}
+                isAdmin={isUserAdmin}
+                onOpenAdmin={() => navigateToPath('/admin/')}
+                onOpenLanding={() => navigateToPath('/landingpage/')}
               />
             </Suspense>
           )}

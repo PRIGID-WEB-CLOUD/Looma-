@@ -1,4 +1,4 @@
-import { Moon, Sun } from 'lucide-react';
+import { Moon, ShieldCheck, Sun } from 'lucide-react';
 import type { TabId, ThemeMode } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -9,6 +9,9 @@ interface TopBarProps {
   unreadNotifications: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
+  onOpenLanding?: () => void;
 }
 
 export function TopBar({
@@ -17,6 +20,9 @@ export function TopBar({
   unreadNotifications,
   theme,
   onToggleTheme,
+  isAdmin = false,
+  onOpenAdmin,
+  onOpenLanding,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -35,7 +41,20 @@ export function TopBar({
     <header className="sticky top-0 z-30 h-13 md:h-16 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shrink-0">
       <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-8">
         {/* Zone 1: Static theme-reactive Logo brand */}
-        <LoomaLogo />
+        <div className="flex items-center gap-3">
+          <LoomaLogo />
+          {isAdmin && onOpenAdmin && (
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+              title="Open Platform Administration Console"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Admin</span>
+            </button>
+          )}
+        </div>
 
         {/* Zone 2: 4 single-line navigation links */}
         <nav
@@ -66,6 +85,16 @@ export function TopBar({
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">
+          {onOpenLanding && (
+            <button
+              type="button"
+              onClick={onOpenLanding}
+              className="hidden xl:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Open Showcase Landing Page"
+            >
+              Platform
+            </button>
+          )}
           <div className="lg:hidden">
             <PWAInstallButton compact />
           </div>

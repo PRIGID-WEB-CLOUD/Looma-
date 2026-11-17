@@ -1455,25 +1455,45 @@ export function createWorkerApp() {
     if (c.env.ASSETS) {
       const url = new URL(c.req.url);
       const pathname = url.pathname;
-      
-      // If requesting /admin or /landingpage directory without trailing slash or specific asset, route to index.html
-      if (pathname === '/admin' || pathname === '/admin/') {
-        return c.env.ASSETS.fetch(new Request(new URL('/admin/index.html', url.origin), c.req.raw));
+
+      const fetchAssetHtml = async (assetPath: string): Promise<Response> => {
+        const primary = (await c.env.ASSETS!.fetch(
+          new Request(new URL(assetPath, url.origin), c.req.raw)
+        )) as unknown as Response;
+        if (primary.ok || assetPath === '/index.html') {
+          return primary;
+        }
+        return c.env.ASSETS!.fetch(
+          new Request(new URL('/index.html', url.origin), c.req.raw)
+        ) as unknown as Response;
+      };
+
+      // Redirect /admin or /landingpage directory without trailing slash to preserve relative asset resolution
+      if (pathname === '/admin') {
+        return c.redirect(`/admin/${url.search}`, 301);
       }
-      if (pathname === '/landingpage' || pathname === '/landingpage/') {
-        return c.env.ASSETS.fetch(new Request(new URL('/landingpage/index.html', url.origin), c.req.raw));
+      if (pathname === '/admin/') {
+        return fetchAssetHtml('/admin/index.html');
+      }
+      if (pathname === '/landingpage' || pathname === '/landing') {
+        return c.redirect(`/landingpage/${url.search}`, 301);
+      }
+      if (pathname === '/landingpage/') {
+        return fetchAssetHtml('/landingpage/index.html');
       }
 
-      const res = await c.env.ASSETS.fetch(c.req.raw as unknown as Parameters<Fetcher['fetch']>[0]);
+      const res = (await c.env.ASSETS.fetch(
+        c.req.raw as unknown as Parameters<Fetcher['fetch']>[0]
+      )) as unknown as Response;
       if (res.status === 404) {
         if (pathname.startsWith('/admin')) {
-          return c.env.ASSETS.fetch(new Request(new URL('/admin/index.html', url.origin), c.req.raw));
+          return fetchAssetHtml('/admin/index.html');
         }
-        if (pathname.startsWith('/landingpage')) {
-          return c.env.ASSETS.fetch(new Request(new URL('/landingpage/index.html', url.origin), c.req.raw));
+        if (pathname.startsWith('/landingpage') || pathname.startsWith('/landing')) {
+          return fetchAssetHtml('/landingpage/index.html');
         }
       }
-      return res as unknown as Response;
+      return res;
     }
     return c.text('Not found', 404);
   });

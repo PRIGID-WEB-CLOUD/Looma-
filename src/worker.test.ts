@@ -913,4 +913,76 @@ test('Worker status endpoints reject MY_* placeholders and accept quoted env val
   });
 });
 
+test('Worker static asset routing serves /admin and /landingpage cleanly with trailing-slash redirects and root fallback', async () => {
+  const app = createWorkerApp();
+
+  const multiPageAssets: Fetcher = {
+    async fetch(input: RequestInfo | URL) {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === '/admin/index.html') {
+        return new Response('<html><title>Admin App</title></html>', { status: 200 });
+      }
+      if (url.pathname === '/landingpage/index.html') {
+        return new Response('<html><title>Landing App</title></html>', { status: 200 });
+      }
+      if (url.pathname === '/index.html') {
+        return new Response('<html><title>Main App</title></html>', { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    },
+  } as unknown as Fetcher;
+
+  const adminNoSlash = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/admin?autostart=1'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(adminNoSlash.status, 301);
+  assert.equal(adminNoSlash.headers.get('location'), '/admin/?autostart=1');
+
+  const adminSlash = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/admin/'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(adminSlash.status, 200);
+  assert.equal((await adminSlash.text()).includes('Admin App'), true);
+
+  const adminSubpath = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/admin/users'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(adminSubpath.status, 200);
+  assert.equal((await adminSubpath.text()).includes('Admin App'), true);
+
+  const landingNoSlash = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/landing?ref=nav'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(landingNoSlash.status, 301);
+  assert.equal(landingNoSlash.headers.get('location'), '/landingpage/?ref=nav');
+
+  const landingSlash = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/landingpage/'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(landingSlash.status, 200);
+  assert.equal((await landingSlash.text()).includes('Landing App'), true);
+
+  // Dedicated standalone admin worker (dist-admin/ has index.html only at root)
+  const standaloneAdminAssets: Fetcher = {
+    async fetch(input: RequestInfo | URL) {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === '/index.html') {
+        return new Response('<html><title>Standalone Admin</title></html>', { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    },
+  } as unknown as Fetcher;
+
+  const standaloneAdminRes = await app.fetch(
+    new Request('https://looma-admin.prigidcollection.workers.dev/admin/'),
+    { ASSETS: standaloneAdminAssets }
+  );
+  assert.equal(standaloneAdminRes.status, 200);
+  assert.equal((await standaloneAdminRes.text()).includes('Standalone Admin'), true);
+});
 

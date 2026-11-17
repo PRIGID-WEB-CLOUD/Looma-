@@ -11,7 +11,13 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": [
-      "/api/*"
+      "/api/*",
+      "/admin",
+      "/admin/*",
+      "/landingpage",
+      "/landingpage/*",
+      "/landing",
+      "/landing/*"
     ]
   },
   "r2_buckets": [
@@ -22,41 +28,10 @@
   ],
   "vars": {
     "PUBLIC_APP_URL": "https://looma.prigidcollection.workers.dev",
-    "ALLOWED_ORIGINS": "https://looma.prigidcollection.workers.dev",
+    "ALLOWED_ORIGINS": "https://looma.prigidcollection.workers.dev,https://looma-admin.prigidcollection.workers.dev,https://looma-landing.prigidcollection.workers.dev,https://admin.prigidcollection.workers.dev",
     "R2_BUCKET_NAME": "looma"
   },
   "observability": {
     "enabled": true
-  },
-  "env": {
-    "admin": {
-      "name": "looma-admin",
-      "assets": {
-        "directory": "./dist-admin",
-        "binding": "ASSETS",
-        "not_found_handling": "single-page-application",
-        "run_worker_first": [
-          "/api/*"
-        ]
-      },
-      "r2_buckets": [
-        {
-          "binding": "R2_BUCKET",
-          "bucket_name": "looma"
-        }
-      ],
-      "vars": {
-        "PUBLIC_APP_URL": "https://admin.prigidcollection.workers.dev",
-        "ALLOWED_ORIGINS": "https://admin.prigidcollection.workers.dev",
-        "R2_BUCKET_NAME": "looma"
-      }
-    },
-    "landing": {
-      "name": "looma-landing",
-      "assets": {
-        "directory": "./dist-landing",
-        "not_found_handling": "single-page-application"
-      }
-    }
   }
 }

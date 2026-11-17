@@ -17,6 +17,7 @@ import {
   db,
   handleFirestoreError,
   OperationType,
+  signInWithEmail,
   signInWithGoogle,
   signOutAccount,
   testFirestoreConnection,
@@ -105,13 +106,21 @@ function isLocalhostPreview(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname;
   const params = new URLSearchParams(window.location.search);
-  return (
-    params.get('autostart') === '1' &&
-    (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0')
-  );
+  const isPreviewHost =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.run.app') ||
+    host.includes('aistudio');
+  return params.get('autostart') === '1' && isPreviewHost;
 }
 
-function AdminAppInner() {
+export interface AdminAppProps {
+  embedded?: boolean;
+  onNavigateToPath?: (path: string) => void;
+}
+
+function AdminAppInner({ embedded = false, onNavigateToPath }: AdminAppProps) {
   const isLocalAutostart = isLocalhostPreview();
   const initialSeed = isLocalAutostart ? createAutostartAdminSeed() : null;
 
@@ -1182,38 +1191,82 @@ function AdminAppInner() {
           );
         }
       }}
+      onSignInEmail={async (email, password) => {
+        setAuthError(null);
+        try {
+          await signInWithEmail(email, password);
+        } catch (err) {
+          setAuthError(
+            err instanceof Error ? err.message : 'Unable to complete email sign-in.'
+          );
+        }
+      }}
       onSignOut={async () => {
         await signOutAccount();
       }}
       onBackToWorkspace={() => {
-        const isLocal =
-          typeof window !== 'undefined' &&
-          (window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '0.0.0.0');
-        window.location.href = isLocal
-          ? '/feed'
-          : 'https://looma.prigidcollection.workers.dev/feed';
+        const target = isLocalAutostart ? '/feed?autostart=1' : '/feed';
+        if (embedded) {
+          if (onNavigateToPath) {
+            onNavigateToPath(target);
+          } else {
+            window.history.pushState({}, '', target);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+          return;
+        }
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        const isDedicatedAdminWorker =
+          host.includes('looma-admin.') || host.startsWith('admin.');
+        if (isDedicatedAdminWorker) {
+          window.location.href = `https://looma.prigidcollection.workers.dev${target}`;
+          return;
+        }
+        window.location.href = target;
       }}
       onOpenAuth={() => {
-        const isLocal =
-          typeof window !== 'undefined' &&
-          (window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '0.0.0.0');
-        window.location.href = isLocal
-          ? '/auth'
-          : 'https://looma.prigidcollection.workers.dev/auth';
+        const target = isLocalAutostart
+          ? '/auth?redirect=/admin/&autostart=1'
+          : '/auth?redirect=/admin/';
+        if (embedded) {
+          if (onNavigateToPath) {
+            onNavigateToPath(target);
+          } else {
+            window.history.pushState({}, '', target);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+          return;
+        }
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        const isDedicatedAdminWorker =
+          host.includes('looma-admin.') || host.startsWith('admin.');
+        if (isDedicatedAdminWorker) {
+          window.location.href = 'https://looma.prigidcollection.workers.dev/auth?redirect=https%3A%2F%2Flooma-admin.prigidcollection.workers.dev%2F';
+          return;
+        }
+        window.location.href = target;
       }}
       onOpenPublicProfile={(uid) => {
-        const isLocal =
-          typeof window !== 'undefined' &&
-          (window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '0.0.0.0');
-        window.location.href = isLocal
-          ? `/feed?profile=${uid}`
-          : `https://looma.prigidcollection.workers.dev/feed?profile=${uid}`;
+        const target = isLocalAutostart
+          ? `/feed?profile=${uid}&autostart=1`
+          : `/feed?profile=${uid}`;
+        if (embedded) {
+          if (onNavigateToPath) {
+            onNavigateToPath(target);
+          } else {
+            window.history.pushState({}, '', target);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+          return;
+        }
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        const isDedicatedAdminWorker =
+          host.includes('looma-admin.') || host.startsWith('admin.');
+        if (isDedicatedAdminWorker) {
+          window.location.href = `https://looma.prigidcollection.workers.dev${target}`;
+          return;
+        }
+        window.location.href = target;
       }}
       onToggleHidePost={handleToggleHidePost}
       onDeletePost={handleDeletePost}
@@ -1234,10 +1287,10 @@ function AdminAppInner() {
   );
 }
 
-export default function AdminApp() {
+export default function AdminApp(props: AdminAppProps) {
   return (
     <AdminErrorBoundary>
-      <AdminAppInner />
+      <AdminAppInner {...props} />
     </AdminErrorBoundary>
   );
 }

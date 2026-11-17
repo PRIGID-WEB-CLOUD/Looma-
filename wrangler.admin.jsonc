@@ -21,8 +21,8 @@
     }
   ],
   "vars": {
-    "PUBLIC_APP_URL": "https://admin.prigidcollection.workers.dev",
-    "ALLOWED_ORIGINS": "https://admin.prigidcollection.workers.dev",
+    "PUBLIC_APP_URL": "https://looma-admin.prigidcollection.workers.dev",
+    "ALLOWED_ORIGINS": "https://looma.prigidcollection.workers.dev,https://looma-admin.prigidcollection.workers.dev,https://looma-landing.prigidcollection.workers.dev,https://admin.prigidcollection.workers.dev",
     "R2_BUCKET_NAME": "looma"
   },
   "observability": {

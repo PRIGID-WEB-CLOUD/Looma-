@@ -5,6 +5,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   base: '/',
+  publicDir: path.resolve(import.meta.dirname, '../public'),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -14,5 +15,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/lucide-react')) {
+            return 'vendor-ui';
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

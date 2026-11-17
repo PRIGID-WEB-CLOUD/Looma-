@@ -53,7 +53,8 @@ export default defineConfig(() => {
         },
         workbox: {
           importScripts: ['/sw-push-handler.js'],
-          navigateFallbackDenylist: [/^\/api\//, /^\/admin(\/|$)/, /^\/landingpage(\/|$)/],
+          cleanupOutdatedCaches: true,
+          navigateFallbackDenylist: [/^\/api\//, /^\/admin(\/|$)/, /^\/landingpage(\/|$)/, /^\/landing(\/|$)/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
@@ -96,8 +97,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

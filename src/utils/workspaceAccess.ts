@@ -2,7 +2,7 @@ import type { TabId } from '../types/social';
 import type { AuthMode } from '../components/AuthView';
 import { getLegalRoutePath, parseLegalRoute, type LegalDocId } from './legalLogic';
 
-export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal';
+export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal' | 'admin' | 'landing';
 
 export type ProtectedWorkspaceTab = Exclude<TabId, 'public-profile' | 'auth'>;
 
@@ -91,6 +91,21 @@ export function resolveRouteAccess(input: {
 }): RouteAccessResolution {
   const pathname = normalizeAppPathname(input.pathname);
   const search = input.search || '';
+
+  // Dedicated Admin and Landing page routes resolve directly to their surfaces without redirect bouncing
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    return { surface: 'admin' };
+  }
+
+  if (
+    pathname === '/landingpage' ||
+    pathname.startsWith('/landingpage/') ||
+    pathname === '/landing' ||
+    pathname.startsWith('/landing/')
+  ) {
+    return { surface: 'landing' };
+  }
+
   const legalDocId = parseLegalRoute(pathname, search);
 
   if (legalDocId) {
@@ -164,6 +179,8 @@ export function getCanonicalPathForSurface(
     legalDocId?: LegalDocId;
   }
 ): string {
+  if (surface === 'admin') return '/admin';
+  if (surface === 'landing') return '/landingpage';
   if (surface === 'legal' && options?.legalDocId) {
     return getLegalRoutePath(options.legalDocId);
   }

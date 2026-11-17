@@ -8,6 +8,7 @@ import {
   Lock,
   LogOut,
   Moon,
+  ShieldCheck,
   Sun,
   Trash2,
 } from 'lucide-react';
@@ -43,6 +44,9 @@ interface ProfileSettingsViewProps {
     updates: Partial<UserPrivateSettings>
   ) => Promise<void>;
   onBack: () => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
+  onOpenLanding?: () => void;
 }
 
 interface SwitchRowProps {
@@ -109,6 +113,9 @@ export function ProfileSettingsView({
   onUpdateProfile,
   onUpdatePrivateSettings,
   onBack,
+  isAdmin = false,
+  onOpenAdmin,
+  onOpenLanding,
 }: ProfileSettingsViewProps) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.handle);
@@ -724,6 +731,29 @@ export function ProfileSettingsView({
                   className="min-h-[36px] hover:underline cursor-pointer"
                 >
                   Community Guidelines
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isAdmin && onOpenAdmin && (
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60">
+                <div>
+                  <p className="text-xs font-semibold text-blue-900 dark:text-blue-200">
+                    Platform Administration
+                  </p>
+                  <p className="text-xs text-blue-700/80 dark:text-blue-300/80 mt-0.5">
+                    Access member management, content moderation, reports, and system operations.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenAdmin}
+                  className="min-h-[38px] px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                  <span>Open Admin Console</span>
                 </button>
               </div>
             </div>

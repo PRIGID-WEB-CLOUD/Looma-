@@ -357,6 +357,9 @@ export function resolveAllowedCorsOrigin(
 
   const defaults = [
     'https://looma.prigidcollection.workers.dev',
+    'https://looma-admin.prigidcollection.workers.dev',
+    'https://looma-landing.prigidcollection.workers.dev',
+    'https://admin.prigidcollection.workers.dev',
   ];
   const extra = (configuredOriginsCsv || '')
     .split(',')
