@@ -3,13 +3,19 @@ import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   Timestamp,
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
+  increment,
+  limit,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { AdminView } from './AdminView';
 import { useAdminRole } from './useAdminRole';
@@ -23,6 +29,7 @@ import {
   signOutAccount,
   testFirestoreConnection,
 } from '../src/services/firebase';
+import { uploadMediaToCloudflareR2 } from '../src/services/storage';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
 import { ADMIN_SYNC_STORAGE_KEYS } from '../src/hooks/useSocialStore';
 import {
@@ -32,15 +39,27 @@ import {
   normalizeHashtag,
   POPULAR_HASHTAGS,
 } from '../src/utils/socialLogic';
-import type { Post, PostCategory, StoryGroup, StoryItem, ThemeMode, UserProfile } from '../src/types/social';
+import type { LegalDocId } from '../src/utils/legalLogic';
+import type {
+  ChatThread,
+  Post,
+  PostCategory,
+  StoryGroup,
+  StoryItem,
+  ThemeMode,
+  UserProfile,
+} from '../src/types/social';
 import {
   ADMIN_ROLE_PERMISSIONS,
   DEFAULT_COMMUNITY_GUIDELINES,
   DEFAULT_FEATURE_FLAGS,
+  DEFAULT_PRIVACY_CONFIG,
+  DEFAULT_TERMS_CONFIG,
   appendAuditEntry,
   assignAdminRole,
   countExpiredStories,
   isAllowlistedAdminEmail,
+  removeMemberFromChatIds,
   reviewAppealDecision,
   revokeAdminRole,
   setMemberModerationStatus,
@@ -48,9 +67,14 @@ import {
   updateAccessInquiryStatus,
   updateReportResolution,
   validateAnnouncementInput,
-  validateGuidelinesInput,
+  validateDirectWarningInput,
+  validateGroupChatModerationTitle,
+  validateLegalConfigInput,
+  validateProfileSanitizeInput,
   type AdminAccessInquiry,
   type AdminAuditEntry,
+  type AdminCallRoomSummary,
+  type AdminCommentItem,
   type AdminFeatureFlags,
   type AdminModerationState,
   type AdminRoleEntry,
@@ -60,10 +84,12 @@ import {
   type BackgroundJobItem,
   type CommunityGuidelinesConfig,
   type ContentReport,
+  type LegalPolicyConfig,
   type MemberAccountStatus,
   type MemberModerationRecord,
   type ModerationAppeal,
   type PlatformAnnouncement,
+  type R2MediaObjectItem,
   type ReportStatus,
   type SystemHealthProbe,
 } from './adminLogic';
@@ -169,6 +195,9 @@ function AdminAppInner(_props: AdminAppProps) {
   const [communityUsers, setCommunityUsers] = useState<UserProfile[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
+  const [comments, setComments] = useState<AdminCommentItem[]>([]);
+  const [chats, setChats] = useState<ChatThread[]>([]);
+  const [calls, setCalls] = useState<AdminCallRoomSummary[]>([]);
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const [moderation, setModeration] = useState<AdminModerationState>({
     hiddenPostIds: [],
@@ -184,10 +213,18 @@ function AdminAppInner(_props: AdminAppProps) {
   const [guidelines, setGuidelines] = useState<CommunityGuidelinesConfig>(
     DEFAULT_COMMUNITY_GUIDELINES
   );
+  const [termsConfig, setTermsConfig] = useState<LegalPolicyConfig>(DEFAULT_TERMS_CONFIG);
+  const [privacyConfig, setPrivacyConfig] = useState<LegalPolicyConfig>(DEFAULT_PRIVACY_CONFIG);
   const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(DEFAULT_FEATURE_FLAGS);
   const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
   const [inquiries, setInquiries] = useState<AdminAccessInquiry[]>([]);
   const [savedHashtags, setSavedHashtags] = useState<string[]>(POPULAR_HASHTAGS);
+  const [dynamicHashtags, setDynamicHashtags] = useState<string[]>([]);
+  const [r2Objects, setR2Objects] = useState<R2MediaObjectItem[]>([]);
+  const [r2TotalBytes, setR2TotalBytes] = useState(0);
+  const [r2Loading, setR2Loading] = useState(false);
+  const [r2Error, setR2Error] = useState<string | null>(null);
+  const [autoMaintenanceEnabled, setAutoMaintenanceEnabled] = useState(false);
 
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [healthProbes, setHealthProbes] = useState<SystemHealthProbe[]>(() => [
@@ -265,6 +302,14 @@ function AdminAppInner(_props: AdminAppProps) {
   useEffect(() => {
     mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.GUIDELINES, guidelines);
   }, [guidelines]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.TERMS, termsConfig);
+  }, [termsConfig]);
+
+  useEffect(() => {
+    mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.PRIVACY, privacyConfig);
+  }, [privacyConfig]);
 
   useEffect(() => {
     mirrorAdminStorage(ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS, announcements);
@@ -501,6 +546,10 @@ function AdminAppInner(_props: AdminAppProps) {
       setCommunityUsers([]);
       setPosts([]);
       setStoryGroups([]);
+      setComments([]);
+      setChats([]);
+      setCalls([]);
+      setDynamicHashtags([]);
       setOnlineUserIds([]);
       setModeration({ hiddenPostIds: [], restrictedUids: [] });
       setMemberModerationRecords({});
@@ -509,9 +558,14 @@ function AdminAppInner(_props: AdminAppProps) {
       setAppeals([]);
       setAnnouncements([]);
       setGuidelines(DEFAULT_COMMUNITY_GUIDELINES);
+      setTermsConfig(DEFAULT_TERMS_CONFIG);
+      setPrivacyConfig(DEFAULT_PRIVACY_CONFIG);
       setFeatureFlags(DEFAULT_FEATURE_FLAGS);
       setAuditLogs([]);
       setInquiries([]);
+      setR2Objects([]);
+      setR2TotalBytes(0);
+      setR2Error(null);
       setSyncErrors({});
       return;
     }
@@ -600,9 +654,104 @@ function AdminAppInner(_props: AdminAppProps) {
               dynamicTags.push(raw.tag.trim());
             }
           });
+          setDynamicHashtags(dynamicTags);
           setSavedHashtags(mergeSavedHashtags(POPULAR_HASHTAGS, dynamicTags));
         },
         (err) => reportSyncError(err, 'hashtags')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        query(collectionGroup(db, 'comments'), limit(120)),
+        (snap) => {
+          clearSyncError('comments');
+          const list: AdminCommentItem[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            const parentPostId = d.ref.parent.parent?.id || '';
+            list.push({
+              id: d.id,
+              postId:
+                typeof raw.postId === 'string' && raw.postId ? raw.postId : parentPostId,
+              authorId: typeof raw.authorId === 'string' ? raw.authorId : '',
+              authorName: typeof raw.authorName === 'string' ? raw.authorName : 'Member',
+              authorHandle: typeof raw.authorHandle === 'string' ? raw.authorHandle : 'member',
+              authorAvatar: typeof raw.authorAvatar === 'string' ? raw.authorAvatar : '',
+              text: typeof raw.text === 'string' ? raw.text : '',
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+            });
+          });
+          setComments(list);
+        },
+        (err) => reportSyncError(err, 'comments')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, 'chats'), limit(60)),
+        (snap) => {
+          clearSyncError('chats');
+          const list: ChatThread[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            const memberIds = Array.isArray(raw.memberIds)
+              ? raw.memberIds.filter((v): v is string => typeof v === 'string')
+              : [];
+            const adminIds = Array.isArray(raw.adminIds)
+              ? raw.adminIds.filter((v): v is string => typeof v === 'string')
+              : undefined;
+            list.push({
+              id: d.id,
+              title: typeof raw.title === 'string' && raw.title ? raw.title : 'Conversation',
+              isGroup: Boolean(raw.isGroup),
+              memberIds,
+              adminIds,
+              partnerAvatar: '',
+              partnerHandle: '',
+              lastMessageText: typeof raw.lastMessageText === 'string' ? raw.lastMessageText : '',
+              lastMessageSenderId:
+                typeof raw.lastMessageSenderId === 'string' ? raw.lastMessageSenderId : '',
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
+          setChats(list);
+        },
+        (err) => reportSyncError(err, 'chats')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, 'calls'), limit(60)),
+        (snap) => {
+          clearSyncError('calls');
+          const list: AdminCallRoomSummary[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            const status =
+              raw.status === 'active' || raw.status === 'ringing' ? raw.status : 'ended';
+            const memberIds = Array.isArray(raw.memberIds)
+              ? raw.memberIds.filter((v): v is string => typeof v === 'string')
+              : [];
+            list.push({
+              id: d.id,
+              chatId: typeof raw.chatId === 'string' ? raw.chatId : '',
+              title: typeof raw.title === 'string' && raw.title ? raw.title : 'Call Room',
+              callerId: typeof raw.callerId === 'string' ? raw.callerId : '',
+              callerName: typeof raw.callerName === 'string' ? raw.callerName : 'Member',
+              isAudioOnly: Boolean(raw.isAudioOnly),
+              status,
+              memberIds,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
+          setCalls(list);
+        },
+        (err) => reportSyncError(err, 'calls')
       )
     );
 
@@ -787,6 +936,8 @@ function AdminAppInner(_props: AdminAppProps) {
           let nextHiddenPosts: string[] = [];
           let hasFlags = false;
           let hasGuidelines = false;
+          let hasTerms = false;
+          let hasPrivacy = false;
           snap.forEach((d) => {
             if (d.id === 'featureFlags') {
               hasFlags = true;
@@ -804,6 +955,22 @@ function AdminAppInner(_props: AdminAppProps) {
                 ...(raw as Partial<CommunityGuidelinesConfig>),
                 updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt, 0),
               });
+            } else if (d.id === 'terms') {
+              hasTerms = true;
+              const raw = d.data() as Record<string, unknown>;
+              setTermsConfig({
+                ...DEFAULT_TERMS_CONFIG,
+                ...(raw as Partial<LegalPolicyConfig>),
+                updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt, 0),
+              });
+            } else if (d.id === 'privacy') {
+              hasPrivacy = true;
+              const raw = d.data() as Record<string, unknown>;
+              setPrivacyConfig({
+                ...DEFAULT_PRIVACY_CONFIG,
+                ...(raw as Partial<LegalPolicyConfig>),
+                updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt, 0),
+              });
             } else if (d.id === 'hiddenPosts') {
               const data = d.data() as { hiddenPostIds?: string[] };
               if (Array.isArray(data.hiddenPostIds)) {
@@ -816,6 +983,12 @@ function AdminAppInner(_props: AdminAppProps) {
           }
           if (!hasGuidelines) {
             setGuidelines(DEFAULT_COMMUNITY_GUIDELINES);
+          }
+          if (!hasTerms) {
+            setTermsConfig(DEFAULT_TERMS_CONFIG);
+          }
+          if (!hasPrivacy) {
+            setPrivacyConfig(DEFAULT_PRIVACY_CONFIG);
           }
           setModeration((prev) => ({ ...prev, hiddenPostIds: nextHiddenPosts }));
         },
@@ -944,14 +1117,139 @@ function AdminAppInner(_props: AdminAppProps) {
     ).catch((err) => handleFirestoreError(err, OperationType.WRITE, 'adminConfig/hiddenPosts'));
   };
 
+  const handleEditPost = async (
+    postId: string,
+    updates: {
+      caption: string;
+      category: PostCategory;
+      imageUrl: string;
+      linkUrl?: string;
+      mediaTitle?: string;
+    }
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const existing = posts.find((p) => p.id === postId);
+    const cleanCaption = updates.caption.trim();
+    const cleanImageUrl = updates.imageUrl.trim();
+    const cleanLinkUrl = (updates.linkUrl || '').trim();
+    const cleanMediaTitle = (updates.mediaTitle || '').trim();
+
+    if (
+      !cleanCaption &&
+      !cleanImageUrl &&
+      !cleanLinkUrl &&
+      !existing?.videoUrl &&
+      !existing?.audioUrl
+    ) {
+      return { ok: false, error: 'A post must contain a caption, media URL, or reference link.' };
+    }
+    if (cleanCaption.length > 1200) {
+      return { ok: false, error: 'Post caption cannot exceed 1200 characters.' };
+    }
+    if (cleanLinkUrl.length > 1000) {
+      return { ok: false, error: 'Link URL cannot exceed 1000 characters.' };
+    }
+    if (cleanMediaTitle.length > 120) {
+      return { ok: false, error: 'Media title cannot exceed 120 characters.' };
+    }
+
+    const now = Date.now();
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId
+          ? {
+              ...p,
+              caption: cleanCaption,
+              category: updates.category,
+              imageUrl: cleanImageUrl,
+              linkUrl: cleanLinkUrl || undefined,
+              mediaTitle: cleanMediaTitle || undefined,
+              updatedAtMs: now,
+            }
+          : p
+      )
+    );
+
+    try {
+      await updateDoc(doc(db, 'posts', postId), {
+        caption: cleanCaption,
+        category: updates.category,
+        imageUrl: cleanImageUrl,
+        linkUrl: cleanLinkUrl,
+        mediaTitle: cleanMediaTitle,
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'post.edit',
+        'post',
+        postId,
+        `Edited post ${postId} (${updates.category}).`
+      );
+      for (const tag of extractHashtags(cleanCaption)) {
+        await handleCreateHashtag(tag);
+      }
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `posts/${postId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
   const handleDeletePost = async (postId: string) => {
     if (!firebaseUser || !adminAuth.isAdmin) return;
     setPosts((prev) => prev.filter((p) => p.id !== postId));
+    setComments((prev) => prev.filter((c) => c.postId !== postId));
     await recordAudit('post.delete', 'post', postId, `Deleted post ${postId}.`);
     try {
       await deleteDoc(doc(db, 'posts', postId));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `posts/${postId}`);
+    }
+  };
+
+  const handleDeleteComment = async (
+    postId: string,
+    commentId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const parentPost = posts.find((p) => p.id === postId);
+    setComments((prev) =>
+      prev.filter((c) => !(c.id === commentId && c.postId === postId))
+    );
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId
+          ? { ...p, commentsCount: Math.max(0, (p.commentsCount || 0) - 1) }
+          : p
+      )
+    );
+
+    try {
+      await deleteDoc(doc(db, 'posts', postId, 'comments', commentId));
+      if (parentPost && parentPost.commentsCount >= 1) {
+        await updateDoc(doc(db, 'posts', postId), {
+          commentsCount: increment(-1),
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+      await recordAudit(
+        'comment.delete',
+        'comment',
+        commentId,
+        `Deleted comment ${commentId} on post ${postId}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.DELETE,
+        `posts/${postId}/comments/${commentId}`
+      );
+      return { ok: false, error: (err as Error).message || String(err) };
     }
   };
 
@@ -1224,18 +1522,71 @@ function AdminAppInner(_props: AdminAppProps) {
     }
   };
 
+  const handleDeleteHashtag = async (
+    rawTag: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const clean = normalizeHashtag(rawTag);
+    if (!clean) {
+      return { ok: false, error: 'Invalid hashtag identifier.' };
+    }
+    const nextDynamic = dynamicHashtags.filter((t) => t.toLowerCase() !== clean);
+    setDynamicHashtags(nextDynamic);
+    setSavedHashtags(mergeSavedHashtags(POPULAR_HASHTAGS, nextDynamic));
+    try {
+      await deleteDoc(doc(db, 'hashtags', clean));
+      await recordAudit(
+        'hashtag.delete',
+        'hashtag',
+        clean,
+        `Deleted community hashtag #${clean} from registry.`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `hashtags/${clean}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleUploadAdminMedia = async (
+    file: File,
+    folder: 'posts' | 'stories'
+  ): Promise<{ ok: boolean; url?: string; kind?: string; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      const uploaded = await uploadMediaToCloudflareR2(file, folder);
+      return { ok: true, url: uploaded.url, kind: uploaded.kind };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Cloudflare R2 upload failed.',
+      };
+    }
+  };
+
   const handleAdminPublishPost = async (input: {
     caption: string;
     category: PostCategory;
     imageUrl: string;
+    videoUrl?: string;
+    linkUrl?: string;
+    mediaTitle?: string;
   }): Promise<{ ok: boolean; error?: string }> => {
     if (!firebaseUser || !adminAuth.isAdmin) {
       return { ok: false, error: 'Administrator authentication is required.' };
     }
     const cleanCaption = input.caption.trim();
     const cleanImageUrl = input.imageUrl.trim();
-    if (!cleanCaption && !cleanImageUrl) {
-      return { ok: false, error: 'Post caption or media URL is required.' };
+    const cleanVideoUrl = (input.videoUrl || '').trim();
+    const cleanLinkUrl = (input.linkUrl || '').trim();
+    const cleanMediaTitle = (input.mediaTitle || '').trim();
+
+    if (!cleanCaption && !cleanImageUrl && !cleanVideoUrl && !cleanLinkUrl) {
+      return { ok: false, error: 'Post caption, media, or reference link is required.' };
     }
     const now = Date.now();
     const postId = `post_${now}_${Math.random().toString(36).slice(2, 6)}`;
@@ -1254,6 +1605,9 @@ function AdminAppInner(_props: AdminAppProps) {
       authorVerified,
       caption: cleanCaption,
       imageUrl: cleanImageUrl,
+      ...(cleanVideoUrl ? { videoUrl: cleanVideoUrl } : {}),
+      ...(cleanLinkUrl ? { linkUrl: cleanLinkUrl } : {}),
+      ...(cleanMediaTitle ? { mediaTitle: cleanMediaTitle } : {}),
       category: input.category,
       likesCount: 0,
       commentsCount: 0,
@@ -1262,7 +1616,12 @@ function AdminAppInner(_props: AdminAppProps) {
     };
 
     setPosts((prev) => [newPost, ...prev]);
-    await recordAudit('post.create', 'post', postId, `Admin published post "${cleanCaption.slice(0, 40)}..."`);
+    await recordAudit(
+      'post.create',
+      'post',
+      postId,
+      `Admin published post "${(cleanCaption || cleanMediaTitle || 'Media post').slice(0, 40)}..."`
+    );
 
     try {
       await setDoc(doc(db, 'posts', postId), {
@@ -1274,6 +1633,9 @@ function AdminAppInner(_props: AdminAppProps) {
         authorVerified,
         caption: cleanCaption,
         imageUrl: cleanImageUrl,
+        ...(cleanVideoUrl ? { videoUrl: cleanVideoUrl } : {}),
+        ...(cleanLinkUrl ? { linkUrl: cleanLinkUrl } : {}),
+        ...(cleanMediaTitle ? { mediaTitle: cleanMediaTitle } : {}),
         category: input.category,
         likesCount: 0,
         commentsCount: 0,
@@ -1315,6 +1677,225 @@ function AdminAppInner(_props: AdminAppProps) {
       return { ok: false, error: (err as Error).message || String(err) };
     }
     return { ok: true };
+  };
+
+  const handlePublishStory = async (input: {
+    caption: string;
+    imageUrl: string;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const cleanCaption = input.caption.trim().slice(0, 280);
+    const cleanImageUrl = input.imageUrl.trim();
+    if (!cleanImageUrl && !cleanCaption) {
+      return { ok: false, error: 'Story image URL or caption is required.' };
+    }
+    const now = Date.now();
+    const expiresAtMs = now + 86_400_000;
+    const storyId = `story_${now}_${Math.random().toString(36).slice(2, 6)}`;
+    const safeHandle = sanitizeAdminHandle(currentProfile.handle);
+
+    const storyItem: StoryItem = {
+      id: storyId,
+      authorId: firebaseUser.uid,
+      authorName: currentProfile.displayName,
+      authorHandle: safeHandle,
+      authorAvatar: currentProfile.avatarUrl || '',
+      imageUrl: cleanImageUrl,
+      caption: cleanCaption,
+      createdAtMs: now,
+      expiresAtMs,
+    };
+
+    setStoryGroups((prev) => {
+      const existing = prev.find((g) => g.authorId === firebaseUser.uid);
+      if (!existing) {
+        return [
+          {
+            authorId: firebaseUser.uid,
+            authorName: currentProfile.displayName,
+            authorHandle: safeHandle,
+            authorAvatar: currentProfile.avatarUrl || '',
+            items: [storyItem],
+            hasUnviewed: true,
+            latestCreatedAtMs: now,
+          },
+          ...prev,
+        ];
+      }
+      return prev.map((g) =>
+        g.authorId === firebaseUser.uid
+          ? {
+              ...g,
+              latestCreatedAtMs: now,
+              items: [storyItem, ...g.items],
+            }
+          : g
+      );
+    });
+
+    try {
+      await setDoc(doc(db, 'stories', storyId), {
+        id: storyId,
+        authorId: firebaseUser.uid,
+        authorName: currentProfile.displayName,
+        authorHandle: safeHandle,
+        authorAvatar: currentProfile.avatarUrl || '',
+        imageUrl: cleanImageUrl,
+        caption: cleanCaption,
+        expiresAtMs,
+        createdAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'story.create',
+        'story',
+        storyId,
+        `Published official 24-hour story "${(cleanCaption || 'Visual frame').slice(0, 40)}".`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `stories/${storyId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleAdminSanitizeProfile = async (
+    targetUid: string,
+    input: {
+      displayName: string;
+      handle: string;
+      bio: string;
+      location: string;
+      avatarUrl: string;
+    }
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const check = validateProfileSanitizeInput(input);
+    if (!check.valid) return { ok: false, error: check.error };
+
+    setCommunityUsers((prev) =>
+      prev.map((u) =>
+        u.uid === targetUid ? { ...u, ...check.data, updatedAtMs: Date.now() } : u
+      )
+    );
+
+    try {
+      await updateDoc(doc(db, 'users', targetUid), {
+        displayName: check.data.displayName,
+        handle: check.data.handle,
+        bio: check.data.bio,
+        location: check.data.location,
+        avatarUrl: check.data.avatarUrl,
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'user.sanitizeProfile',
+        'user',
+        targetUid,
+        `Updated profile fields for @${check.data.handle} (${targetUid}).`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleSendDirectWarning = async (
+    targetUid: string,
+    title: string,
+    body: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const check = validateDirectWarningInput(targetUid, title, body);
+    if (!check.valid) return { ok: false, error: check.error };
+
+    const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      await setDoc(doc(db, 'users', targetUid, 'notifications', notifId), {
+        id: notifId,
+        recipientId: targetUid,
+        actorId: firebaseUser.uid,
+        actorName: currentProfile.displayName,
+        actorAvatar: currentProfile.avatarUrl || '',
+        type: 'system',
+        title: check.title,
+        body: check.body,
+        targetPostId: '',
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'user.warn',
+        'user',
+        targetUid,
+        `Sent official notice "${check.title}" to ${targetUid}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.CREATE,
+        `users/${targetUid}/notifications/${notifId}`
+      );
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handlePurgeUserAccount = async (
+    targetUid: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    if (!targetUid || targetUid === firebaseUser.uid) {
+      return { ok: false, error: 'Administrators cannot purge their own account.' };
+    }
+
+    try {
+      const userPostsSnap = await getDocs(
+        query(collection(db, 'posts'), where('authorId', '==', targetUid))
+      );
+      for (const postDoc of userPostsSnap.docs) {
+        await deleteDoc(doc(db, 'posts', postDoc.id));
+      }
+
+      const userStoriesSnap = await getDocs(
+        query(collection(db, 'stories'), where('authorId', '==', targetUid))
+      );
+      for (const storyDoc of userStoriesSnap.docs) {
+        await deleteDoc(doc(db, 'stories', storyDoc.id));
+      }
+
+      await deleteDoc(doc(db, 'userModeration', targetUid)).catch(() => {});
+      await deleteDoc(doc(db, 'users', targetUid));
+
+      setCommunityUsers((prev) => prev.filter((u) => u.uid !== targetUid));
+      setPosts((prev) => prev.filter((p) => p.authorId !== targetUid));
+      setStoryGroups((prev) => prev.filter((g) => g.authorId !== targetUid));
+      setComments((prev) => prev.filter((c) => c.authorId !== targetUid));
+      setMemberModerationRecords((prev) => {
+        const next = { ...prev };
+        delete next[targetUid];
+        return next;
+      });
+
+      await recordAudit(
+        'user.purge',
+        'user',
+        targetUid,
+        `Purged account ${targetUid} (${userPostsSnap.size} posts, ${userStoriesSnap.size} stories).`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${targetUid}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
   };
 
   const handlePublishAnnouncement = async (input: {
@@ -1414,35 +1995,45 @@ function AdminAppInner(_props: AdminAppProps) {
     }
   };
 
-  const handleSaveGuidelines = async (input: {
-    version: string;
-    summary: string;
-    rulesText: string;
-  }): Promise<{ ok: boolean; error?: string }> => {
+  const handleSaveLegalPolicy = async (
+    docId: LegalDocId,
+    input: {
+      version: string;
+      summary: string;
+      rulesText: string;
+    }
+  ): Promise<{ ok: boolean; error?: string }> => {
     if (!firebaseUser || !adminAuth.isAdmin) {
       return { ok: false, error: 'Administrator authentication is required.' };
     }
-    const check = validateGuidelinesInput(input.version, input.summary, input.rulesText);
+    const check = validateLegalConfigInput(docId, input.version, input.summary, input.rulesText);
     if (!check.valid) return { ok: false, error: check.error };
 
-    const next: CommunityGuidelinesConfig = {
+    const next: LegalPolicyConfig = {
       version: check.version,
       summary: check.summary,
       rulesText: check.rulesText,
       updatedBy: firebaseUser.uid,
       updatedAtMs: Date.now(),
     };
-    setGuidelines(next);
+    if (docId === 'terms') {
+      setTermsConfig(next);
+    } else if (docId === 'privacy') {
+      setPrivacyConfig(next);
+    } else {
+      setGuidelines(next);
+    }
+
     await recordAudit(
-      'guidelines.update',
+      `${docId}.update`,
       'config',
-      'guidelines',
-      `Updated community guidelines to revision v${check.version}.`
+      docId,
+      `Updated ${docId} policy document to revision v${check.version}.`
     );
 
     try {
-      await setDoc(doc(db, 'adminConfig', 'guidelines'), {
-        id: 'guidelines',
+      await setDoc(doc(db, 'adminConfig', docId), {
+        id: docId,
         version: check.version,
         summary: check.summary,
         rulesText: check.rulesText,
@@ -1450,9 +2041,209 @@ function AdminAppInner(_props: AdminAppProps) {
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'adminConfig/guidelines');
+      handleFirestoreError(err, OperationType.WRITE, `adminConfig/${docId}`);
     }
     return { ok: true };
+  };
+
+  const handleModerateChatRename = async (
+    chatId: string,
+    nextTitle: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const check = validateGroupChatModerationTitle(nextTitle);
+    if (!check.valid) return { ok: false, error: check.error };
+
+    setChats((prev) =>
+      prev.map((c) => (c.id === chatId ? { ...c, title: check.title, updatedAtMs: Date.now() } : c))
+    );
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        title: check.title,
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit('chat.rename', 'chat', chatId, `Renamed conversation ${chatId} to "${check.title}".`);
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `chats/${chatId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleDeleteChatThread = async (
+    chatId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    setChats((prev) => prev.filter((c) => c.id !== chatId));
+    try {
+      await deleteDoc(doc(db, 'chats', chatId));
+      await recordAudit('chat.delete', 'chat', chatId, `Deleted conversation thread ${chatId}.`);
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `chats/${chatId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleModerateChatRemoveMember = async (
+    chatId: string,
+    targetUid: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const targetChat = chats.find((c) => c.id === chatId);
+    if (!targetChat) {
+      return { ok: false, error: 'Conversation thread not found.' };
+    }
+    const updatedMembership = removeMemberFromChatIds(
+      targetChat.memberIds,
+      targetChat.adminIds,
+      targetUid
+    );
+    if (!updatedMembership) {
+      return handleDeleteChatThread(chatId);
+    }
+
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === chatId
+          ? {
+              ...c,
+              memberIds: updatedMembership.memberIds,
+              adminIds: updatedMembership.adminIds,
+              updatedAtMs: Date.now(),
+            }
+          : c
+      )
+    );
+
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        memberIds: updatedMembership.memberIds,
+        adminIds: updatedMembership.adminIds,
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'chat.removeMember',
+        'chat',
+        chatId,
+        `Removed participant ${targetUid} from conversation ${chatId}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `chats/${chatId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleForceEndCall = async (
+    callId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const target = calls.find((c) => c.id === callId);
+    if (target?.status === 'ended') {
+      return { ok: true };
+    }
+    setCalls((prev) =>
+      prev.map((c) =>
+        c.id === callId ? { ...c, status: 'ended', updatedAtMs: Date.now() } : c
+      )
+    );
+    try {
+      await updateDoc(doc(db, 'calls', callId), {
+        status: 'ended',
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit('call.end', 'call', callId, `Force-ended WebRTC call room ${callId}.`);
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `calls/${callId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleLoadR2Objects = useCallback(
+    async (prefix?: string) => {
+      if (!firebaseUser || !adminAuth.isAdmin) return;
+      setR2Loading(true);
+      setR2Error(null);
+      try {
+        const token = await firebaseUser.getIdToken();
+        const raw = (prefix || '').trim().replace(/\/+$/, '');
+        const isSubfolderFilter =
+          raw === 'avatars' || raw === 'posts' || raw === 'stories' || raw === 'voice';
+        const queryPrefix = isSubfolderFilter || !raw ? 'uploads/' : `${raw}/`;
+
+        const res = await fetch(
+          `/api/admin/storage/list?prefix=${encodeURIComponent(queryPrefix)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          items?: R2MediaObjectItem[];
+          totalBytes?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          setR2Error(data.error || `Failed to query R2 bucket (HTTP ${res.status}).`);
+          setR2Loading(false);
+          return;
+        }
+        const rawItems = Array.isArray(data.items) ? data.items : [];
+        const filteredItems = isSubfolderFilter
+          ? rawItems.filter((item) => item.folder === raw)
+          : rawItems;
+        const computedBytes = filteredItems.reduce((sum, item) => sum + (item.size || 0), 0);
+        setR2Objects(filteredItems);
+        setR2TotalBytes(computedBytes);
+      } catch (err) {
+        setR2Error(err instanceof Error ? err.message : 'Unable to reach R2 admin listing endpoint.');
+      } finally {
+        setR2Loading(false);
+      }
+    },
+    [adminAuth.isAdmin, firebaseUser]
+  );
+
+  const handleDeleteR2Object = async (
+    key: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      const token = await firebaseUser.getIdToken();
+      const res = await fetch(`/api/admin/storage/file?key=${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        return { ok: false, error: data.error || `Delete failed (HTTP ${res.status}).` };
+      }
+      setR2Objects((prev) => {
+        const next = prev.filter((item) => item.key !== key);
+        setR2TotalBytes(next.reduce((sum, item) => sum + (item.size || 0), 0));
+        return next;
+      });
+      await recordAudit('storage.delete', 'r2', key, `Deleted R2 object ${key}.`);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Failed to delete R2 object.' };
+    }
   };
 
   const handleUpdateInquiryStatus = (id: string, status: AdminAccessInquiry['status']) => {
@@ -1503,23 +2294,57 @@ function AdminAppInner(_props: AdminAppProps) {
     }
   };
 
-  const handleRunBackgroundJob = async (jobId: string) => {
-    if (!firebaseUser || !adminAuth.isAdmin) return;
-    setJobs((prev) =>
-      prev.map((j) => (j.id === jobId ? { ...j, lastStatus: 'running' } : j))
-    );
+  const handleRunBackgroundJob = useCallback(
+    async (jobId: string) => {
+      if (!firebaseUser || !adminAuth.isAdmin) return;
+      setJobs((prev) =>
+        prev.map((j) => (j.id === jobId ? { ...j, lastStatus: 'running' } : j))
+      );
 
-    if (jobId === 'job_expired_stories') {
-      const now = Date.now();
-      const expiredIds: string[] = [];
-      for (const group of storyGroups) {
-        for (const s of group.items) {
-          if (s.expiresAtMs <= now) expiredIds.push(s.id);
+      if (jobId === 'job_expired_stories') {
+        const now = Date.now();
+        const expiredIds: string[] = [];
+        for (const group of storyGroups) {
+          for (const s of group.items) {
+            if (s.expiresAtMs <= now) expiredIds.push(s.id);
+          }
         }
+        for (const sid of expiredIds) {
+          setStoryGroups((prev) =>
+            prev
+              .map((group) => ({
+                ...group,
+                items: group.items.filter((s) => s.id !== sid),
+              }))
+              .filter((g) => g.items.length > 0)
+          );
+          try {
+            await deleteDoc(doc(db, 'stories', sid));
+          } catch (err) {
+            handleFirestoreError(err, OperationType.DELETE, `stories/${sid}`);
+          }
+        }
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  lastStatus: 'completed',
+                  lastRunAtMs: Date.now(),
+                  lastSummary: `Purged ${expiredIds.length} expired story frames`,
+                }
+              : j
+          )
+        );
+        await recordAudit(
+          'job.execute',
+          'job',
+          jobId,
+          `Executed expired story cleanup (${expiredIds.length} removed).`
+        );
+        return;
       }
-      for (const sid of expiredIds) {
-        await handleDeleteStory(sid);
-      }
+
       setJobs((prev) =>
         prev.map((j) =>
           j.id === jobId
@@ -1527,7 +2352,9 @@ function AdminAppInner(_props: AdminAppProps) {
                 ...j,
                 lastStatus: 'completed',
                 lastRunAtMs: Date.now(),
-                lastSummary: `Purged ${expiredIds.length} expired story frames`,
+                lastSummary: `Verified guidelines v${guidelines.version} & ${
+                  announcements.filter((a) => a.active).length
+                } active banners`,
               }
             : j
         )
@@ -1536,27 +2363,28 @@ function AdminAppInner(_props: AdminAppProps) {
         'job.execute',
         'job',
         jobId,
-        `Executed expired story cleanup (${expiredIds.length} removed).`
+        'Verified governance & flags schema consistency.'
       );
-      return;
-    }
+    },
+    [adminAuth.isAdmin, announcements, firebaseUser, guidelines.version, recordAudit, storyGroups]
+  );
 
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === jobId
-          ? {
-              ...j,
-              lastStatus: 'completed',
-              lastRunAtMs: Date.now(),
-              lastSummary: `Verified guidelines v${guidelines.version} & ${
-                announcements.filter((a) => a.active).length
-              } active banners`,
-            }
-          : j
-      )
-    );
-    await recordAudit('job.execute', 'job', jobId, 'Verified governance & flags schema consistency.');
-  };
+  // Optional 5-minute automated maintenance sweep for expired stories
+  useEffect(() => {
+    if (!autoMaintenanceEnabled || !firebaseUser || !adminAuth.isAdmin) return;
+    const timer = window.setInterval(() => {
+      if (countExpiredStories(storyGroups) > 0) {
+        void handleRunBackgroundJob('job_expired_stories');
+      }
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [
+    adminAuth.isAdmin,
+    autoMaintenanceEnabled,
+    firebaseUser,
+    handleRunBackgroundJob,
+    storyGroups,
+  ]);
 
   return (
     <AdminView
@@ -1572,6 +2400,9 @@ function AdminAppInner(_props: AdminAppProps) {
       communityUsers={communityUsers}
       posts={posts}
       storyGroups={storyGroups}
+      comments={comments}
+      chats={chats}
+      calls={calls}
       onlineUserIds={onlineUserIds}
       moderation={moderation}
       memberModerationRecords={memberModerationRecords}
@@ -1580,12 +2411,19 @@ function AdminAppInner(_props: AdminAppProps) {
       appeals={appeals}
       announcements={announcements}
       guidelines={guidelines}
+      termsConfig={termsConfig}
+      privacyConfig={privacyConfig}
       featureFlags={featureFlags}
       auditLogs={auditLogs}
       inquiries={inquiries}
       healthProbes={healthProbes}
       jobs={jobs}
       checkingHealth={checkingHealth}
+      autoMaintenanceEnabled={autoMaintenanceEnabled}
+      r2Objects={r2Objects}
+      r2TotalBytes={r2TotalBytes}
+      r2Loading={r2Loading}
+      r2Error={r2Error}
       onSetTheme={setTheme}
       onSignInGoogle={async () => {
         setAuthError(null);
@@ -1611,9 +2449,14 @@ function AdminAppInner(_props: AdminAppProps) {
         await signOutAccount();
       }}
       onToggleHidePost={handleToggleHidePost}
+      onEditPost={handleEditPost}
       onDeletePost={handleDeletePost}
       onDeleteStory={handleDeleteStory}
+      onDeleteComment={handleDeleteComment}
       onSetMemberStatus={handleSetMemberStatus}
+      onSanitizeProfile={handleAdminSanitizeProfile}
+      onSendWarning={handleSendDirectWarning}
+      onPurgeUser={handlePurgeUserAccount}
       onAssignRole={handleAssignRole}
       onRevokeRole={handleRevokeRole}
       onResolveReport={handleResolveReport}
@@ -1621,15 +2464,26 @@ function AdminAppInner(_props: AdminAppProps) {
       onPublishAnnouncement={handlePublishAnnouncement}
       onToggleAnnouncement={handleToggleAnnouncement}
       onDeleteAnnouncement={handleDeleteAnnouncement}
-      onSaveGuidelines={handleSaveGuidelines}
+      onSaveLegalPolicy={handleSaveLegalPolicy}
       onUpdateInquiryStatus={handleUpdateInquiryStatus}
       onToggleFeatureFlag={handleToggleFeatureFlag}
       onRunHealthProbes={runHealthProbes}
       onRunBackgroundJob={handleRunBackgroundJob}
+      onToggleAutoMaintenance={() => setAutoMaintenanceEnabled((prev) => !prev)}
       onToggleVerify={handleToggleVerify}
+      onUploadMedia={handleUploadAdminMedia}
       onPublishPost={handleAdminPublishPost}
+      onPublishStory={handlePublishStory}
       savedHashtags={savedHashtags}
+      dynamicHashtags={dynamicHashtags}
       onCreateHashtag={handleCreateHashtag}
+      onDeleteHashtag={handleDeleteHashtag}
+      onRenameChat={handleModerateChatRename}
+      onRemoveChatMember={handleModerateChatRemoveMember}
+      onDeleteChat={handleDeleteChatThread}
+      onForceEndCall={handleForceEndCall}
+      onLoadR2Objects={handleLoadR2Objects}
+      onDeleteR2Object={handleDeleteR2Object}
     />
   );
 }

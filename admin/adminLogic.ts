@@ -1,5 +1,10 @@
 import type { Post, PostCategory, StoryGroup, UserProfile } from '../src/types/social';
-import { POST_CATEGORIES } from '../src/utils/socialLogic';
+import { extractHashtags, POST_CATEGORIES } from '../src/utils/socialLogic';
+import {
+  formatLegalDocumentSectionsAsText,
+  LEGAL_DOCUMENTS,
+  type LegalDocId,
+} from '../src/utils/legalLogic';
 
 export interface AdminAccessInquiry {
   id: string;
@@ -79,7 +84,7 @@ export interface MemberModerationRecord {
   updatedAtMs: number;
 }
 
-export type ReportTargetType = 'post' | 'story' | 'comment' | 'user';
+export type ReportTargetType = 'post' | 'story' | 'comment' | 'user' | 'chat' | 'message';
 export type ReportCategory =
   | 'spam'
   | 'harassment'
@@ -150,6 +155,48 @@ export interface CommunityGuidelinesConfig {
   updatedAtMs: number;
 }
 
+export type LegalPolicyConfig = CommunityGuidelinesConfig;
+
+export interface AdminCommentItem {
+  id: string;
+  postId: string;
+  postCaption?: string;
+  authorId: string;
+  authorName: string;
+  authorHandle: string;
+  authorAvatar: string;
+  text: string;
+  createdAtMs: number;
+}
+
+export interface AdminHashtagStat {
+  tag: string;
+  postCount: number;
+  isDynamic: boolean;
+}
+
+export interface R2MediaObjectItem {
+  key: string;
+  url: string;
+  size: number;
+  ownerUid: string;
+  folder: string;
+  lastModified: string | null;
+}
+
+export interface AdminCallRoomSummary {
+  id: string;
+  chatId: string;
+  title: string;
+  callerId: string;
+  callerName: string;
+  isAudioOnly: boolean;
+  status: 'ringing' | 'active' | 'ended';
+  memberIds: string[];
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
 export interface AdminFeatureFlags {
   storiesEnabled: boolean;
   voiceNotesEnabled: boolean;
@@ -212,6 +259,22 @@ export const DEFAULT_COMMUNITY_GUIDELINES: CommunityGuidelinesConfig = {
     '3. Spam & Automated Manipulation: Bulk solicitations, deceptive links, and coordinated manipulation are removed.',
     '4. Appeals & Due Process: Suspended or restricted accounts may submit an appeal with context for administrator review.',
   ].join('\n\n'),
+  updatedBy: 'system',
+  updatedAtMs: 0,
+};
+
+export const DEFAULT_TERMS_CONFIG: LegalPolicyConfig = {
+  version: LEGAL_DOCUMENTS.terms.version,
+  summary: LEGAL_DOCUMENTS.terms.summary,
+  rulesText: formatLegalDocumentSectionsAsText('terms'),
+  updatedBy: 'system',
+  updatedAtMs: 0,
+};
+
+export const DEFAULT_PRIVACY_CONFIG: LegalPolicyConfig = {
+  version: LEGAL_DOCUMENTS.privacy.version,
+  summary: LEGAL_DOCUMENTS.privacy.summary,
+  rulesText: formatLegalDocumentSectionsAsText('privacy'),
   updatedBy: 'system',
   updatedAtMs: 0,
 };
@@ -770,4 +833,187 @@ export function countExpiredStories(
   }
   return expired;
 }
+
+export function validateLegalConfigInput(
+  docId: LegalDocId,
+  version: string,
+  summary: string,
+  rulesText: string
+): { valid: true; version: string; summary: string; rulesText: string } | { valid: false; error: string } {
+  const label =
+    docId === 'terms'
+      ? 'Terms & Conditions'
+      : docId === 'privacy'
+        ? 'Privacy Policy'
+        : 'Community Guidelines';
+  const cleanVersion = version.trim();
+  const cleanSummary = summary.trim();
+  const cleanRules = rulesText.trim();
+  if (!cleanVersion || cleanVersion.length > 32) {
+    return { valid: false, error: `${label} version label is required (max 32 characters).` };
+  }
+  if (cleanSummary.length < 10 || cleanSummary.length > 300) {
+    return { valid: false, error: `${label} summary must be 10–300 characters.` };
+  }
+  if (cleanRules.length < 20 || cleanRules.length > 5000) {
+    return { valid: false, error: `${label} body must be 20–5000 characters.` };
+  }
+  return {
+    valid: true,
+    version: cleanVersion,
+    summary: cleanSummary,
+    rulesText: cleanRules,
+  };
+}
+
+export function filterAdminComments(
+  comments: AdminCommentItem[],
+  searchQuery: string
+): AdminCommentItem[] {
+  const q = searchQuery.trim().toLowerCase();
+  return comments
+    .filter((comment) => {
+      if (!q) return true;
+      return (
+        comment.text.toLowerCase().includes(q) ||
+        comment.authorName.toLowerCase().includes(q) ||
+        comment.authorHandle.toLowerCase().includes(q) ||
+        (comment.postCaption || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => b.createdAtMs - a.createdAtMs);
+}
+
+export function computeHashtagStats(
+  savedHashtags: string[],
+  dynamicFirestoreTags: string[],
+  posts: Post[]
+): AdminHashtagStat[] {
+  const counts = new Map<string, number>();
+  for (const post of posts) {
+    const tags = extractHashtags(post.caption || '');
+    for (const tag of tags) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  const dynamicSet = new Set(dynamicFirestoreTags.map((t) => t.toLowerCase()));
+  const all = new Set<string>([
+    ...savedHashtags.map((t) => t.toLowerCase()),
+    ...dynamicSet,
+  ]);
+
+  return Array.from(all)
+    .filter(Boolean)
+    .map((tag) => ({
+      tag,
+      postCount: counts.get(tag) || 0,
+      isDynamic: dynamicSet.has(tag),
+    }))
+    .sort((a, b) => {
+      if (b.postCount !== a.postCount) return b.postCount - a.postCount;
+      if (a.isDynamic !== b.isDynamic) return a.isDynamic ? -1 : 1;
+      return a.tag.localeCompare(b.tag);
+    });
+}
+
+export function validateDirectWarningInput(
+  targetUid: string,
+  title: string,
+  body: string
+): { valid: true; title: string; body: string } | { valid: false; error: string } {
+  if (!targetUid.trim()) {
+    return { valid: false, error: 'Target user UID is required.' };
+  }
+  const cleanTitle = title.trim();
+  const cleanBody = body.trim();
+  if (cleanTitle.length < 3 || cleanTitle.length > 120) {
+    return { valid: false, error: 'Warning title must be 3–120 characters.' };
+  }
+  if (cleanBody.length < 5 || cleanBody.length > 240) {
+    return { valid: false, error: 'Warning message must be 5–240 characters.' };
+  }
+  return { valid: true, title: cleanTitle, body: cleanBody };
+}
+
+export function validateProfileSanitizeInput(input: {
+  displayName: string;
+  handle: string;
+  bio: string;
+  location: string;
+  avatarUrl: string;
+}):
+  | {
+      valid: true;
+      data: {
+        displayName: string;
+        handle: string;
+        bio: string;
+        location: string;
+        avatarUrl: string;
+      };
+    }
+  | { valid: false; error: string } {
+  const displayName = input.displayName.trim();
+  const handle = input.handle.trim().toLowerCase().replace(/^@+/, '');
+  const bio = input.bio.trim();
+  const location = input.location.trim();
+  const avatarUrl = input.avatarUrl.trim();
+
+  if (displayName.length < 1 || displayName.length > 60) {
+    return { valid: false, error: 'Display name must be 1–60 characters.' };
+  }
+  if (handle.length < 2 || handle.length > 32 || !/^[a-zA-Z0-9_.]+$/.test(handle)) {
+    return {
+      valid: false,
+      error: 'Handle must be 2–32 characters using letters, numbers, underscores, or periods.',
+    };
+  }
+  if (bio.length > 280) {
+    return { valid: false, error: 'Bio must be 280 characters or less.' };
+  }
+  if (location.length > 80) {
+    return { valid: false, error: 'Location must be 80 characters or less.' };
+  }
+  if (avatarUrl.length > 250000) {
+    return { valid: false, error: 'Avatar URL exceeds maximum length.' };
+  }
+
+  return {
+    valid: true,
+    data: { displayName, handle, bio, location, avatarUrl },
+  };
+}
+
+export function validateGroupChatModerationTitle(
+  title: string
+): { valid: true; title: string } | { valid: false; error: string } {
+  const clean = title.trim();
+  if (clean.length < 1 || clean.length > 80) {
+    return { valid: false, error: 'Chat title must be 1–80 characters.' };
+  }
+  return { valid: true, title: clean };
+}
+
+export function removeMemberFromChatIds(
+  memberIds: string[],
+  adminIds: string[] | undefined,
+  targetUid: string
+): { memberIds: string[]; adminIds: string[] } | null {
+  const nextMembers = memberIds.filter((id) => id !== targetUid);
+  if (nextMembers.length === 0) return null;
+  const nextAdmins = (adminIds || []).filter((id) => id !== targetUid && nextMembers.includes(id));
+  return {
+    memberIds: nextMembers,
+    adminIds: nextAdmins.length > 0 ? nextAdmins : [nextMembers[0]],
+  };
+}
+
+export function formatStorageBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 

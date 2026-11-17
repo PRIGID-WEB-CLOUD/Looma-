@@ -58,7 +58,6 @@ service cloud.firestore {
           'onboardingCompleted', 'isVerified', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid)
-        && data.uid == request.auth.uid
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
         && isValidHandle(data.handle)
         && data.bio is string && data.bio.size() <= 280
@@ -399,7 +398,7 @@ service cloud.firestore {
           'status', 'resolutionAction', 'reviewedBy', 'reviewedAtMs', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
-        && data.targetType in ['post', 'story', 'comment', 'user']
+        && data.targetType in ['post', 'story', 'comment', 'user', 'chat', 'message']
         && isValidId(data.targetId)
         && data.targetAuthorUid is string && data.targetAuthorUid.size() <= 128
         && data.targetSummary is string && data.targetSummary.size() <= 240
@@ -556,13 +555,19 @@ service cloud.firestore {
       ) || (
         isAdmin()
         && isValidId(userId)
+        && isValidUserProfile(incoming())
         && incoming().uid == existing().uid
+        && incoming().followersCount == existing().followersCount
+        && incoming().followingCount == existing().followingCount
+        && incoming().onboardingCompleted == existing().onboardingCompleted
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().isVerified is bool
-        && incoming().diff(existing()).affectedKeys().hasOnly(['isVerified', 'updatedAt'])
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'handle', 'bio', 'avatarUrl', 'location', 'isVerified', 'updatedAt'
+        ])
       );
-      allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
+      allow delete: if (isVerifiedUser() && isOwner(userId) && isValidId(userId))
+        || (isAdmin() && isValidId(userId) && userId != request.auth.uid);
 
       match /private/{docId} {
         allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(docId);
@@ -676,9 +681,9 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Author edits post content
+          // Action 1: Author or Admin edits post content
           (
-            existing().authorId == request.auth.uid
+            (existing().authorId == request.auth.uid || isAdmin())
             && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'imageUrl', 'videoUrl', 'audioUrl', 'linkUrl', 'mediaTitle', 'category', 'updatedAt'])
           )
           // Action 2: Like counter increment with atomic like subdoc creation
@@ -726,7 +731,7 @@ service cloud.firestore {
 
       match /comments/{commentId} {
         allow get: if isVerifiedUser() && isValidId(postId) && isValidId(commentId);
-        allow list: if isVerifiedUser() && resource.data.postId == postId;
+        allow list: if isVerifiedUser() && (resource.data.postId == postId || isAdmin());
         allow create: if isVerifiedUser()
           && isValidId(postId)
           && isValidId(commentId)
@@ -741,13 +746,18 @@ service cloud.firestore {
           && (
             existing().authorId == request.auth.uid
             || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
+            || isAdmin()
           );
       }
     }
 
+    match /{path=**}/comments/{commentId} {
+      allow list: if isAdmin();
+    }
+
     match /chats/{chatId} {
-      allow get: if isVerifiedUser() && isValidId(chatId) && request.auth.uid in existing().memberIds;
-      allow list: if isVerifiedUser() && request.auth.uid in resource.data.memberIds;
+      allow get: if isVerifiedUser() && isValidId(chatId) && (request.auth.uid in existing().memberIds || isAdmin());
+      allow list: if isVerifiedUser() && (request.auth.uid in resource.data.memberIds || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(chatId)
         && isValidChatThread(incoming())
@@ -763,7 +773,7 @@ service cloud.firestore {
       allow update: if isVerifiedUser()
         && isValidId(chatId)
         && isValidChatThread(incoming())
-        && request.auth.uid in existing().memberIds
+        && (request.auth.uid in existing().memberIds || isAdmin())
         && incoming().id == existing().id
         && incoming().isGroup == existing().isGroup
         && incoming().createdAt == existing().createdAt
@@ -771,7 +781,8 @@ service cloud.firestore {
         && (
           // Action 1: Standard message preview update (membership & admins unchanged)
           (
-            incoming().memberIds == existing().memberIds
+            request.auth.uid in existing().memberIds
+            && incoming().memberIds == existing().memberIds
             && !incoming().diff(existing()).affectedKeys().hasAny(['adminIds'])
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'lastMessageText', 'lastMessageSenderId', 'updatedAt'
@@ -779,7 +790,8 @@ service cloud.firestore {
           )
           // Action 2a: Group chat participant, admin, or title management by group admin (or legacy group without adminIds)
           || (
-            existing().isGroup == true
+            request.auth.uid in existing().memberIds
+            && existing().isGroup == true
             && (
               ('adminIds' in existing() && request.auth.uid in existing().adminIds)
               || !('adminIds' in existing())
@@ -793,7 +805,8 @@ service cloud.firestore {
           )
           // Action 2b: Self-leave by any existing group member (only removes request.auth.uid)
           || (
-            existing().isGroup == true
+            request.auth.uid in existing().memberIds
+            && existing().isGroup == true
             && !(request.auth.uid in incoming().memberIds)
             && incoming().memberIds.size() == existing().memberIds.size() - 1
             && existing().memberIds.hasAll(incoming().memberIds)
@@ -802,8 +815,18 @@ service cloud.firestore {
               'memberIds', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
             ])
           )
+          // Action 3: Platform administrator moderates abusive group thread metadata/membership
+          || (
+            isAdmin()
+            && incoming().memberIds.size() >= 1
+            && incoming().memberIds.size() <= 10
+            && (!('adminIds' in incoming()) || incoming().memberIds.hasAll(incoming().adminIds))
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'memberIds', 'adminIds', 'title', 'lastMessageText', 'lastMessageSenderId', 'updatedAt'
+            ])
+          )
         );
-      allow delete: if false;
+      allow delete: if isAdmin() && isValidId(chatId);
 
       match /messages/{messageId} {
         allow get: if isVerifiedUser()
@@ -902,8 +925,8 @@ service cloud.firestore {
     }
 
     match /calls/{callId} {
-      allow get: if isVerifiedUser() && isValidId(callId) && request.auth.uid in existing().memberIds;
-      allow list: if isVerifiedUser() && request.auth.uid in resource.data.memberIds;
+      allow get: if isVerifiedUser() && isValidId(callId) && (request.auth.uid in existing().memberIds || isAdmin());
+      allow list: if isVerifiedUser() && (request.auth.uid in resource.data.memberIds || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(callId)
         && isValidCallRoom(incoming())
@@ -916,7 +939,7 @@ service cloud.firestore {
       allow update: if isVerifiedUser()
         && isValidId(callId)
         && isValidCallRoom(incoming())
-        && request.auth.uid in existing().memberIds
+        && (request.auth.uid in existing().memberIds || isAdmin())
         && existing().status != 'ended'
         && incoming().id == existing().id
         && incoming().chatId == existing().chatId
@@ -925,7 +948,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
-      allow delete: if false;
+      allow delete: if isAdmin() && isValidId(callId);
 
       match /peers/{peerUid} {
         allow get: if isVerifiedUser()
@@ -969,7 +992,8 @@ service cloud.firestore {
         && isValidHashtag(incoming())
         && incoming().tag == tagId
         && incoming().createdAt == request.time;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(tagId);
     }
 
     // --- Platform Administration Collections ---
@@ -1073,7 +1097,7 @@ service cloud.firestore {
     match /adminConfig/{configId} {
       allow get: if isValidId(configId) && (
         isVerifiedUser()
-        || configId in ['featureFlags', 'guidelines']
+        || configId in ['featureFlags', 'guidelines', 'terms', 'privacy']
       );
       allow list: if isAdmin();
       allow create, update: if isAdmin()

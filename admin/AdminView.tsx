@@ -7,16 +7,17 @@ import {
   LogIn,
   LogOut,
   Megaphone,
+  MessagesSquare,
   Moon,
   ShieldAlert,
   Sparkles,
-  Send,
   Sun,
   Users,
 } from 'lucide-react';
 import { Avatar } from '../src/components/Avatar';
 import { LoomaLogo } from '../src/components/LoomaLogo';
-import type { Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
+import type { ChatThread, Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
+import type { LegalDocId } from '../src/utils/legalLogic';
 import {
   computeCategoryBreakdown,
   computeExtendedWorkspaceMetrics,
@@ -25,6 +26,8 @@ import {
   type AdminAccessInquiry,
   type AdminAuditEntry,
   type AdminAuthorizationResult,
+  type AdminCallRoomSummary,
+  type AdminCommentItem,
   type AdminFeatureFlags,
   type AdminMemberFilter,
   type AdminModerationState,
@@ -35,10 +38,12 @@ import {
   type BackgroundJobItem,
   type CommunityGuidelinesConfig,
   type ContentReport,
+  type LegalPolicyConfig,
   type MemberAccountStatus,
   type MemberModerationRecord,
   type ModerationAppeal,
   type PlatformAnnouncement,
+  type R2MediaObjectItem,
   type ReportStatus,
   type SystemHealthProbe,
 } from './adminLogic';
@@ -50,6 +55,7 @@ import { ReportsAppealsSection } from './components/ReportsAppealsSection';
 import { GovernanceSection } from './components/GovernanceSection';
 import { SystemOpsSection } from './components/SystemOpsSection';
 import { AdminPublisherSection } from './components/AdminPublisherSection';
+import { CommsMediaOpsSection } from './components/CommsMediaOpsSection';
 
 export type AdminSectionId =
   | 'overview'
@@ -58,6 +64,7 @@ export type AdminSectionId =
   | 'publisher'
   | 'moderation'
   | 'reports'
+  | 'comms'
   | 'governance'
   | 'system';
 
@@ -74,6 +81,9 @@ interface AdminViewProps {
   communityUsers: UserProfile[];
   posts: Post[];
   storyGroups: StoryGroup[];
+  comments?: AdminCommentItem[];
+  chats?: ChatThread[];
+  calls?: AdminCallRoomSummary[];
   onlineUserIds: string[];
   moderation: AdminModerationState;
   memberModerationRecords: Record<string, MemberModerationRecord>;
@@ -82,24 +92,61 @@ interface AdminViewProps {
   appeals: ModerationAppeal[];
   announcements: PlatformAnnouncement[];
   guidelines: CommunityGuidelinesConfig;
+  termsConfig: LegalPolicyConfig;
+  privacyConfig: LegalPolicyConfig;
   featureFlags: AdminFeatureFlags;
   auditLogs: AdminAuditEntry[];
   inquiries: AdminAccessInquiry[];
   healthProbes: SystemHealthProbe[];
   jobs: BackgroundJobItem[];
   checkingHealth: boolean;
+  autoMaintenanceEnabled?: boolean;
+  r2Objects?: R2MediaObjectItem[];
+  r2TotalBytes?: number;
+  r2Loading?: boolean;
+  r2Error?: string | null;
   onSetTheme: (theme: ThemeMode) => void;
   onSignInGoogle: () => Promise<void>;
   onSignInEmail?: (email: string, password: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   onToggleHidePost: (postId: string) => void;
+  onEditPost?: (
+    postId: string,
+    updates: {
+      caption: string;
+      category: PostCategory;
+      imageUrl: string;
+      linkUrl?: string;
+      mediaTitle?: string;
+    }
+  ) => Promise<{ ok: boolean; error?: string }>;
   onDeletePost: (postId: string) => Promise<void>;
   onDeleteStory: (storyId: string) => Promise<void>;
+  onDeleteComment?: (
+    postId: string,
+    commentId: string
+  ) => Promise<{ ok: boolean; error?: string }>;
   onSetMemberStatus: (
     targetUid: string,
     status: MemberAccountStatus,
     reason: string
   ) => Promise<{ ok: boolean; error?: string }>;
+  onSanitizeProfile?: (
+    targetUid: string,
+    input: {
+      displayName: string;
+      handle: string;
+      bio: string;
+      location: string;
+      avatarUrl: string;
+    }
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onSendWarning?: (
+    targetUid: string,
+    title: string,
+    body: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onPurgeUser?: (targetUid: string) => Promise<{ ok: boolean; error?: string }>;
   onAssignRole: (input: {
     uid: string;
     email: string;
@@ -126,30 +173,59 @@ interface AdminViewProps {
   }) => Promise<{ ok: boolean; error?: string }>;
   onToggleAnnouncement: (id: string) => Promise<void>;
   onDeleteAnnouncement?: (id: string) => Promise<void>;
-  onSaveGuidelines: (input: {
-    version: string;
-    summary: string;
-    rulesText: string;
-  }) => Promise<{ ok: boolean; error?: string }>;
+  onSaveLegalPolicy: (
+    docId: LegalDocId,
+    input: {
+      version: string;
+      summary: string;
+      rulesText: string;
+    }
+  ) => Promise<{ ok: boolean; error?: string }>;
   onUpdateInquiryStatus: (id: string, status: AdminAccessInquiry['status']) => void;
   onToggleFeatureFlag: (
     key: keyof Omit<AdminFeatureFlags, 'updatedBy' | 'updatedAtMs'>
   ) => Promise<void>;
   onRunHealthProbes: () => Promise<void>;
   onRunBackgroundJob: (jobId: string) => Promise<void>;
+  onToggleAutoMaintenance?: () => void;
   onToggleVerify?: (
     targetUid: string,
     isVerified: boolean
   ) => Promise<{ ok: boolean; error?: string }>;
+  onUploadMedia?: (
+    file: File,
+    folder: 'posts' | 'stories'
+  ) => Promise<{ ok: boolean; url?: string; kind?: string; error?: string }>;
   onPublishPost: (input: {
     caption: string;
     category: PostCategory;
     imageUrl: string;
+    videoUrl?: string;
+    linkUrl?: string;
+    mediaTitle?: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  onPublishStory?: (input: {
+    caption: string;
+    imageUrl: string;
   }) => Promise<{ ok: boolean; error?: string }>;
   savedHashtags?: string[];
+  dynamicHashtags?: string[];
   onCreateHashtag?: (
     rawTag: string
   ) => Promise<{ ok: boolean; tag?: string; error?: string }>;
+  onDeleteHashtag?: (tag: string) => Promise<{ ok: boolean; error?: string }>;
+  onRenameChat?: (
+    chatId: string,
+    nextTitle: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onRemoveChatMember?: (
+    chatId: string,
+    targetUid: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onDeleteChat?: (chatId: string) => Promise<{ ok: boolean; error?: string }>;
+  onForceEndCall?: (callId: string) => Promise<{ ok: boolean; error?: string }>;
+  onLoadR2Objects?: (prefix?: string) => Promise<void>;
+  onDeleteR2Object?: (key: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -163,6 +239,7 @@ const SECTION_NAV: Array<{
   { id: 'users', label: 'Community Users', icon: Users },
   { id: 'moderation', label: 'Feed & Stories', icon: FileWarning },
   { id: 'reports', label: 'Reports & Appeals', icon: Flag },
+  { id: 'comms', label: 'Chats, Calls & Media', icon: MessagesSquare },
   { id: 'governance', label: 'Governance & Policy', icon: Megaphone },
   { id: 'system', label: 'System, Flags & Audit', icon: Activity },
 ];
@@ -180,6 +257,9 @@ export function AdminView({
   communityUsers,
   posts,
   storyGroups,
+  comments = [],
+  chats = [],
+  calls = [],
   onlineUserIds,
   moderation,
   memberModerationRecords,
@@ -188,20 +268,32 @@ export function AdminView({
   appeals,
   announcements,
   guidelines,
+  termsConfig,
+  privacyConfig,
   featureFlags,
   auditLogs,
   inquiries,
   healthProbes,
   jobs,
   checkingHealth,
+  autoMaintenanceEnabled = false,
+  r2Objects = [],
+  r2TotalBytes = 0,
+  r2Loading = false,
+  r2Error = null,
   onSetTheme,
   onSignInGoogle,
   onSignInEmail,
   onSignOut,
   onToggleHidePost,
+  onEditPost,
   onDeletePost,
   onDeleteStory,
+  onDeleteComment,
   onSetMemberStatus,
+  onSanitizeProfile,
+  onSendWarning,
+  onPurgeUser,
   onAssignRole,
   onRevokeRole,
   onResolveReport,
@@ -209,15 +301,26 @@ export function AdminView({
   onPublishAnnouncement,
   onToggleAnnouncement,
   onDeleteAnnouncement,
-  onSaveGuidelines,
+  onSaveLegalPolicy,
   onUpdateInquiryStatus,
   onToggleFeatureFlag,
   onRunHealthProbes,
   onRunBackgroundJob,
+  onToggleAutoMaintenance,
   onToggleVerify,
+  onUploadMedia,
   onPublishPost,
+  onPublishStory,
   savedHashtags = [],
+  dynamicHashtags = [],
   onCreateHashtag,
+  onDeleteHashtag,
+  onRenameChat,
+  onRemoveChatMember,
+  onDeleteChat,
+  onForceEndCall,
+  onLoadR2Objects,
+  onDeleteR2Object,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
   const [showEmailLogin, setShowEmailLogin] = useState(false);
@@ -325,6 +428,17 @@ export function AdminView({
     () => filterAdminPosts(posts, postSearch, postCategory, moderation.hiddenPostIds),
     [moderation.hiddenPostIds, postCategory, postSearch, posts]
   );
+
+  const enrichedComments = useMemo(() => {
+    const postCaptionMap = new Map<string, string>();
+    for (const post of posts) {
+      postCaptionMap.set(post.id, post.caption || post.mediaTitle || '');
+    }
+    return comments.map((c) => ({
+      ...c,
+      postCaption: c.postCaption || postCaptionMap.get(c.postId) || '',
+    }));
+  }, [comments, posts]);
 
   const onlineSet = useMemo(() => new Set(onlineUserIds), [onlineUserIds]);
   const hiddenSet = useMemo(() => new Set(moderation.hiddenPostIds), [moderation.hiddenPostIds]);
@@ -707,9 +821,14 @@ export function AdminView({
             <AdminPublisherSection
               currentProfile={currentProfile}
               communityUsers={allMembers}
+              posts={posts}
               savedHashtags={savedHashtags}
+              dynamicHashtags={dynamicHashtags}
               onCreateHashtag={onCreateHashtag}
+              onDeleteHashtag={onDeleteHashtag}
+              onUploadMedia={onUploadMedia}
               onPublishPost={onPublishPost}
+              onPublishStory={onPublishStory}
               onPublishAnnouncement={onPublishAnnouncement}
             />
           )}
@@ -733,6 +852,9 @@ export function AdminView({
               moderationRecords={memberModerationRecords}
               onSetMemberStatus={onSetMemberStatus}
               onToggleVerify={onToggleVerify}
+              onSanitizeProfile={onSanitizeProfile}
+              onSendWarning={onSendWarning}
+              onPurgeUser={onPurgeUser}
             />
           )}
 
@@ -740,14 +862,17 @@ export function AdminView({
             <ContentModerationSection
               posts={filteredPosts}
               storyGroups={storyGroups}
+              comments={enrichedComments}
               hiddenSet={hiddenSet}
               postSearch={postSearch}
               postCategory={postCategory}
               onChangePostSearch={setPostSearch}
               onChangePostCategory={setPostCategory}
               onToggleHidePost={onToggleHidePost}
+              onEditPost={onEditPost}
               onDeletePost={onDeletePost}
               onDeleteStory={onDeleteStory}
+              onDeleteComment={onDeleteComment}
             />
           )}
 
@@ -760,15 +885,48 @@ export function AdminView({
             />
           )}
 
+          {section === 'comms' && (
+            <CommsMediaOpsSection
+              chats={chats}
+              calls={calls}
+              communityUsers={allMembers}
+              r2Objects={r2Objects}
+              r2TotalBytes={r2TotalBytes}
+              r2Loading={r2Loading}
+              r2Error={r2Error}
+              onRenameChat={
+                onRenameChat || (async () => ({ ok: false, error: 'Chat management unavailable.' }))
+              }
+              onRemoveChatMember={
+                onRemoveChatMember ||
+                (async () => ({ ok: false, error: 'Participant management unavailable.' }))
+              }
+              onDeleteChat={
+                onDeleteChat || (async () => ({ ok: false, error: 'Chat deletion unavailable.' }))
+              }
+              onForceEndCall={
+                onForceEndCall ||
+                (async () => ({ ok: false, error: 'Call termination unavailable.' }))
+              }
+              onLoadR2Objects={onLoadR2Objects || (async () => {})}
+              onDeleteR2Object={
+                onDeleteR2Object ||
+                (async () => ({ ok: false, error: 'Storage deletion unavailable.' }))
+              }
+            />
+          )}
+
           {section === 'governance' && (
             <GovernanceSection
               announcements={announcements}
               guidelines={guidelines}
+              termsConfig={termsConfig}
+              privacyConfig={privacyConfig}
               inquiries={inquiries}
               onPublishAnnouncement={onPublishAnnouncement}
               onToggleAnnouncement={onToggleAnnouncement}
               onDeleteAnnouncement={onDeleteAnnouncement}
-              onSaveGuidelines={onSaveGuidelines}
+              onSaveLegalPolicy={onSaveLegalPolicy}
               onUpdateInquiryStatus={onUpdateInquiryStatus}
             />
           )}
@@ -780,6 +938,8 @@ export function AdminView({
               healthProbes={healthProbes}
               jobs={jobs}
               checkingHealth={checkingHealth}
+              autoMaintenanceEnabled={autoMaintenanceEnabled}
+              onToggleAutoMaintenance={onToggleAutoMaintenance}
               onToggleFlag={onToggleFeatureFlag}
               onRunHealthProbes={onRunHealthProbes}
               onRunBackgroundJob={onRunBackgroundJob}

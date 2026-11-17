@@ -15,6 +15,8 @@ interface SystemOpsSectionProps {
   healthProbes: SystemHealthProbe[];
   jobs: BackgroundJobItem[];
   checkingHealth: boolean;
+  autoMaintenanceEnabled?: boolean;
+  onToggleAutoMaintenance?: () => void;
   onToggleFlag: (key: keyof Omit<AdminFeatureFlags, 'updatedBy' | 'updatedAtMs'>) => Promise<void>;
   onRunHealthProbes: () => Promise<void>;
   onRunBackgroundJob: (jobId: string) => Promise<void>;
@@ -63,6 +65,8 @@ export function SystemOpsSection({
   healthProbes,
   jobs,
   checkingHealth,
+  autoMaintenanceEnabled = false,
+  onToggleAutoMaintenance,
   onToggleFlag,
   onRunHealthProbes,
   onRunBackgroundJob,
@@ -183,11 +187,30 @@ export function SystemOpsSection({
         </section>
 
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Background Maintenance Jobs
-            </h2>
+          <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+              <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Background Maintenance Jobs
+              </h2>
+            </div>
+
+            {onToggleAutoMaintenance && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoMaintenanceEnabled}
+                aria-label="Auto-run expired story purge every 5 minutes"
+                onClick={onToggleAutoMaintenance}
+                className={`min-h-[32px] px-3 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                  autoMaintenanceEnabled
+                    ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                Auto Purge: {autoMaintenanceEnabled ? 'ON (5m)' : 'OFF'}
+              </button>
+            )}
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {jobs.map((job) => (

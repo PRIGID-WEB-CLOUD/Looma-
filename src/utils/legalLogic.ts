@@ -299,17 +299,32 @@ export function isConsentRecordValid(
   );
 }
 
-export interface GuidelinesConfigInput {
+export interface LegalConfigInput {
   version?: string;
   summary?: string;
   rulesText?: string;
   updatedAtMs?: number;
 }
 
-export function buildLiveGuidelinesDocument(
-  config?: GuidelinesConfigInput | null
+export type GuidelinesConfigInput = LegalConfigInput;
+
+export function formatLegalDocumentSectionsAsText(docId: LegalDocId): string {
+  const base = LEGAL_DOCUMENTS[docId];
+  return base.sections
+    .map((sec, idx) => {
+      const header = `${idx + 1}. ${sec.title}`;
+      const body = sec.paragraphs.join('\n');
+      const bulletLines = (sec.bullets || []).map((b) => `- ${b}`).join('\n');
+      return [header, body, bulletLines].filter(Boolean).join('\n');
+    })
+    .join('\n\n');
+}
+
+export function buildLiveLegalDocument(
+  docId: LegalDocId,
+  config?: LegalConfigInput | null
 ): LegalDocumentContent {
-  const base = LEGAL_DOCUMENTS.guidelines;
+  const base = LEGAL_DOCUMENTS[docId];
   if (!config) return base;
 
   const version = (config.version || '').trim() || base.version;
@@ -339,6 +354,14 @@ export function buildLiveGuidelinesDocument(
     .map((block) => block.trim())
     .filter(Boolean);
 
+  const fallbackLabel =
+    docId === 'terms'
+      ? 'Clause'
+      : docId === 'privacy'
+        ? 'Privacy Clause'
+        : 'Guideline';
+  const idPrefix = docId === 'guidelines' ? 'guideline' : docId;
+
   const sections: LegalSection[] = blocks.map((block, index) => {
     const lines = block
       .split('\n')
@@ -348,7 +371,7 @@ export function buildLiveGuidelinesDocument(
     const hasHeading = lines.length > 1 || /^[0-9]+[.)]\s+/.test(firstLine);
     const title = hasHeading
       ? firstLine.replace(/^[0-9]+[.)]\s*/, '')
-      : `Guideline ${index + 1}`;
+      : `${fallbackLabel} ${index + 1}`;
     const bodyLines = hasHeading ? lines.slice(1) : lines;
     const paragraphs: string[] = [];
     const bullets: string[] = [];
@@ -366,7 +389,7 @@ export function buildLiveGuidelinesDocument(
     }
 
     return {
-      id: `guideline-${index + 1}`,
+      id: `${idPrefix}-${index + 1}`,
       number: String(index + 1).padStart(2, '0'),
       title,
       paragraphs,
@@ -382,5 +405,12 @@ export function buildLiveGuidelinesDocument(
     sections: sections.length > 0 ? sections : base.sections,
   };
 }
+
+export function buildLiveGuidelinesDocument(
+  config?: GuidelinesConfigInput | null
+): LegalDocumentContent {
+  return buildLiveLegalDocument('guidelines', config);
+}
+
 
 

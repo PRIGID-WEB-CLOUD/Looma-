@@ -1043,6 +1043,193 @@ export function createWorkerApp() {
     }
   });
 
+  // --- Administrator Cloudflare R2 Storage Governance Endpoints ---
+  const ADMIN_ALLOWLIST_EMAILS = new Set([
+    'prigidwebcloud@gmail.com',
+    'prigidholdings@gmail.com',
+  ]);
+
+  const verifyAdminRequest = async (
+    c: Context<{ Bindings: WorkerEnv; Variables: AppVariables }>
+  ): Promise<boolean> => {
+    const authUser = c.get('authUser');
+    if (!authUser || !authUser.emailVerified) return false;
+    const email = (authUser.email || '').trim().toLowerCase();
+    if (ADMIN_ALLOWLIST_EMAILS.has(email)) {
+      return true;
+    }
+
+    const fb = getFirebaseSettings(c.env);
+    const token = c.get('authToken');
+    if (!fb.projectId || !token) return false;
+
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+        fb.projectId
+      )}/databases/${encodeURIComponent(fb.databaseId)}/documents/admins/${encodeURIComponent(
+        authUser.uid
+      )}`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const parseR2KeySegments = (key: string) => {
+    const parts = key.split('/').filter(Boolean);
+    return {
+      ownerUid: parts[0] === 'uploads' && parts[1] ? parts[1] : 'unknown',
+      folder: parts[0] === 'uploads' && parts[2] ? parts[2] : 'root',
+    };
+  };
+
+  app.get('/api/admin/storage/list', requireVerifiedAuth, async (c) => {
+    const isAdmin = await verifyAdminRequest(c);
+    if (!isAdmin) {
+      return c.json({ error: 'Forbidden: administrator access required.' }, 403);
+    }
+
+    const rawPrefix = (c.req.query('prefix') || 'uploads/').trim();
+    const prefix = rawPrefix === 'all' ? '' : rawPrefix.replace(/^\/+/, '');
+    const publicBase = resolveConfiguredR2PublicUrl(c.env);
+
+    if (c.env.R2_BUCKET) {
+      try {
+        const listed = await c.env.R2_BUCKET.list({
+          prefix: prefix || undefined,
+          limit: 200,
+        });
+        const items = listed.objects.map((item) => {
+          const meta = parseR2KeySegments(item.key);
+          return {
+            key: item.key,
+            url: resolveStoragePublicUrl(item.key, publicBase),
+            size: item.size,
+            ownerUid: meta.ownerUid,
+            folder: meta.folder,
+            lastModified: item.uploaded.toISOString(),
+          };
+        });
+        const totalBytes = items.reduce((sum, i) => sum + i.size, 0);
+        return c.json({
+          ok: true,
+          provider: 'cloudflare-r2',
+          items,
+          totalCount: items.length,
+          totalBytes,
+        });
+      } catch (err) {
+        const info = classifyR2BackendError(err);
+        return c.json({ code: info.code, error: info.message }, info.status as 502);
+      }
+    }
+
+    const s3 = await createS3FallbackClient(c.env);
+    if (!s3) {
+      return c.json(
+        { code: 'R2_NOT_CONFIGURED', error: 'R2 storage not configured.' },
+        503
+      );
+    }
+
+    try {
+      const listed = await s3.client.send(
+        new s3.ListObjectsV2Command({
+          Bucket: s3.config.bucketName,
+          Prefix: prefix || undefined,
+          MaxKeys: 200,
+        })
+      );
+      const items = (listed.Contents || [])
+        .filter((item): item is typeof item & { Key: string } => Boolean(item.Key))
+        .map((item) => {
+          const meta = parseR2KeySegments(item.Key);
+          return {
+            key: item.Key,
+            url: resolveStoragePublicUrl(item.Key, s3.config.publicUrl),
+            size: Number(item.Size || 0),
+            ownerUid: meta.ownerUid,
+            folder: meta.folder,
+            lastModified: item.LastModified?.toISOString() || null,
+          };
+        });
+      const totalBytes = items.reduce((sum, i) => sum + i.size, 0);
+      return c.json({
+        ok: true,
+        provider: 'cloudflare-r2',
+        items,
+        totalCount: items.length,
+        totalBytes,
+      });
+    } catch (err) {
+      const info = classifyR2BackendError(err);
+      return c.json({ code: info.code, error: info.message }, info.status as 502);
+    }
+  });
+
+  app.delete('/api/admin/storage/file', requireVerifiedAuth, async (c) => {
+    const isAdmin = await verifyAdminRequest(c);
+    if (!isAdmin) {
+      return c.json({ error: 'Forbidden: administrator access required.' }, 403);
+    }
+
+    const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
+    const key = (
+      c.req.query('key') || (typeof body.key === 'string' ? body.key : '')
+    ).trim();
+
+    if (!isValidStorageObjectKey(key)) {
+      return c.json({ error: 'Invalid storage object key.' }, 400);
+    }
+
+    if (c.env.R2_BUCKET) {
+      try {
+        const existing = await c.env.R2_BUCKET.head(key);
+        if (!existing) {
+          return c.json({ error: 'Media object not found.' }, 404);
+        }
+        await c.env.R2_BUCKET.delete(key);
+        return c.json({ ok: true, deletedKey: key });
+      } catch (err) {
+        const info = classifyR2BackendError(err);
+        return c.json({ code: info.code, error: info.message }, info.status as 502);
+      }
+    }
+
+    const s3 = await createS3FallbackClient(c.env);
+    if (!s3) {
+      return c.json(
+        { code: 'R2_NOT_CONFIGURED', error: 'R2 storage not configured.' },
+        503
+      );
+    }
+
+    try {
+      await s3.client.send(
+        new s3.HeadObjectCommand({ Bucket: s3.config.bucketName, Key: key })
+      );
+      await s3.client.send(
+        new s3.DeleteObjectCommand({ Bucket: s3.config.bucketName, Key: key })
+      );
+      return c.json({ ok: true, deletedKey: key });
+    } catch (err) {
+      const name =
+        err && typeof err === 'object' && 'name' in err
+          ? String((err as { name?: string }).name)
+          : '';
+      if (name === 'NoSuchKey' || name === 'NotFound') {
+        return c.json({ error: 'Media object not found.' }, 404);
+      }
+      const info = classifyR2BackendError(err);
+      return c.json({ code: info.code, error: info.message }, info.status as 502);
+    }
+  });
+
   // --- Cloudflare Calls / WebRTC SFU Endpoints (Protected & Scoped) ---
   app.get('/api/calls/status', (c) => {
     const parsed = parseCallsConfig(c.env);

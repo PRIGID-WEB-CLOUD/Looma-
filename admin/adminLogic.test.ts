@@ -9,13 +9,17 @@ import {
   assignAdminRole,
   computeCategoryBreakdown,
   computeExtendedWorkspaceMetrics,
+  computeHashtagStats,
   computeWorkspaceMetrics,
   countExpiredStories,
+  filterAdminComments,
   filterAdminMembers,
   filterAdminPosts,
   filterAppeals,
   filterAuditLogs,
   filterReports,
+  formatStorageBytes,
+  removeMemberFromChatIds,
   resolveAdminAuthorization,
   reviewAppealDecision,
   revokeAdminRole,
@@ -25,9 +29,14 @@ import {
   updateAccessInquiryStatus,
   updateReportResolution,
   validateAnnouncementInput,
+  validateDirectWarningInput,
+  validateGroupChatModerationTitle,
   validateGuidelinesInput,
+  validateLegalConfigInput,
+  validateProfileSanitizeInput,
   type AdminAccessInquiry,
   type AdminAuditEntry,
+  type AdminCommentItem,
   type AdminRoleEntry,
   type ContentReport,
   type MemberModerationRecord,
@@ -516,3 +525,101 @@ test('reports queue sorting, appeal decisions, governance validation, audit trai
   assert.equal(extended.activeAnnouncements, 1);
   assert.equal(extended.adminOperators, 1);
 });
+
+test('comment filtering, hashtag stats, direct warnings, profile sanitization, chat moderation, and storage helpers behave accurately', () => {
+  const comments: AdminCommentItem[] = [
+    {
+      id: 'c_1',
+      postId: 'p_1',
+      postCaption: 'Concrete study',
+      authorId: 'u_member',
+      authorName: 'Nora Halvorsen',
+      authorHandle: 'nora.studio',
+      authorAvatar: '',
+      text: 'Love the daylight shadows here!',
+      createdAtMs: 1000,
+    },
+    {
+      id: 'c_2',
+      postId: 'p_2',
+      postCaption: 'Film scans',
+      authorId: 'u_spam',
+      authorName: 'Spammer',
+      authorHandle: 'spam_bot',
+      authorAvatar: '',
+      text: 'Check out cheap followers at spam.example',
+      createdAtMs: 2000,
+    },
+  ];
+  const spamMatches = filterAdminComments(comments, 'followers');
+  assert.equal(spamMatches.length, 1);
+  assert.equal(spamMatches[0].id, 'c_2');
+
+  const taggedPosts: Post[] = [
+    { ...SAMPLE_POSTS[0], caption: 'Morning study #architecture #brutalism' },
+    { ...SAMPLE_POSTS[1], caption: 'Camera test #photography #architecture' },
+  ];
+  const stats = computeHashtagStats(
+    ['architecture', 'design'],
+    ['brutalism', 'photography'],
+    taggedPosts
+  );
+  assert.equal(stats[0].tag, 'architecture');
+  assert.equal(stats[0].postCount, 2);
+  const brutalismStat = stats.find((s) => s.tag === 'brutalism');
+  assert.equal(brutalismStat?.isDynamic, true);
+  assert.equal(brutalismStat?.postCount, 1);
+
+  assert.equal(validateDirectWarningInput('', 'Title', 'Message body').valid, false);
+  assert.equal(validateDirectWarningInput('u_1', 'Hi', 'Message body').valid, false);
+  assert.equal(
+    validateDirectWarningInput('u_1', 'Policy Warning', 'Please remove spam links from your bio.').valid,
+    true
+  );
+
+  assert.equal(
+    validateProfileSanitizeInput({
+      displayName: 'Valid Name',
+      handle: 'invalid handle!',
+      bio: 'Clean bio',
+      location: 'Berlin',
+      avatarUrl: '',
+    }).valid,
+    false
+  );
+  const sanitized = validateProfileSanitizeInput({
+    displayName: 'Moderated Account',
+    handle: '@Clean_User_1',
+    bio: 'Updated bio',
+    location: 'Studio',
+    avatarUrl: '',
+  });
+  assert.equal(sanitized.valid, true);
+  if (sanitized.valid) {
+    assert.equal(sanitized.data.handle, 'clean_user_1');
+  }
+
+  assert.equal(validateGroupChatModerationTitle('').valid, false);
+  assert.equal(validateGroupChatModerationTitle('Design Critiques').valid, true);
+  assert.deepEqual(
+    removeMemberFromChatIds(['u_1', 'u_2', 'u_3'], ['u_1'], 'u_1'),
+    { memberIds: ['u_2', 'u_3'], adminIds: ['u_2'] }
+  );
+  assert.equal(removeMemberFromChatIds(['u_1'], ['u_1'], 'u_1'), null);
+
+  assert.equal(validateLegalConfigInput('terms', '', 'short', 'short').valid, false);
+  assert.equal(
+    validateLegalConfigInput(
+      'privacy',
+      '2026-12-01',
+      'Updated data isolation and Cloudflare R2 retention rules.',
+      '1. Media Storage\nUploaded assets are stored in Cloudflare R2 with strict signature verification.'
+    ).valid,
+    true
+  );
+
+  assert.equal(formatStorageBytes(0), '0 B');
+  assert.equal(formatStorageBytes(1536), '1.5 KB');
+  assert.equal(formatStorageBytes(2 * 1024 * 1024), '2.00 MB');
+});
+

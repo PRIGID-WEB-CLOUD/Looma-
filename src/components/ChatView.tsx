@@ -6,6 +6,7 @@ import {
   Check,
   CheckCheck,
   ExternalLink,
+  Flag,
   Globe,
   Info,
   MapPin,
@@ -53,6 +54,7 @@ import {
   type CuratedGif,
 } from '../utils/socialLogic';
 import { uploadMediaToCloudflareR2 } from '../services/storage';
+import type { ReportCategory } from '../../admin/adminLogic';
 import { Avatar } from './Avatar';
 import { ChatInfoModal } from './ChatInfoModal';
 import { GifPickerModal } from './GifPickerModal';
@@ -91,6 +93,11 @@ interface ChatViewProps {
   onOpenPublicProfile: (uid: string) => void;
   onStartCall: (thread: ChatThread, isAudioOnly: boolean) => void;
   onStartInstantCall: (title: string, isAudioOnly: boolean) => void;
+  onReportChat?: (
+    thread: ChatThread,
+    category: ReportCategory,
+    reason: string
+  ) => Promise<void>;
   callsEnabled?: boolean;
   voiceNotesEnabled?: boolean;
 }
@@ -396,6 +403,7 @@ export function ChatView({
   onOpenPublicProfile,
   onStartCall,
   onStartInstantCall,
+  onReportChat,
   callsEnabled = true,
   voiceNotesEnabled = true,
 }: ChatViewProps) {
@@ -416,6 +424,12 @@ export function ChatView({
   const [groupError, setGroupError] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [showChatInfo, setShowChatInfo] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportCategory, setReportCategory] = useState<ReportCategory>('harassment');
+  const [reportReason, setReportReason] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
+  const [reportSuccessNotice, setReportSuccessNotice] = useState<string | null>(null);
   const [gifModalOpen, setGifModalOpen] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -1126,6 +1140,20 @@ export function ChatView({
                     </button>
                   </>
                 )}
+                {onReportChat && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReportFeedback(null);
+                      setReportReason('');
+                      setShowReportModal(true);
+                    }}
+                    aria-label="Report conversation"
+                    className="min-h-[38px] w-[38px] rounded-full text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center cursor-pointer transition-colors"
+                  >
+                    <Flag className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowChatInfo(true)}
@@ -1155,6 +1183,23 @@ export function ChatView({
               onClose={() => setShowChatInfo(false)}
               onOpenPublicProfile={onOpenPublicProfile}
             />
+
+            {reportSuccessNotice && (
+              <div
+                role="status"
+                className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-200 dark:border-emerald-900 flex items-center justify-between gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+              >
+                <span>{reportSuccessNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setReportSuccessNotice(null)}
+                  aria-label="Dismiss report notice"
+                  className="text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white dark:bg-slate-900">
               {activeMessages.length === 0 ? (
@@ -1883,6 +1928,121 @@ export function ChatView({
         onClose={() => setGifModalOpen(false)}
         onSelectGif={handleSelectChatGif}
       />
+
+      {showReportModal && activeThread && onReportChat && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Report conversation"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!reportReason.trim()) {
+                setReportFeedback('Please describe the reason for your report.');
+                return;
+              }
+              setReportSubmitting(true);
+              setReportFeedback(null);
+              try {
+                await onReportChat(activeThread, reportCategory, reportReason.trim());
+                setShowReportModal(false);
+                setReportReason('');
+                setChatComposerError(null);
+                setReportSuccessNotice(
+                  'Conversation report submitted to Looma moderation.'
+                );
+              } catch (err) {
+                setReportFeedback(
+                  err instanceof Error ? err.message : 'Unable to submit report right now.'
+                );
+              } finally {
+                setReportSubmitting(false);
+              }
+            }}
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4 shadow-xl"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                <Flag className="w-4 h-4" aria-hidden="true" />
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Report Conversation
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close report dialog"
+                onClick={() => setShowReportModal(false)}
+                className="min-h-[36px] min-w-[36px] rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Reporting <strong className="text-slate-800 dark:text-slate-200">{activeThread.title}</strong> sends thread metadata to Looma trust moderators.
+            </p>
+
+            {reportFeedback && (
+              <div
+                role="alert"
+                className="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300"
+              >
+                {reportFeedback}
+              </div>
+            )}
+
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Category
+              </span>
+              <select
+                value={reportCategory}
+                onChange={(e) => setReportCategory(e.target.value as ReportCategory)}
+                className="w-full min-h-[40px] px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white"
+              >
+                <option value="harassment">Harassment or Abuse</option>
+                <option value="spam">Spam or Scam</option>
+                <option value="nudity">Inappropriate Media</option>
+                <option value="misinformation">Impersonation or Misinformation</option>
+                <option value="other">Other Safety Issue</option>
+              </select>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Details for Moderators
+              </span>
+              <textarea
+                rows={3}
+                required
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                placeholder="Describe what happened in this conversation..."
+                className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowReportModal(false)}
+                className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={reportSubmitting}
+                className="min-h-[40px] px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {reportSubmitting ? 'Submitting...' : 'Submit Report'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

@@ -45,10 +45,13 @@ import {
 import {
   DEFAULT_COMMUNITY_GUIDELINES,
   DEFAULT_FEATURE_FLAGS,
+  DEFAULT_PRIVACY_CONFIG,
+  DEFAULT_TERMS_CONFIG,
   isAllowlistedAdminEmail,
   type AdminFeatureFlags,
   type CommunityGuidelinesConfig,
   type ContentReport,
+  type LegalPolicyConfig,
   type MemberModerationRecord,
   type ModerationAppeal,
   type PlatformAnnouncement,
@@ -171,6 +174,8 @@ export const ADMIN_SYNC_STORAGE_KEYS = {
   FEATURE_FLAGS: 'looma_admin_feature_flags_v1',
   HIDDEN_POSTS: 'looma_admin_hidden_posts_v1',
   GUIDELINES: 'looma_admin_guidelines_v1',
+  TERMS: 'looma_admin_terms_v1',
+  PRIVACY: 'looma_admin_privacy_v1',
   ANNOUNCEMENTS: 'looma_admin_announcements_v1',
   USER_MODERATION: 'looma_admin_user_moderation_v1',
   REPORTS: 'looma_admin_reports_v1',
@@ -545,6 +550,22 @@ export function useSocialStore() {
     return saved
       ? { ...DEFAULT_COMMUNITY_GUIDELINES, ...saved }
       : DEFAULT_COMMUNITY_GUIDELINES;
+  });
+  const [termsConfig, setTermsConfig] = useState<LegalPolicyConfig>(() => {
+    const saved = readStorage<Partial<LegalPolicyConfig> | null>(
+      ADMIN_SYNC_STORAGE_KEYS.TERMS,
+      null
+    );
+    return saved ? { ...DEFAULT_TERMS_CONFIG, ...saved } : DEFAULT_TERMS_CONFIG;
+  });
+  const [privacyConfig, setPrivacyConfig] = useState<LegalPolicyConfig>(() => {
+    const saved = readStorage<Partial<LegalPolicyConfig> | null>(
+      ADMIN_SYNC_STORAGE_KEYS.PRIVACY,
+      null
+    );
+    return saved
+      ? { ...DEFAULT_PRIVACY_CONFIG, ...saved }
+      : DEFAULT_PRIVACY_CONFIG;
   });
   const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>(() =>
     readStorage<PlatformAnnouncement[]>(ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS, [])
@@ -1758,9 +1779,41 @@ export function useSocialStore() {
       () => {}
     );
 
+    const unsubTerms = onSnapshot(
+      doc(db, 'adminConfig', 'terms'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const raw = snap.data() as Record<string, unknown>;
+        setTermsConfig((prev) => ({
+          ...DEFAULT_TERMS_CONFIG,
+          ...prev,
+          ...(raw as Partial<LegalPolicyConfig>),
+          updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+        }));
+      },
+      () => {}
+    );
+
+    const unsubPrivacy = onSnapshot(
+      doc(db, 'adminConfig', 'privacy'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const raw = snap.data() as Record<string, unknown>;
+        setPrivacyConfig((prev) => ({
+          ...DEFAULT_PRIVACY_CONFIG,
+          ...prev,
+          ...(raw as Partial<LegalPolicyConfig>),
+          updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+        }));
+      },
+      () => {}
+    );
+
     return () => {
       unsubFlags();
       unsubGuidelines();
+      unsubTerms();
+      unsubPrivacy();
     };
   }, []);
 
@@ -1788,6 +1841,20 @@ export function useSocialStore() {
       );
       if (savedGuidelines) {
         setGuidelines({ ...DEFAULT_COMMUNITY_GUIDELINES, ...savedGuidelines });
+      }
+      const savedTerms = readStorage<Partial<LegalPolicyConfig> | null>(
+        ADMIN_SYNC_STORAGE_KEYS.TERMS,
+        null
+      );
+      if (savedTerms) {
+        setTermsConfig({ ...DEFAULT_TERMS_CONFIG, ...savedTerms });
+      }
+      const savedPrivacy = readStorage<Partial<LegalPolicyConfig> | null>(
+        ADMIN_SYNC_STORAGE_KEYS.PRIVACY,
+        null
+      );
+      if (savedPrivacy) {
+        setPrivacyConfig({ ...DEFAULT_PRIVACY_CONFIG, ...savedPrivacy });
       }
       const savedAnnouncements = readStorage<PlatformAnnouncement[] | null>(
         ADMIN_SYNC_STORAGE_KEYS.ANNOUNCEMENTS,
@@ -4631,7 +4698,7 @@ export function useSocialStore() {
 
   const submitContentReport = useCallback(
     async (input: {
-      targetType: 'post' | 'story' | 'comment' | 'user';
+      targetType: 'post' | 'story' | 'comment' | 'user' | 'chat' | 'message';
       targetId: string;
       targetAuthorUid: string;
       targetSummary: string;
@@ -4871,6 +4938,8 @@ export function useSocialStore() {
     featureFlags,
     hiddenPostIds,
     guidelines,
+    termsConfig,
+    privacyConfig,
     announcements,
     memberModeration,
     userReports,

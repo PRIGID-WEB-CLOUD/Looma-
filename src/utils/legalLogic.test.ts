@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildLiveGuidelinesDocument,
+  buildLiveLegalDocument,
   createTermsConsentRecord,
+  formatLegalDocumentSectionsAsText,
   getLegalRoutePath,
   hasRequiredAccountConsent,
   isConsentRecordValid,
@@ -109,7 +111,7 @@ test('hasRequiredAccountConsent and consent records validate accurately', () => 
   assert.equal(isConsentRecordValid(null), false);
 });
 
-test('buildLiveGuidelinesDocument parses dynamic rules blocks and falls back cleanly', () => {
+test('buildLiveGuidelinesDocument and buildLiveLegalDocument parse dynamic rules blocks across terms and privacy', () => {
   const fallback = buildLiveGuidelinesDocument(null);
   assert.equal(fallback.version, LEGAL_DOCUMENTS.guidelines.version);
 
@@ -127,5 +129,29 @@ test('buildLiveGuidelinesDocument parses dynamic rules blocks and falls back cle
   assert.equal(dynamicDoc.sections[0].title, 'Original Work Only');
   assert.deepEqual(dynamicDoc.sections[0].bullets, ['Credit collaborators']);
   assert.equal(dynamicDoc.sections[1].title, 'Zero Spam');
+
+  const termsText = formatLegalDocumentSectionsAsText('terms');
+  assert.ok(termsText.includes('Acceptance of Terms & Eligibility'));
+
+  const liveTerms = buildLiveLegalDocument('terms', {
+    version: '2026-12-01',
+    summary: 'Updated commercial licensing and messaging rules.',
+    rulesText:
+      '1. Account Eligibility\nVerified email required.\n\n2. Data Ownership\nCreators retain copyright.',
+    updatedAtMs: 1764547200000,
+  });
+  assert.equal(liveTerms.id, 'terms');
+  assert.equal(liveTerms.version, '2026-12-01');
+  assert.equal(liveTerms.sections[0].id, 'terms-1');
+  assert.equal(liveTerms.sections[1].title, 'Data Ownership');
+
+  const livePrivacy = buildLiveLegalDocument('privacy', {
+    version: '2026-12-05',
+    summary: 'Updated Cloudflare R2 and telemetry retention schedule.',
+    rulesText: '1. Media Isolation\nUploaded objects remain scoped by UID.',
+    updatedAtMs: 1764892800000,
+  });
+  assert.equal(livePrivacy.id, 'privacy');
+  assert.equal(livePrivacy.sections[0].id, 'privacy-1');
 });
 

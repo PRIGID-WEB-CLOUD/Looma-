@@ -891,7 +891,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "targetType": { "type": "string", "enum": ["post", "story", "comment", "user"] },
+        "targetType": { "type": "string", "enum": ["post", "story", "comment", "user", "chat", "message"] },
         "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "targetAuthorUid": { "type": "string", "maxLength": 128 },
         "targetSummary": { "type": "string", "maxLength": 240 },
@@ -960,7 +960,7 @@
     },
     "AdminConfigDoc": {
       "title": "AdminConfigDoc",
-      "description": "Platform configuration document storing feature flags, moderation lists, or community guidelines.",
+      "description": "Platform configuration document storing feature flags, moderation lists, community guidelines, terms, and privacy policies.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },

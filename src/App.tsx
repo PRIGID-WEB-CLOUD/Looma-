@@ -500,6 +500,8 @@ export default function App() {
             activeDocId={activeLegalDoc}
             theme={store.theme}
             guidelinesConfig={store.guidelines}
+            termsConfig={store.termsConfig}
+            privacyConfig={store.privacyConfig}
             fromAuthSignup={!store.isAuthorized && authMode === 'signup'}
             consentAlreadyAccepted={hasRequiredAccountConsent(signupConsent)}
             onSelectDoc={openLegalDocument}
@@ -1200,6 +1202,19 @@ export default function App() {
                 }
                 onStartCall={store.startCall}
                 onStartInstantCall={store.startInstantCall}
+                onReportChat={async (thread, category, reason) => {
+                  await store.submitContentReport({
+                    targetType: 'chat',
+                    targetId: thread.id,
+                    targetAuthorUid:
+                      thread.partnerUid ||
+                      thread.memberIds.find((id) => id !== store.profile.uid) ||
+                      '',
+                    targetSummary: `${thread.isGroup ? 'Group' : 'Direct'} chat: ${thread.title}`,
+                    category,
+                    reason,
+                  });
+                }}
                 callsEnabled={store.featureFlags.callsEnabled}
                 voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
               />

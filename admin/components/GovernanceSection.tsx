@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, CheckCircle2, Megaphone, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '../../src/utils/socialLogic';
+import type { LegalDocId } from '../../src/utils/legalLogic';
 import {
   ADMIN_EMAILS,
   type AdminAccessInquiry,
   type AnnouncementAudience,
   type AnnouncementSeverity,
   type CommunityGuidelinesConfig,
+  type LegalPolicyConfig,
   type PlatformAnnouncement,
 } from '../adminLogic';
 
 interface GovernanceSectionProps {
   announcements: PlatformAnnouncement[];
   guidelines: CommunityGuidelinesConfig;
+  termsConfig: LegalPolicyConfig;
+  privacyConfig: LegalPolicyConfig;
   inquiries: AdminAccessInquiry[];
   onPublishAnnouncement: (input: {
     title: string;
@@ -22,22 +26,33 @@ interface GovernanceSectionProps {
   }) => Promise<{ ok: boolean; error?: string }>;
   onToggleAnnouncement: (id: string) => Promise<void>;
   onDeleteAnnouncement?: (id: string) => Promise<void>;
-  onSaveGuidelines: (input: {
-    version: string;
-    summary: string;
-    rulesText: string;
-  }) => Promise<{ ok: boolean; error?: string }>;
+  onSaveLegalPolicy: (
+    docId: LegalDocId,
+    input: {
+      version: string;
+      summary: string;
+      rulesText: string;
+    }
+  ) => Promise<{ ok: boolean; error?: string }>;
   onUpdateInquiryStatus: (id: string, status: AdminAccessInquiry['status']) => void;
 }
+
+const LEGAL_DOC_TABS: Array<{ id: LegalDocId; label: string }> = [
+  { id: 'guidelines', label: 'Community Guidelines' },
+  { id: 'terms', label: 'Terms & Conditions' },
+  { id: 'privacy', label: 'Privacy Policy' },
+];
 
 export function GovernanceSection({
   announcements,
   guidelines,
+  termsConfig,
+  privacyConfig,
   inquiries,
   onPublishAnnouncement,
   onToggleAnnouncement,
   onDeleteAnnouncement,
-  onSaveGuidelines,
+  onSaveLegalPolicy,
   onUpdateInquiryStatus,
 }: GovernanceSectionProps) {
   const [title, setTitle] = useState('');
@@ -45,15 +60,23 @@ export function GovernanceSection({
   const [severity, setSeverity] = useState<AnnouncementSeverity>('info');
   const [audience, setAudience] = useState<AnnouncementAudience>('all');
 
-  const [version, setVersion] = useState(guidelines.version);
-  const [summary, setSummary] = useState(guidelines.summary);
-  const [rulesText, setRulesText] = useState(guidelines.rulesText);
+  const [selectedDocId, setSelectedDocId] = useState<LegalDocId>('guidelines');
+  const activePolicy =
+    selectedDocId === 'terms'
+      ? termsConfig
+      : selectedDocId === 'privacy'
+        ? privacyConfig
+        : guidelines;
+
+  const [version, setVersion] = useState(activePolicy.version);
+  const [summary, setSummary] = useState(activePolicy.summary);
+  const [rulesText, setRulesText] = useState(activePolicy.rulesText);
 
   useEffect(() => {
-    setVersion(guidelines.version);
-    setSummary(guidelines.summary);
-    setRulesText(guidelines.rulesText);
-  }, [guidelines.rulesText, guidelines.summary, guidelines.version]);
+    setVersion(activePolicy.version);
+    setSummary(activePolicy.summary);
+    setRulesText(activePolicy.rulesText);
+  }, [activePolicy.rulesText, activePolicy.summary, activePolicy.version, selectedDocId]);
 
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -70,15 +93,18 @@ export function GovernanceSection({
     setFeedback({ type: 'ok', text: 'Platform announcement published and logged.' });
   };
 
+  const activePolicyLabel =
+    LEGAL_DOC_TABS.find((t) => t.id === selectedDocId)?.label || 'Community Guidelines';
+
   const handleSavePolicy = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
-    const res = await onSaveGuidelines({ version, summary, rulesText });
+    const res = await onSaveLegalPolicy(selectedDocId, { version, summary, rulesText });
     if (!res.ok) {
-      setFeedback({ type: 'err', text: res.error || 'Could not update community guidelines.' });
+      setFeedback({ type: 'err', text: res.error || `Could not update ${activePolicyLabel}.` });
       return;
     }
-    setFeedback({ type: 'ok', text: `Community Guidelines updated to v${version}.` });
+    setFeedback({ type: 'ok', text: `${activePolicyLabel} updated to v${version}.` });
   };
 
   return (
@@ -267,21 +293,49 @@ export function GovernanceSection({
         </section>
       </div>
 
-      {/* Community Guidelines Editor */}
+      {/* Live Legal Policies & Community Guidelines Editor */}
       <form
         onSubmit={handleSavePolicy}
         className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4"
       >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Community Guidelines Policy
+              Live Legal &amp; Policy Documents
             </h2>
           </div>
-          <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-            Current revision: v{guidelines.version}
-          </span>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              role="tablist"
+              aria-label="Legal policy document tabs"
+              className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+            >
+              {LEGAL_DOC_TABS.map((tab) => {
+                const isActive = tab.id === selectedDocId;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setSelectedDocId(tab.id)}
+                    className={`min-h-[32px] px-3 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+              v{activePolicy.version}
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -316,10 +370,10 @@ export function GovernanceSection({
 
         <label className="block space-y-1">
           <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-            Community Standards Clauses
+            {activePolicyLabel} Sections &amp; Clauses (separate sections with blank lines)
           </span>
           <textarea
-            rows={5}
+            rows={7}
             required
             minLength={20}
             maxLength={5000}
@@ -334,7 +388,7 @@ export function GovernanceSection({
             type="submit"
             className="min-h-[40px] px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
           >
-            Save Guidelines Revision
+            Save {activePolicyLabel} Revision
           </button>
         </div>
       </form>
