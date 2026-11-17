@@ -924,7 +924,7 @@ export default function App() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 inline-flex items-center gap-1.5 max-w-full">
                   <span className="truncate">{store.profile.displayName}</span>
-                  {store.profile.isVerified && <VerifiedBadge size={14} />}
+                  {(store.profile.isVerified || isUserAdmin) && <VerifiedBadge size={14} />}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   @{store.profile.handle}

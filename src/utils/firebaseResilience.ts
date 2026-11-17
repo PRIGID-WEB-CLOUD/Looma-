@@ -1,5 +1,6 @@
 import type { ThemeMode, UserPrivateSettings, UserProfile } from '../types/social';
 import { normalizeAssetUrl, sanitizeHandle } from './socialLogic';
+import { isAllowlistedAdminEmail } from '../../admin/adminLogic';
 
 export interface FirebaseAuthUserLike {
   uid: string;
@@ -97,6 +98,7 @@ export function buildFallbackUserProfile(
   const defaultHandle = sanitizeHandle(
     authUser.email?.split('@')[0] || authUser.displayName || 'looma_user'
   );
+  const isAdmin = Boolean(authUser.email && isAllowlistedAdminEmail(authUser.email));
 
   if (cachedProfile && cachedProfile.uid === authUser.uid) {
     const resolvedDisplayName =
@@ -118,6 +120,7 @@ export function buildFallbackUserProfile(
         : [],
       followersCount: Number(cachedProfile.followersCount || 0),
       followingCount: Number(cachedProfile.followingCount || 0),
+      isVerified: Boolean(cachedProfile.isVerified || isAdmin),
       onboardingCompleted:
         Boolean(cachedProfile.onboardingCompleted) || autostart,
     };
@@ -133,6 +136,7 @@ export function buildFallbackUserProfile(
     interests: ['Architecture', 'Photography'],
     followersCount: 0,
     followingCount: 0,
+    isVerified: isAdmin,
     onboardingCompleted: autostart,
     createdAtMs: nowMs,
     updatedAtMs: nowMs,

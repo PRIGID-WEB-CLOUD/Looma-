@@ -284,8 +284,19 @@ export function useSocialStore() {
 
   const [profile, setProfile] = useState<UserProfile>(() => {
     const stored = readStorage<UserProfile | null>(STORAGE_KEYS.PROFILE, null);
+    const storedSettings = readStorage<UserPrivateSettings | null>(
+      STORAGE_KEYS.SETTINGS,
+      null
+    );
+    const isAdminFromStored = Boolean(
+      storedSettings?.email && isAllowlistedAdminEmail(storedSettings.email)
+    );
     if (stored && stored.uid !== 'guest_local_user') {
-      return autostart ? { ...stored, onboardingCompleted: true } : stored;
+      return {
+        ...stored,
+        ...(isAdminFromStored ? { isVerified: true } : {}),
+        ...(autostart ? { onboardingCompleted: true } : {}),
+      };
     }
     const base = createInitialMemberProfile();
     return autostart ? { ...base, onboardingCompleted: true } : base;
@@ -1163,8 +1174,15 @@ export function useSocialStore() {
           };
           setProfile(synced);
           writeStorage(STORAGE_KEYS.PROFILE, synced);
+          if (isAdminUser && !d.isVerified) {
+            updateDoc(userDocRef, {
+              isVerified: true,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
         } else {
           const seed = profileRef.current;
+          const isAdminUser = isAllowlistedAdminEmail(firebaseUser.email);
           setDoc(userDocRef, {
             uid: firebaseUser.uid,
             displayName: seed.displayName,
@@ -1175,6 +1193,7 @@ export function useSocialStore() {
             interests: seed.interests.slice(0, 8),
             followersCount: 0,
             followingCount: 0,
+            isVerified: Boolean(seed.isVerified || isAdminUser),
             onboardingCompleted: seed.onboardingCompleted,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -1200,13 +1219,17 @@ export function useSocialStore() {
       (snapshot) => {
         const mapped: Post[] = snapshot.docs.map((docSnap) => {
           const d = docSnap.data();
+          const isAuthorAdmin = Boolean(
+            (d.authorEmail && isAllowlistedAdminEmail(d.authorEmail)) ||
+            (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email) && d.authorId === firebaseUser.uid)
+          );
           return {
             id: d.id || docSnap.id,
             authorId: d.authorId,
             authorName: d.authorName,
             authorHandle: d.authorHandle,
             authorAvatar: normalizeAssetUrl(d.authorAvatar || ''),
-            authorVerified: Boolean(d.authorVerified),
+            authorVerified: Boolean(d.authorVerified || isAuthorAdmin),
             caption: d.caption || '',
             imageUrl: normalizeAssetUrl(d.imageUrl || ''),
             videoUrl: d.videoUrl || '',
@@ -1389,6 +1412,7 @@ export function useSocialStore() {
         const remoteMembers: UserProfile[] = snapshot.docs
           .map((docSnap) => {
             const d = docSnap.data();
+            const isAdmin = Boolean(d.email && isAllowlistedAdminEmail(d.email));
             return {
               uid: d.uid || docSnap.id,
               displayName: d.displayName || 'Looma Member',
@@ -1399,7 +1423,7 @@ export function useSocialStore() {
               interests: Array.isArray(d.interests) ? d.interests : [],
               followersCount: Number(d.followersCount || 0),
               followingCount: Number(d.followingCount || 0),
-              isVerified: Boolean(d.isVerified),
+              isVerified: Boolean(d.isVerified || isAdmin),
               onboardingCompleted: Boolean(d.onboardingCompleted),
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
@@ -1977,6 +2001,11 @@ export function useSocialStore() {
           const loadedComments: PostComment[] = commentsSnap.docs
             .map((docSnap) => {
               const d = docSnap.data();
+              const isCommentAdmin = Boolean(
+                (d.authorEmail && isAllowlistedAdminEmail(d.authorEmail)) ||
+                (d.authorId === profile.uid && profile.isVerified) ||
+                (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email) && d.authorId === firebaseUser.uid)
+              );
               return {
                 id: d.id || docSnap.id,
                 postId: d.postId || post.id,
@@ -1984,6 +2013,7 @@ export function useSocialStore() {
                 authorName: d.authorName,
                 authorHandle: d.authorHandle,
                 authorAvatar: d.authorAvatar,
+                authorVerified: Boolean(d.authorVerified || isCommentAdmin),
                 text: d.text,
                 createdAtMs: timestampToMs(d.createdAt),
               };
@@ -2619,7 +2649,8 @@ export function useSocialStore() {
       const linkUrl = extra?.linkUrl || '';
       const mediaTitle = sanitizeMediaTitle(extra?.mediaTitle);
       const isAuthorAdminVerified = Boolean(
-        firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)
+        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+        profile.isVerified
       );
 
       const newPost: Post = {
@@ -2628,9 +2659,7 @@ export function useSocialStore() {
         authorName: profile.displayName,
         authorHandle: profile.handle,
         authorAvatar: profile.avatarUrl,
-        ...(profile.isVerified || isAuthorAdminVerified
-          ? { authorVerified: true }
-          : {}),
+        ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
         caption: caption.trim(),
         imageUrl,
         videoUrl,
@@ -2653,6 +2682,7 @@ export function useSocialStore() {
             authorName: profile.displayName,
             authorHandle: profile.handle,
             authorAvatar: profile.avatarUrl,
+            authorEmail: firebaseUser.email || '',
             ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
             caption: newPost.caption,
             imageUrl: newPost.imageUrl,
@@ -2937,6 +2967,10 @@ export function useSocialStore() {
       requireModerationAllowed('comment');
       const commentId = makeSafeId('cmt');
       const now = Date.now();
+      const isCommentAuthorVerified = Boolean(
+        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+        profile.isVerified
+      );
       const newComment: PostComment = {
         id: commentId,
         postId: post.id,
@@ -2944,6 +2978,7 @@ export function useSocialStore() {
         authorName: profile.displayName,
         authorHandle: profile.handle,
         authorAvatar: profile.avatarUrl,
+        authorVerified: isCommentAuthorVerified,
         text: text.trim(),
         createdAtMs: now,
       };
@@ -2963,6 +2998,8 @@ export function useSocialStore() {
           authorName: profile.displayName,
           authorHandle: profile.handle,
           authorAvatar: profile.avatarUrl,
+          authorVerified: isCommentAuthorVerified,
+          authorEmail: firebaseUser.email || '',
           text: newComment.text,
           createdAt: serverTimestamp(),
         });

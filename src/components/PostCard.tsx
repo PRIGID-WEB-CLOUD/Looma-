@@ -955,11 +955,12 @@ export function PostCard({
                       size="sm"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 inline-flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-slate-900 dark:text-slate-100">
                           {cmt.authorName}
-                        </span>{' '}
-                        <span aria-hidden="true">·</span>{' '}
+                        </span>
+                        {cmt.authorVerified && <VerifiedBadge size={12} />}
+                        <span aria-hidden="true">·</span>
                         <span>{formatRelativeTime(cmt.createdAtMs)}</span>
                       </p>
                       <div className="text-sm text-slate-700 dark:text-slate-300 mt-0.5">

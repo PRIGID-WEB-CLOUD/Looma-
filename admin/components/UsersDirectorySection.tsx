@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCircle2, Edit3, Search, ShieldAlert, Trash2, UserCheck, UserX } from 'lucide-react';
+import {
+  BadgeCheck,
+  Bell,
+  Check,
+  CheckCircle2,
+  Copy,
+  Edit3,
+  MapPin,
+  Search,
+  ShieldAlert,
+  Trash2,
+  UserCheck,
+  UserX,
+  X,
+} from 'lucide-react';
 import { Avatar } from '../../src/components/Avatar';
 import { VerifiedBadge } from '../../src/components/VerifiedBadge';
 import type { UserProfile } from '../../src/types/social';
@@ -78,6 +92,8 @@ export function UsersDirectorySection({
   const [suspendReason, setSuspendReason] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [busyUid, setBusyUid] = useState<string | null>(null);
+  const [inspectorTab, setInspectorTab] = useState<'overview' | 'edit' | 'warning' | 'standing'>('overview');
+  const [copiedUid, setCopiedUid] = useState(false);
 
   useEffect(() => {
     if (!inspectedUser) return;
@@ -89,6 +105,20 @@ export function UsersDirectorySection({
     setWarnTitle('Official Account Notice');
     setWarnBody('');
     setConfirmPurgeUid(null);
+    setInspectorTab('overview');
+    setCopiedUid(false);
+  }, [inspectedUser]);
+
+  useEffect(() => {
+    if (!inspectedUser) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setInspectedUser(null);
+        setConfirmPurgeUid(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [inspectedUser]);
 
   const onlineSet = useMemo(() => new Set(onlineUserIds), [onlineUserIds]);
@@ -307,181 +337,359 @@ export function UsersDirectorySection({
       )}
 
       {/* User Details Inspection Card */}
+      {/* User Details Slide-over Inspector Sheet */}
       {inspectedUser && (
         <div
-          data-testid="admin-user-details"
-          className="rounded-2xl border border-blue-200 dark:border-blue-900/60 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-lg shadow-blue-600/5"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex justify-end"
+          onClick={() => {
+            setInspectedUser(null);
+            setConfirmPurgeUid(null);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`User inspector for ${inspectedUser.displayName}`}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <Avatar
-                src={inspectedUser.avatarUrl}
-                name={inspectedUser.displayName}
-                size="lg"
-                online={onlineSet.has(inspectedUser.uid)}
-              />
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h2 className="font-display text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
-                    {inspectedUser.displayName}
-                  </h2>
-                  {inspectedUser.isVerified && <VerifiedBadge size={16} />}
+          <div
+            data-testid="admin-user-details"
+            className="w-full max-w-lg h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sheet Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0 bg-slate-50/70 dark:bg-slate-950/70">
+              <div className="flex items-center gap-3 min-w-0">
+                <Avatar
+                  src={inspectedUser.avatarUrl}
+                  name={inspectedUser.displayName}
+                  size="md"
+                  online={onlineSet.has(inspectedUser.uid)}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h2
+                      id="inspector-user-title"
+                      className="font-display text-base font-bold text-slate-900 dark:text-white truncate"
+                    >
+                      {inspectedUser.displayName}
+                    </h2>
+                    {inspectedUser.isVerified && <VerifiedBadge size={14} />}
+                  </div>
+                  <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
+                    @{inspectedUser.handle}
+                  </p>
                 </div>
-                <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                  @{inspectedUser.handle} · UID: {inspectedUser.uid}
-                </p>
+              </div>
+
+              <button
+                type="button"
+                data-testid="close-user-inspector"
+                aria-label="Close inspector"
+                onClick={() => {
+                  setInspectedUser(null);
+                  setConfirmPurgeUid(null);
+                }}
+                className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors shrink-0"
+              >
+                <X className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Close Inspector</span>
+              </button>
+            </div>
+
+            {/* Segmented Tab Bar */}
+            <div className="px-4 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+              <div
+                role="tablist"
+                aria-label="User inspector sections"
+                className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 text-xs"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'overview'}
+                  onClick={() => setInspectorTab('overview')}
+                  className={`py-1.5 px-2 rounded-lg font-semibold transition-all cursor-pointer truncate text-center ${
+                    inspectorTab === 'overview'
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'edit'}
+                  onClick={() => setInspectorTab('edit')}
+                  className={`py-1.5 px-2 rounded-lg font-semibold transition-all cursor-pointer truncate text-center ${
+                    inspectorTab === 'edit'
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'warning'}
+                  onClick={() => setInspectorTab('warning')}
+                  className={`py-1.5 px-2 rounded-lg font-semibold transition-all cursor-pointer truncate text-center ${
+                    inspectorTab === 'warning'
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Notice
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'standing'}
+                  onClick={() => setInspectorTab('standing')}
+                  className={`py-1.5 px-2 rounded-lg font-semibold transition-all cursor-pointer truncate text-center ${
+                    inspectorTab === 'standing'
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Standing
+                </button>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setInspectedUser(null)}
-              className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              Close Inspector
-            </button>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3.5 space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Location</p>
-              <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                {inspectedUser.location || 'Not specified'}
-              </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3.5 space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Network Stats</p>
-              <p className="text-xs font-semibold text-slate-900 dark:text-white tabular-nums">
-                {inspectedUser.followersCount} followers · {inspectedUser.followingCount} following
-              </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3.5 space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Onboarding Status</p>
-              <p className="text-xs font-semibold text-slate-900 dark:text-white">
-                {inspectedUser.onboardingCompleted ? 'Completed' : 'Pending'}
-              </p>
-            </div>
-          </div>
+            {/* Scrollable Tab Content Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {inspectorTab === 'overview' && (
+                <div className="space-y-3.5">
+                  {/* UID Pill with Copy */}
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono">
+                    <span className="truncate text-slate-600 dark:text-slate-400">
+                      UID: {inspectedUser.uid}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(inspectedUser.uid);
+                        setCopiedUid(true);
+                        setTimeout(() => setCopiedUid(false), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer shrink-0"
+                    >
+                      {copiedUid ? (
+                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
+                      <span>{copiedUid ? 'Copied' : 'Copy UID'}</span>
+                    </button>
+                  </div>
 
-          {inspectedUser.bio && (
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Biography</p>
-              <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                {inspectedUser.bio}
-              </p>
-            </div>
-          )}
+                  {/* 3 Metric Stats */}
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3 space-y-0.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Location
+                      </p>
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                        {inspectedUser.location || 'Not set'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3 space-y-0.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Network
+                      </p>
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white tabular-nums truncate">
+                        {inspectedUser.followersCount}F · {inspectedUser.followingCount}F
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3 space-y-0.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Onboarding
+                      </p>
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                        {inspectedUser.onboardingCompleted ? 'Completed' : 'Pending'}
+                      </p>
+                    </div>
+                  </div>
 
-          {inspectedUser.interests.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Interests:</span>
-              {inspectedUser.interests.map((tag) => (
-                <span
-                  key={tag}
-                  className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 text-xs font-medium"
+                  {/* Toggle Verified Badge Action */}
+                  {onToggleVerify && (
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <BadgeCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
+                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                          Verified Badge: {inspectedUser.isVerified ? 'Active' : 'Disabled'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busyUid === inspectedUser.uid}
+                        onClick={async () => {
+                          setBusyUid(inspectedUser.uid);
+                          const nextVerified = !inspectedUser.isVerified;
+                          const res = await onToggleVerify(inspectedUser.uid, nextVerified);
+                          setBusyUid(null);
+                          if (res.ok) {
+                            setInspectedUser((prev) =>
+                              prev ? { ...prev, isVerified: nextVerified } : null
+                            );
+                            setFeedback({
+                              type: 'ok',
+                              text: nextVerified
+                                ? 'Granted verified status badge.'
+                                : 'Revoked verified status badge.',
+                            });
+                          } else {
+                            setFeedback({
+                              type: 'err',
+                              text: res.error || 'Failed to update verification status.',
+                            });
+                          }
+                        }}
+                        className="min-h-[32px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0 disabled:opacity-50"
+                      >
+                        {inspectedUser.isVerified ? 'Revoke Badge' : 'Grant Badge'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Biography */}
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3.5 space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Biography
+                    </p>
+                    <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                      {inspectedUser.bio || 'No biography written by user yet.'}
+                    </p>
+                  </div>
+
+                  {/* Interests */}
+                  {inspectedUser.interests.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Interests
+                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {inspectedUser.interests.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 text-xs font-medium"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {inspectorTab === 'edit' && onSanitizeProfile && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setBusyUid(inspectedUser.uid);
+                    setFeedback(null);
+                    const res = await onSanitizeProfile(inspectedUser.uid, {
+                      displayName: editDisplayName,
+                      handle: editHandle,
+                      bio: editBio,
+                      location: editLocation,
+                      avatarUrl: clearAvatar ? '' : inspectedUser.avatarUrl || '',
+                    });
+                    setBusyUid(null);
+                    if (!res.ok) {
+                      setFeedback({ type: 'err', text: res.error || 'Could not update profile.' });
+                      return;
+                    }
+                    setInspectedUser((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            displayName: editDisplayName.trim(),
+                            handle: editHandle.trim().toLowerCase().replace(/^@+/, ''),
+                            bio: editBio.trim(),
+                            location: editLocation.trim(),
+                            avatarUrl: clearAvatar ? '' : prev.avatarUrl,
+                          }
+                        : null
+                    );
+                    setFeedback({ type: 'ok', text: `Updated profile fields for @${editHandle}.` });
+                  }}
+                  className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 space-y-3"
                 >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-            {onSanitizeProfile && (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setBusyUid(inspectedUser.uid);
-                  setFeedback(null);
-                  const res = await onSanitizeProfile(inspectedUser.uid, {
-                    displayName: editDisplayName,
-                    handle: editHandle,
-                    bio: editBio,
-                    location: editLocation,
-                    avatarUrl: clearAvatar ? '' : inspectedUser.avatarUrl || '',
-                  });
-                  setBusyUid(null);
-                  if (!res.ok) {
-                    setFeedback({ type: 'err', text: res.error || 'Could not update profile.' });
-                    return;
-                  }
-                  setInspectedUser((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          displayName: editDisplayName.trim(),
-                          handle: editHandle.trim().toLowerCase().replace(/^@+/, ''),
-                          bio: editBio.trim(),
-                          location: editLocation.trim(),
-                          avatarUrl: clearAvatar ? '' : prev.avatarUrl,
-                        }
-                      : null
-                  );
-                  setFeedback({ type: 'ok', text: `Updated profile fields for @${editHandle}.` });
-                }}
-                className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 space-y-3"
-              >
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
-                  <Edit3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Edit / Sanitize User Profile</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <input
-                    type="text"
-                    required
-                    aria-label="Edit display name"
-                    value={editDisplayName}
-                    onChange={(e) => setEditDisplayName(e.target.value)}
-                    placeholder="Display name"
-                    className="min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
-                  />
-                  <input
-                    type="text"
-                    required
-                    aria-label="Edit user handle"
-                    value={editHandle}
-                    onChange={(e) => setEditHandle(e.target.value)}
-                    placeholder="handle"
-                    className="min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-900 dark:text-white"
-                  />
-                </div>
-                <input
-                  type="text"
-                  aria-label="Edit user location"
-                  value={editLocation}
-                  onChange={(e) => setEditLocation(e.target.value)}
-                  placeholder="Location"
-                  className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
-                />
-                <textarea
-                  rows={2}
-                  aria-label="Edit user bio"
-                  value={editBio}
-                  onChange={(e) => setEditBio(e.target.value)}
-                  placeholder="Profile biography"
-                  className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white resize-none"
-                />
-                <div className="flex items-center justify-between gap-2">
-                  <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+                    <Edit3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                    <span>Edit / Sanitize User Profile</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <label className="block space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Display Name</span>
+                      <input
+                        type="text"
+                        required
+                        aria-label="Edit display name"
+                        value={editDisplayName}
+                        onChange={(e) => setEditDisplayName(e.target.value)}
+                        placeholder="Display name"
+                        className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Handle</span>
+                      <input
+                        type="text"
+                        required
+                        aria-label="Edit user handle"
+                        value={editHandle}
+                        onChange={(e) => setEditHandle(e.target.value)}
+                        placeholder="handle"
+                        className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-900 dark:text-white"
+                      />
+                    </label>
+                  </div>
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Location</span>
                     <input
-                      type="checkbox"
-                      checked={clearAvatar}
-                      onChange={(e) => setClearAvatar(e.target.checked)}
+                      type="text"
+                      aria-label="Edit user location"
+                      value={editLocation}
+                      onChange={(e) => setEditLocation(e.target.value)}
+                      placeholder="e.g. San Francisco, CA"
+                      className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
                     />
-                    <span>Reset profile photo</span>
                   </label>
-                  <button
-                    type="submit"
-                    disabled={busyUid === inspectedUser.uid}
-                    className="min-h-[36px] px-3.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
-                  >
-                    Save Profile
-                  </button>
-                </div>
-              </form>
-            )}
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Biography</span>
+                    <textarea
+                      rows={3}
+                      aria-label="Edit user bio"
+                      value={editBio}
+                      onChange={(e) => setEditBio(e.target.value)}
+                      placeholder="Profile biography..."
+                      className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white resize-none"
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clearAvatar}
+                        onChange={(e) => setClearAvatar(e.target.checked)}
+                      />
+                      <span>Reset profile photo to default</span>
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={busyUid === inspectedUser.uid}
+                      className="min-h-[36px] px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                    >
+                      Save Profile
+                    </button>
+                  </div>
+                </form>
+              )}
 
-            <div className="space-y-4">
-              {onSendWarning && (
+              {inspectorTab === 'warning' && onSendWarning && (
                 <form
                   onSubmit={async (e) => {
                     e.preventDefault();
@@ -499,35 +707,41 @@ export function UsersDirectorySection({
                       text: `Sent official warning notification to @${inspectedUser.handle}.`,
                     });
                   }}
-                  className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 space-y-2.5"
+                  className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 space-y-3"
                 >
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
                     <Bell className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
                     <span>Send Direct Official Warning</span>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    maxLength={120}
-                    value={warnTitle}
-                    onChange={(e) => setWarnTitle(e.target.value)}
-                    placeholder="Notice heading"
-                    className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
-                  />
-                  <textarea
-                    rows={2}
-                    required
-                    maxLength={240}
-                    value={warnBody}
-                    onChange={(e) => setWarnBody(e.target.value)}
-                    placeholder="Official policy warning delivered to user notifications..."
-                    className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white resize-none"
-                  />
-                  <div className="flex justify-end">
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Notice Heading</span>
+                    <input
+                      type="text"
+                      required
+                      maxLength={120}
+                      value={warnTitle}
+                      onChange={(e) => setWarnTitle(e.target.value)}
+                      placeholder="Notice heading"
+                      className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Warning Message</span>
+                    <textarea
+                      rows={3}
+                      required
+                      maxLength={240}
+                      value={warnBody}
+                      onChange={(e) => setWarnBody(e.target.value)}
+                      placeholder="Official policy warning delivered to user notifications..."
+                      className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white resize-none"
+                    />
+                  </label>
+                  <div className="flex justify-end pt-1">
                     <button
                       type="submit"
                       disabled={busyUid === inspectedUser.uid || !warnBody.trim()}
-                      className="min-h-[36px] px-3.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                      className="min-h-[36px] px-4 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-xs font-semibold cursor-pointer disabled:opacity-50 transition-colors"
                     >
                       Send Official Notice
                     </button>
@@ -535,60 +749,117 @@ export function UsersDirectorySection({
                 </form>
               )}
 
-              {onPurgeUser && inspectedUser.uid !== currentAdminUid && (
-                <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-0.5">
-                    <p className="text-xs font-bold text-red-700 dark:text-red-300">
-                      Purge User &amp; Content
-                    </p>
-                    <p className="text-[11px] text-red-700/80 dark:text-red-300/80">
-                      Deletes profile, posts, and 24h stories permanently.
-                    </p>
+              {inspectorTab === 'standing' && (
+                <div className="space-y-4">
+                  {/* Account Standing Controls */}
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+                      <ShieldAlert className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                      <span>Moderation Standing &amp; Access Status</span>
+                    </div>
+
+                    {inspectedUser.uid === currentAdminUid ? (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        This is your active administrator account. Standing controls cannot be applied to yourself.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={busyUid === inspectedUser.uid}
+                          onClick={() => void handleQuickStatusChange(inspectedUser, 'active', 'Standing restored by admin')}
+                          className="min-h-[38px] px-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Set Active</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyUid === inspectedUser.uid}
+                          onClick={() => void handleQuickStatusChange(inspectedUser, 'restricted', 'Restricted by administrator')}
+                          className="min-h-[38px] px-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <ShieldAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Restrict Account</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {confirmPurgeUid === inspectedUser.uid ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        disabled={busyUid === inspectedUser.uid}
-                        onClick={async () => {
-                          setBusyUid(inspectedUser.uid);
-                          const res = await onPurgeUser(inspectedUser.uid);
-                          setBusyUid(null);
-                          if (!res.ok) {
-                            setFeedback({ type: 'err', text: res.error || 'Purge failed.' });
-                            return;
-                          }
-                          setFeedback({
-                            type: 'ok',
-                            text: `Purged @${inspectedUser.handle} and associated workspace content.`,
-                          });
-                          setInspectedUser(null);
-                        }}
-                        className="min-h-[36px] px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
-                      >
-                        Confirm Purge
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmPurgeUid(null)}
-                        className="min-h-[36px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer"
-                      >
-                        Cancel
-                      </button>
+                  {/* Purge Danger Zone */}
+                  {onPurgeUser && inspectedUser.uid !== currentAdminUid && (
+                    <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/30 p-4 space-y-2.5">
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-bold text-red-700 dark:text-red-300">
+                          Purge User &amp; Content
+                        </p>
+                        <p className="text-[11px] text-red-700/80 dark:text-red-300/80">
+                          Deletes profile, posts, and 24h stories permanently. This action cannot be undone.
+                        </p>
+                      </div>
+
+                      {confirmPurgeUid === inspectedUser.uid ? (
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            disabled={busyUid === inspectedUser.uid}
+                            onClick={async () => {
+                              setBusyUid(inspectedUser.uid);
+                              const res = await onPurgeUser(inspectedUser.uid);
+                              setBusyUid(null);
+                              if (!res.ok) {
+                                setFeedback({ type: 'err', text: res.error || 'Purge failed.' });
+                                return;
+                              }
+                              setFeedback({
+                                type: 'ok',
+                                text: `Purged @${inspectedUser.handle} and associated workspace content.`,
+                              });
+                              setInspectedUser(null);
+                            }}
+                            className="min-h-[36px] px-3.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
+                          >
+                            Confirm Purge
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmPurgeUid(null)}
+                            className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmPurgeUid(inspectedUser.uid)}
+                          className="min-h-[36px] px-3.5 rounded-lg border border-red-300 dark:border-red-800 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Purge Account</span>
+                        </button>
+                      )}
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmPurgeUid(inspectedUser.uid)}
-                      className="min-h-[36px] px-3 rounded-lg border border-red-300 dark:border-red-800 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 inline-flex items-center gap-1.5 cursor-pointer shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                      <span>Purge Account</span>
-                    </button>
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Sheet Footer */}
+            <div className="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70 flex items-center justify-between gap-3 shrink-0">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                Press <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-[10px]">Esc</kbd> to exit
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectedUser(null);
+                  setConfirmPurgeUid(null);
+                }}
+                className="min-h-[36px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shadow-xs"
+              >
+                Close Inspector
+              </button>
             </div>
           </div>
         </div>
@@ -620,7 +891,14 @@ export function UsersDirectorySection({
                 const isBusy = busyUid === user.uid;
 
                 return (
-                  <div key={user.uid} className="p-4 space-y-3">
+                  <div
+                    key={user.uid}
+                    className={`p-4 space-y-3 transition-colors ${
+                      inspectedUser?.uid === user.uid
+                        ? 'bg-blue-50/50 dark:bg-blue-950/30 ring-1 ring-blue-500/30 rounded-xl'
+                        : ''
+                    }`}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar
@@ -668,9 +946,13 @@ export function UsersDirectorySection({
                         <button
                           type="button"
                           onClick={() => setInspectedUser((prev) => (prev?.uid === user.uid ? null : user))}
-                          className="min-h-[38px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          className={`min-h-[38px] px-3 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                            inspectedUser?.uid === user.uid
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
                         >
-                          {inspectedUser?.uid === user.uid ? 'Hide' : 'Details'}
+                          {inspectedUser?.uid === user.uid ? 'Close' : 'Details'}
                         </button>
                         {!isSelf && (
                           <>
@@ -750,7 +1032,11 @@ export function UsersDirectorySection({
                     return (
                       <tr
                         key={user.uid}
-                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors"
+                        className={`transition-colors ${
+                          inspectedUser?.uid === user.uid
+                            ? 'bg-blue-50/70 dark:bg-blue-950/40'
+                            : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/30'
+                        }`}
                       >
                         <td className="py-3.5 px-6">
                           <div className="flex items-center gap-3.5 min-w-0">
@@ -815,9 +1101,13 @@ export function UsersDirectorySection({
                                   prev?.uid === user.uid ? null : user
                                 )
                               }
-                              className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              className={`min-h-[36px] px-3 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                                inspectedUser?.uid === user.uid
+                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                  : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                              }`}
                             >
-                              {inspectedUser?.uid === user.uid ? 'Hide' : 'Details'}
+                              {inspectedUser?.uid === user.uid ? 'Close' : 'Details'}
                             </button>
 
                             {!isSelf && (

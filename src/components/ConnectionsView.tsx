@@ -11,6 +11,7 @@ import {
 import type { ConnectionsTab, UserProfile } from '../types/social';
 import { filterUsersByQuery } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface ConnectionsViewProps {
   initialTab?: ConnectionsTab;
@@ -203,8 +204,9 @@ export function ConnectionsView({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span className="text-sm font-semibold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                        {person.displayName}
+                      <span className="text-sm font-semibold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1.5">
+                        <span className="truncate">{person.displayName}</span>
+                        {person.isVerified && <VerifiedBadge size={14} />}
                         {isSelf ? ' (You)' : ''}
                       </span>
                       {!isSelf && isMutualFriend && (

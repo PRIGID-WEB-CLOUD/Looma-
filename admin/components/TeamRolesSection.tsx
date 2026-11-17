@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { KeyRound, ShieldCheck, UserPlus } from 'lucide-react';
 import { Avatar } from '../../src/components/Avatar';
+import { VerifiedBadge } from '../../src/components/VerifiedBadge';
 import type { UserProfile } from '../../src/types/social';
 import {
   ADMIN_EMAILS,
@@ -126,9 +127,10 @@ export function TeamRolesSection({
             {ADMIN_EMAILS.map((addr) => (
               <li
                 key={addr}
-                className="flex items-center gap-2 py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 truncate"
+                className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
               >
                 <span className="truncate">{addr}</span>
+                <VerifiedBadge size={14} />
               </li>
             ))}
           </ul>
@@ -164,11 +166,12 @@ export function TeamRolesSection({
                     <div className="min-w-0 space-y-1.5 flex items-start gap-3.5">
                       <Avatar name={entry.displayName} size="md" />
                       <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                             {entry.displayName}
                             {isSelf ? ' (You)' : ''}
                           </span>
+                          <VerifiedBadge size={14} />
                           <span className="font-mono text-[11px] uppercase font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
                             {entry.role.replace('_', ' ')}
                           </span>
