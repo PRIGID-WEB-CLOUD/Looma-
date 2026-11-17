@@ -29,7 +29,10 @@ service cloud.firestore {
 
     function isAdmin() {
       return isVerifiedUser() && (
-        request.auth.token.email in ['prigidwebcloud@gmail.com', 'prigidholdings@gmail.com']
+        (
+          request.auth.token.email is string
+          && request.auth.token.email.lower() in ['prigidwebcloud@gmail.com', 'prigidholdings@gmail.com']
+        )
         || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -637,7 +640,7 @@ service cloud.firestore {
 
     match /posts/{postId} {
       allow get: if isVerifiedUser() && isValidId(postId);
-      allow list: if isVerifiedUser() && resource.data.category in ['Architecture', 'Photography', 'Design', 'Travel', 'Journal'];
+      allow list: if isVerifiedUser() && (resource.data.category in ['Architecture', 'Photography', 'Design', 'Travel', 'Journal'] || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(postId)
         && isValidPost(incoming())
@@ -846,7 +849,7 @@ service cloud.firestore {
 
     match /stories/{storyId} {
       allow get: if isVerifiedUser() && isValidId(storyId);
-      allow list: if isVerifiedUser() && resource.data.expiresAtMs > 0;
+      allow list: if isVerifiedUser() && (resource.data.expiresAtMs > 0 || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(storyId)
         && isValidStory(incoming())

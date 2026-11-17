@@ -1,6 +1,7 @@
 import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
+  Timestamp,
   collection,
   deleteDoc,
   doc,
@@ -96,6 +97,20 @@ class AdminErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundar
   }
 }
 
+function timestampToMs(val: unknown, fallback: number = Date.now()): number {
+  if (val instanceof Timestamp) return val.toMillis();
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (
+    val &&
+    typeof val === 'object' &&
+    'toMillis' in val &&
+    typeof (val as { toMillis: () => number }).toMillis === 'function'
+  ) {
+    return (val as { toMillis: () => number }).toMillis();
+  }
+  return fallback;
+}
+
 function createEmptyAdminProfile(): UserProfile {
   return {
     uid: '',
@@ -123,6 +138,7 @@ function AdminAppInner(_props: AdminAppProps) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [firestoreConnected, setFirestoreConnected] = useState<boolean | null>(null);
+  const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
 
   const [currentProfile, setCurrentProfile] = useState<UserProfile>(createEmptyAdminProfile);
   const [communityUsers, setCommunityUsers] = useState<UserProfile[]>([]);
@@ -375,6 +391,25 @@ function AdminAppInner(_props: AdminAppProps) {
     firebaseUser,
   });
 
+  const reportSyncError = useCallback((err: unknown, path: string) => {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      handleFirestoreError(err, OperationType.LIST, path);
+    } catch {
+      // Structured Firestore error already logged by handleFirestoreError; surface in UI instead of crashing listener.
+    }
+    setSyncErrors((prev) => ({ ...prev, [path]: message }));
+  }, []);
+
+  const clearSyncError = useCallback((path: string) => {
+    setSyncErrors((prev) => {
+      if (!(path in prev)) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+  }, []);
+
   // Guarded Firestore real-time subscriptions (only after Admin RBAC passes)
   useEffect(() => {
     if (!firebaseUser || !adminAuth.isAdmin) {
@@ -392,10 +427,34 @@ function AdminAppInner(_props: AdminAppProps) {
       setFeatureFlags(DEFAULT_FEATURE_FLAGS);
       setAuditLogs([]);
       setInquiries([]);
+      setSyncErrors({});
       return;
     }
 
     void runHealthProbes();
+
+    // Ensure allowlisted bootstrap operator has a persisted /admins/{uid} document
+    if (adminAuth.reason === 'ok-allowlist' && !adminAuth.checkingAdminDoc && firebaseUser.email) {
+      const adminRef = doc(db, 'admins', firebaseUser.uid);
+      void getDoc(adminRef)
+        .then((snap) => {
+          if (snap.exists()) return;
+          return setDoc(adminRef, {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email!.trim().toLowerCase(),
+            displayName:
+              (firebaseUser.displayName || firebaseUser.email!.split('@')[0] || 'Admin Operator').slice(0, 60),
+            role: 'super_admin',
+            permissions: ADMIN_ROLE_PERMISSIONS.super_admin,
+            grantedBy: firebaseUser.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        })
+        .catch(() => {
+          // Non-fatal; allowlist still grants access
+        });
+    }
 
     const unsubs: Array<() => void> = [];
 
@@ -403,11 +462,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'users'),
         (snap) => {
+          clearSyncError('users');
           const list: UserProfile[] = [];
-          snap.forEach((d) => list.push({ ...(d.data() as UserProfile), uid: d.id }));
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as UserProfile),
+              uid: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setCommunityUsers(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'users')
+        (err) => reportSyncError(err, 'users')
       )
     );
 
@@ -415,11 +483,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'posts'),
         (snap) => {
+          clearSyncError('posts');
           const list: Post[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Post, 'id'>) }));
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<Post, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setPosts(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'posts')
+        (err) => reportSyncError(err, 'posts')
       )
     );
 
@@ -427,10 +504,15 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'stories'),
         (snap) => {
+          clearSyncError('stories');
           const byAuthor = new Map<string, StoryGroup>();
           snap.forEach((d) => {
-            const data = d.data() as Omit<StoryItem, 'id'>;
-            const story: StoryItem = { id: d.id, ...data };
+            const raw = d.data() as Record<string, unknown>;
+            const story: StoryItem = {
+              ...(raw as unknown as Omit<StoryItem, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+            };
             const existing = byAuthor.get(story.authorId);
             if (!existing) {
               byAuthor.set(story.authorId, {
@@ -439,7 +521,7 @@ function AdminAppInner(_props: AdminAppProps) {
                 authorHandle: story.authorHandle,
                 authorAvatar: story.authorAvatar,
                 hasUnviewed: true,
-                latestCreatedAtMs: story.createdAtMs || Date.now(),
+                latestCreatedAtMs: story.createdAtMs,
                 items: [story],
               });
             } else {
@@ -461,7 +543,7 @@ function AdminAppInner(_props: AdminAppProps) {
             )
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'stories')
+        (err) => reportSyncError(err, 'stories')
       )
     );
 
@@ -469,6 +551,7 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'presence'),
         (snap) => {
+          clearSyncError('presence');
           const online: string[] = [];
           snap.forEach((d) => {
             const data = d.data() as { online?: boolean };
@@ -476,7 +559,7 @@ function AdminAppInner(_props: AdminAppProps) {
           });
           setOnlineUserIds(online);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'presence')
+        (err) => reportSyncError(err, 'presence')
       )
     );
 
@@ -484,11 +567,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'admins'),
         (snap) => {
+          clearSyncError('admins');
           const list: AdminRoleEntry[] = [];
-          snap.forEach((d) => list.push({ ...(d.data() as AdminRoleEntry), uid: d.id }));
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as AdminRoleEntry),
+              uid: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setAdminRoles(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'admins')
+        (err) => reportSyncError(err, 'admins')
       )
     );
 
@@ -496,10 +588,16 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'userModeration'),
         (snap) => {
+          clearSyncError('userModeration');
           const map: Record<string, MemberModerationRecord> = {};
           const restrictedUids: string[] = [];
           snap.forEach((d) => {
-            const record = { ...(d.data() as MemberModerationRecord), uid: d.id };
+            const raw = d.data() as Record<string, unknown>;
+            const record: MemberModerationRecord = {
+              ...(raw as unknown as MemberModerationRecord),
+              uid: d.id,
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            };
             map[d.id] = record;
             if (record.status === 'restricted') {
               restrictedUids.push(d.id);
@@ -508,7 +606,7 @@ function AdminAppInner(_props: AdminAppProps) {
           setMemberModerationRecords(map);
           setModeration((prev) => ({ ...prev, restrictedUids }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'userModeration')
+        (err) => reportSyncError(err, 'userModeration')
       )
     );
 
@@ -516,13 +614,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'reports'),
         (snap) => {
+          clearSyncError('reports');
           const list: ContentReport[] = [];
-          snap.forEach((d) =>
-            list.push({ id: d.id, ...(d.data() as Omit<ContentReport, 'id'>) })
-          );
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<ContentReport, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setReports(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'reports')
+        (err) => reportSyncError(err, 'reports')
       )
     );
 
@@ -530,13 +635,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'appeals'),
         (snap) => {
+          clearSyncError('appeals');
           const list: ModerationAppeal[] = [];
-          snap.forEach((d) =>
-            list.push({ id: d.id, ...(d.data() as Omit<ModerationAppeal, 'id'>) })
-          );
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<ModerationAppeal, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setAppeals(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'appeals')
+        (err) => reportSyncError(err, 'appeals')
       )
     );
 
@@ -544,13 +656,20 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'announcements'),
         (snap) => {
+          clearSyncError('announcements');
           const list: PlatformAnnouncement[] = [];
-          snap.forEach((d) =>
-            list.push({ id: d.id, ...(d.data() as Omit<PlatformAnnouncement, 'id'>) })
-          );
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<PlatformAnnouncement, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setAnnouncements(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'announcements')
+        (err) => reportSyncError(err, 'announcements')
       )
     );
 
@@ -558,18 +677,27 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'adminConfig'),
         (snap) => {
+          clearSyncError('adminConfig');
           let nextHiddenPosts: string[] = [];
           let hasFlags = false;
           let hasGuidelines = false;
           snap.forEach((d) => {
             if (d.id === 'featureFlags') {
               hasFlags = true;
-              const data = d.data() as Partial<AdminFeatureFlags>;
-              setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...data });
+              const raw = d.data() as Record<string, unknown>;
+              setFeatureFlags({
+                ...DEFAULT_FEATURE_FLAGS,
+                ...(raw as Partial<AdminFeatureFlags>),
+                updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt, 0),
+              });
             } else if (d.id === 'guidelines') {
               hasGuidelines = true;
-              const data = d.data() as Partial<CommunityGuidelinesConfig>;
-              setGuidelines({ ...DEFAULT_COMMUNITY_GUIDELINES, ...data });
+              const raw = d.data() as Record<string, unknown>;
+              setGuidelines({
+                ...DEFAULT_COMMUNITY_GUIDELINES,
+                ...(raw as Partial<CommunityGuidelinesConfig>),
+                updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt, 0),
+              });
             } else if (d.id === 'hiddenPosts') {
               const data = d.data() as { hiddenPostIds?: string[] };
               if (Array.isArray(data.hiddenPostIds)) {
@@ -585,7 +713,7 @@ function AdminAppInner(_props: AdminAppProps) {
           }
           setModeration((prev) => ({ ...prev, hiddenPostIds: nextHiddenPosts }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'adminConfig')
+        (err) => reportSyncError(err, 'adminConfig')
       )
     );
 
@@ -593,13 +721,19 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'adminAuditLogs'),
         (snap) => {
+          clearSyncError('adminAuditLogs');
           const list: AdminAuditEntry[] = [];
-          snap.forEach((d) =>
-            list.push({ id: d.id, ...(d.data() as Omit<AdminAuditEntry, 'id'>) })
-          );
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<AdminAuditEntry, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+            });
+          });
           setAuditLogs(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'adminAuditLogs')
+        (err) => reportSyncError(err, 'adminAuditLogs')
       )
     );
 
@@ -607,20 +741,35 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'accessInquiries'),
         (snap) => {
+          clearSyncError('accessInquiries');
           const list: AdminAccessInquiry[] = [];
-          snap.forEach((d) =>
-            list.push({ id: d.id, ...(d.data() as Omit<AdminAccessInquiry, 'id'>) })
-          );
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              ...(raw as unknown as Omit<AdminAccessInquiry, 'id'>),
+              id: d.id,
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
           setInquiries(list);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'accessInquiries')
+        (err) => reportSyncError(err, 'accessInquiries')
       )
     );
 
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [adminAuth.isAdmin, firebaseUser, runHealthProbes]);
+  }, [
+    adminAuth.checkingAdminDoc,
+    adminAuth.isAdmin,
+    adminAuth.reason,
+    clearSyncError,
+    firebaseUser,
+    reportSyncError,
+    runHealthProbes,
+  ]);
 
   const recordAudit = useCallback(
     async (action: string, targetType: string, targetId: string, summary: string) => {
@@ -1145,6 +1294,7 @@ function AdminAppInner(_props: AdminAppProps) {
       currentProfile={currentProfile}
       accountEmail={firebaseUser?.email || null}
       firestoreConnected={firestoreConnected}
+      syncErrors={syncErrors}
       authError={authError}
       communityUsers={communityUsers}
       posts={posts}

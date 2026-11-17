@@ -63,6 +63,7 @@ interface AdminViewProps {
   currentProfile: UserProfile;
   accountEmail: string | null;
   firestoreConnected: boolean | null;
+  syncErrors?: Record<string, string>;
   authError: string | null;
   communityUsers: UserProfile[];
   posts: Post[];
@@ -152,6 +153,7 @@ export function AdminView({
   currentProfile,
   accountEmail,
   firestoreConnected,
+  syncErrors = {},
   authError,
   communityUsers,
   posts,
@@ -631,8 +633,10 @@ export function AdminView({
           </nav>
         </header>
 
-        {/* Contextual Banner: Maintenance Mode or Offline Connection */}
-        {(featureFlags.maintenanceMode || firestoreConnected === false) && (
+        {/* Contextual Banner: Maintenance Mode, Offline Connection, or Firestore Sync Warnings */}
+        {(featureFlags.maintenanceMode ||
+          firestoreConnected === false ||
+          Object.keys(syncErrors).length > 0) && (
           <div className="px-4 md:px-8 pt-4 max-w-6xl w-full mx-auto space-y-2">
             {featureFlags.maintenanceMode && (
               <div className="rounded-lg border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5 text-xs font-medium text-amber-800 dark:text-amber-300">
@@ -642,6 +646,18 @@ export function AdminView({
             {firestoreConnected === false && (
               <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-xs font-medium text-red-700 dark:text-red-300">
                 Unable to reach Firestore server telemetry check. Verify network connectivity.
+              </div>
+            )}
+            {Object.keys(syncErrors).length > 0 && (
+              <div
+                role="alert"
+                className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-xs font-medium text-red-700 dark:text-red-300"
+              >
+                Firestore permission or sync issue on{' '}
+                <span className="font-mono font-semibold">
+                  {Object.keys(syncErrors).join(', ')}
+                </span>
+                : {Object.values(syncErrors)[0]}
               </div>
             )}
           </div>
