@@ -19,6 +19,42 @@
     "paths": {
       "@/*": [
         "../*"
+      ],
+      "react": [
+        "./node_modules/@types/react/index.d.ts",
+        "../node_modules/@types/react/index.d.ts"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*",
+        "../node_modules/@types/react/*"
+      ],
+      "react-dom": [
+        "./node_modules/@types/react-dom/index.d.ts",
+        "../node_modules/@types/react-dom/index.d.ts"
+      ],
+      "react-dom/*": [
+        "./node_modules/@types/react-dom/*",
+        "../node_modules/@types/react-dom/*"
+      ],
+      "firebase/*": [
+        "./node_modules/firebase/*",
+        "../node_modules/firebase/*"
+      ],
+      "lucide-react": [
+        "./node_modules/lucide-react/dist/lucide-react.d.ts",
+        "../node_modules/lucide-react/dist/lucide-react.d.ts"
+      ],
+      "hono": [
+        "./node_modules/hono",
+        "../node_modules/hono"
+      ],
+      "hono/*": [
+        "./node_modules/hono/*",
+        "../node_modules/hono/*"
+      ],
+      "@aws-sdk/*": [
+        "./node_modules/@aws-sdk/*",
+        "../node_modules/@aws-sdk/*"
       ]
     },
     "allowImportingTsExtensions": true,

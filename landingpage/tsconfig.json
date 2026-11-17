@@ -19,11 +19,31 @@
     "paths": {
       "@/*": [
         "../*"
+      ],
+      "react": [
+        "./node_modules/@types/react/index.d.ts",
+        "../node_modules/@types/react/index.d.ts"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*",
+        "../node_modules/@types/react/*"
+      ],
+      "react-dom": [
+        "./node_modules/@types/react-dom/index.d.ts",
+        "../node_modules/@types/react-dom/index.d.ts"
+      ],
+      "react-dom/*": [
+        "./node_modules/@types/react-dom/*",
+        "../node_modules/@types/react-dom/*"
+      ],
+      "lucide-react": [
+        "./node_modules/lucide-react/dist/lucide-react.d.ts",
+        "../node_modules/lucide-react/dist/lucide-react.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "../src/types/**/*.ts", "../src/utils/**/*.ts"],
+  "include": ["./**/*.ts", "./**/*.tsx", "../src/types/**/*.ts", "../src/utils/legalLogic.ts"],
   "exclude": ["dist"]
 }
