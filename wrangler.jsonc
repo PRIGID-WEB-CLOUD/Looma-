@@ -55,7 +55,6 @@
       "name": "looma-landing",
       "assets": {
         "directory": "./dist-landing",
-        "binding": "ASSETS",
         "not_found_handling": "single-page-application"
       }
     }
