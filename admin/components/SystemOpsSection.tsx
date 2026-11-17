@@ -118,7 +118,7 @@ export function SystemOpsSection({
                   className={`font-mono text-[11px] uppercase font-bold ${
                     probe.status === 'healthy'
                       ? 'text-emerald-700 dark:text-emerald-400'
-                      : probe.status === 'degraded' || probe.status === 'preview'
+                      : probe.status === 'degraded'
                         ? 'text-amber-700 dark:text-amber-400'
                         : 'text-red-600 dark:text-red-400'
                   }`}

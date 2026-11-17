@@ -18,10 +18,6 @@ export const ADMIN_EMAILS = [
   'prigidholdings@gmail.com',
 ] as const;
 
-export const ADMIN_MODERATION_STORAGE_KEY = 'looma_admin_moderation_v1';
-export const ADMIN_INQUIRIES_STORAGE_KEY = 'looma_admin_inquiries_v1';
-export const ADMIN_PREVIEW_STATE_STORAGE_KEY = 'looma_admin_preview_state_v1';
-
 export interface AdminModerationState {
   hiddenPostIds: string[];
   restrictedUids: string[];
@@ -179,7 +175,7 @@ export interface AdminAuditEntry {
 export interface SystemHealthProbe {
   id: string;
   service: string;
-  status: 'healthy' | 'degraded' | 'offline' | 'preview';
+  status: 'healthy' | 'degraded' | 'offline';
   detail: string;
   checkedAtMs: number;
   latencyMs: number | null;
@@ -225,7 +221,6 @@ export interface AdminAuthorizationInput {
   email: string | null | undefined;
   emailVerified: boolean;
   hasAdminDoc?: boolean;
-  isLocalAutostart?: boolean;
 }
 
 export interface AdminAuthorizationResult {
@@ -233,7 +228,6 @@ export interface AdminAuthorizationResult {
   reason:
     | 'ok-admin-doc'
     | 'ok-allowlist'
-    | 'ok-local-preview'
     | 'unauthenticated'
     | 'unverified'
     | 'forbidden';
@@ -280,9 +274,6 @@ export function resolveAdminAuthorization(
   if (!input.isAuthorized) {
     return { isAdmin: false, reason: 'unauthenticated' };
   }
-  if (input.isLocalAutostart) {
-    return { isAdmin: true, reason: 'ok-local-preview' };
-  }
   if (!input.emailVerified) {
     return { isAdmin: false, reason: 'unverified' };
   }
@@ -293,32 +284,6 @@ export function resolveAdminAuthorization(
     return { isAdmin: true, reason: 'ok-allowlist' };
   }
   return { isAdmin: false, reason: 'forbidden' };
-}
-
-export function readAdminModerationState(): AdminModerationState {
-  if (typeof window === 'undefined') {
-    return { hiddenPostIds: [], restrictedUids: [] };
-  }
-  try {
-    const raw = window.localStorage.getItem(ADMIN_MODERATION_STORAGE_KEY);
-    if (!raw) return { hiddenPostIds: [], restrictedUids: [] };
-    const parsed = JSON.parse(raw) as Partial<AdminModerationState>;
-    return {
-      hiddenPostIds: Array.isArray(parsed.hiddenPostIds) ? parsed.hiddenPostIds : [],
-      restrictedUids: Array.isArray(parsed.restrictedUids) ? parsed.restrictedUids : [],
-    };
-  } catch {
-    return { hiddenPostIds: [], restrictedUids: [] };
-  }
-}
-
-export function saveAdminModerationState(state: AdminModerationState): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(ADMIN_MODERATION_STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // Ignore storage quota issues cleanly
-  }
 }
 
 export function toggleHiddenPostId(
@@ -342,27 +307,6 @@ export function toggleRestrictedMemberUid(
   return restrictedUids.includes(targetUid)
     ? restrictedUids.filter((id) => id !== targetUid)
     : [...restrictedUids, targetUid];
-}
-
-export function readAdminAccessInquiries(): AdminAccessInquiry[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(ADMIN_INQUIRIES_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as AdminAccessInquiry[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveAdminAccessInquiries(inquiries: AdminAccessInquiry[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(ADMIN_INQUIRIES_STORAGE_KEY, JSON.stringify(inquiries));
-  } catch {
-    // Ignore storage quota issues cleanly
-  }
 }
 
 export function updateAccessInquiryStatus(
@@ -452,7 +396,7 @@ export function computeExtendedWorkspaceMetrics(input: {
     pendingAppeals: input.appeals.filter((a) => a.status === 'pending').length,
     activeAnnouncements: input.announcements.filter((a) => a.active).length,
     totalEngagement,
-    adminOperators: Math.max(input.adminRoles.length, ADMIN_EMAILS.length),
+    adminOperators: input.adminRoles.length,
   };
 }
 
@@ -827,360 +771,3 @@ export function countExpiredStories(
   return expired;
 }
 
-export interface AutostartAdminSeed {
-  currentProfile: UserProfile;
-  communityUsers: UserProfile[];
-  posts: Post[];
-  storyGroups: StoryGroup[];
-  onlineUserIds: string[];
-  moderation: AdminModerationState;
-  memberModerationRecords: Record<string, MemberModerationRecord>;
-  adminRoles: AdminRoleEntry[];
-  reports: ContentReport[];
-  appeals: ModerationAppeal[];
-  announcements: PlatformAnnouncement[];
-  guidelines: CommunityGuidelinesConfig;
-  featureFlags: AdminFeatureFlags;
-  auditLogs: AdminAuditEntry[];
-  inquiries: AdminAccessInquiry[];
-}
-
-export function createAutostartAdminSeed(nowMs: number = Date.now()): AutostartAdminSeed {
-  const currentProfile: UserProfile = {
-    uid: 'admin_operator_1',
-    displayName: 'Elena Vance',
-    handle: 'elena.ops',
-    bio: 'Trust & Safety Lead at Looma',
-    avatarUrl: '',
-    location: 'London, UK',
-    interests: ['Architecture', 'Design'],
-    followersCount: 184,
-    followingCount: 42,
-    onboardingCompleted: true,
-    createdAtMs: nowMs - 86_400_000 * 30,
-    updatedAtMs: nowMs - 120_000,
-  };
-
-  const communityUsers: UserProfile[] = [
-    {
-      uid: 'u_sophia',
-      displayName: 'Sophia Chen',
-      handle: 'sophia.studio',
-      bio: 'Architectural photographer and brutalism researcher.',
-      avatarUrl: '',
-      location: 'San Francisco, US',
-      interests: ['Architecture', 'Photography'],
-      followersCount: 1290,
-      followingCount: 310,
-      onboardingCompleted: true,
-      createdAtMs: nowMs - 86_400_000 * 14,
-      updatedAtMs: nowMs - 300_000,
-    },
-    {
-      uid: 'u_marcus',
-      displayName: 'Marcus Sterling',
-      handle: 'm.sterling',
-      bio: 'Industrial designer exploring acoustic materials.',
-      avatarUrl: '',
-      location: 'Berlin, DE',
-      interests: ['Design', 'Travel'],
-      followersCount: 642,
-      followingCount: 195,
-      onboardingCompleted: true,
-      createdAtMs: nowMs - 86_400_000 * 9,
-      updatedAtMs: nowMs - 900_000,
-    },
-    {
-      uid: 'u_kofi',
-      displayName: 'Kofi Mensah',
-      handle: 'kofi.fieldnotes',
-      bio: 'Sound recordist and visual essayist.',
-      avatarUrl: '',
-      location: 'Accra, GH',
-      interests: ['Journal', 'Photography'],
-      followersCount: 418,
-      followingCount: 88,
-      onboardingCompleted: true,
-      createdAtMs: nowMs - 86_400_000 * 6,
-      updatedAtMs: nowMs - 3_600_000,
-    },
-    {
-      uid: 'u_spammer_test',
-      displayName: 'Promo Bot 904',
-      handle: 'promo_deals_904',
-      bio: 'Automated promotional links.',
-      avatarUrl: '',
-      location: 'Unknown',
-      interests: ['Travel'],
-      followersCount: 3,
-      followingCount: 912,
-      onboardingCompleted: false,
-      createdAtMs: nowMs - 86_400_000 * 1,
-      updatedAtMs: nowMs - 1_800_000,
-    },
-  ];
-
-  const posts: Post[] = [
-    {
-      id: 'post_arch_1',
-      authorId: 'u_sophia',
-      authorName: 'Sophia Chen',
-      authorHandle: 'sophia.studio',
-      authorAvatar: '',
-      caption: 'Morning shadows across cast concrete ribs at the civic pavilion.',
-      imageUrl: '',
-      category: 'Architecture',
-      likesCount: 84,
-      commentsCount: 14,
-      createdAtMs: nowMs - 1_800_000,
-      updatedAtMs: nowMs - 1_800_000,
-    },
-    {
-      id: 'post_design_2',
-      authorId: 'u_marcus',
-      authorName: 'Marcus Sterling',
-      authorHandle: 'm.sterling',
-      authorAvatar: '',
-      caption: 'Acoustic baffle prototype tests wrapped up in studio B.',
-      imageUrl: '',
-      audioUrl: 'voice://prototype-test',
-      mediaTitle: 'Studio B acoustic decay test',
-      category: 'Design',
-      likesCount: 49,
-      commentsCount: 7,
-      createdAtMs: nowMs - 5_400_000,
-      updatedAtMs: nowMs - 5_400_000,
-    },
-    {
-      id: 'post_journal_3',
-      authorId: 'u_kofi',
-      authorName: 'Kofi Mensah',
-      authorHandle: 'kofi.fieldnotes',
-      authorAvatar: '',
-      caption: 'Field notes on coastal wind corridors and monsoon drainage geometry.',
-      imageUrl: '',
-      linkUrl: 'https://looma.studio/notes/wind-corridors',
-      mediaTitle: 'Coastal Wind Corridors',
-      category: 'Journal',
-      likesCount: 31,
-      commentsCount: 5,
-      createdAtMs: nowMs - 14_400_000,
-      updatedAtMs: nowMs - 14_400_000,
-    },
-    {
-      id: 'post_flagged_4',
-      authorId: 'u_spammer_test',
-      authorName: 'Promo Bot 904',
-      authorHandle: 'promo_deals_904',
-      authorAvatar: '',
-      caption: 'GET 90% OFF EXTERNAL CRYPTO SIGNALS CLICK HERE FAST >>>',
-      imageUrl: '',
-      category: 'Travel',
-      likesCount: 0,
-      commentsCount: 0,
-      createdAtMs: nowMs - 900_000,
-      updatedAtMs: nowMs - 900_000,
-    },
-  ];
-
-  const storyGroups: StoryGroup[] = [
-    {
-      authorId: 'u_sophia',
-      authorName: 'Sophia Chen',
-      authorHandle: 'sophia.studio',
-      authorAvatar: '',
-      hasUnviewed: true,
-      latestCreatedAtMs: nowMs - 2_400_000,
-      items: [
-        {
-          id: 'story_1',
-          authorId: 'u_sophia',
-          authorName: 'Sophia Chen',
-          authorHandle: 'sophia.studio',
-          authorAvatar: '',
-          imageUrl: '',
-          caption: 'Golden hour facade light inspection.',
-          createdAtMs: nowMs - 2_400_000,
-          expiresAtMs: nowMs + 84_000_000,
-        },
-        {
-          id: 'story_expired_legacy',
-          authorId: 'u_sophia',
-          authorName: 'Sophia Chen',
-          authorHandle: 'sophia.studio',
-          authorAvatar: '',
-          imageUrl: '',
-          caption: 'Yesterday daylight archive frame.',
-          createdAtMs: nowMs - 90_000_000,
-          expiresAtMs: nowMs - 3_600_000,
-        },
-      ],
-    },
-  ];
-
-  const memberModerationRecords: Record<string, MemberModerationRecord> = {
-    u_spammer_test: {
-      uid: 'u_spammer_test',
-      status: 'restricted',
-      reason: 'Automated promotional link spam triggered threshold.',
-      updatedBy: 'admin_operator_1',
-      updatedAtMs: nowMs - 600_000,
-    },
-  };
-
-  const adminRoles: AdminRoleEntry[] = [
-    {
-      uid: 'admin_operator_1',
-      email: 'prigidholdings@gmail.com',
-      displayName: 'Elena Vance',
-      role: 'super_admin',
-      permissions: [...ADMIN_ROLE_PERMISSIONS.super_admin],
-      grantedBy: 'system',
-      createdAtMs: nowMs - 86_400_000 * 30,
-      updatedAtMs: nowMs - 86_400_000 * 30,
-    },
-    {
-      uid: 'u_marcus',
-      email: 'prigidwebcloud@gmail.com',
-      displayName: 'Marcus Sterling',
-      role: 'moderator',
-      permissions: [...ADMIN_ROLE_PERMISSIONS.moderator],
-      grantedBy: 'admin_operator_1',
-      createdAtMs: nowMs - 86_400_000 * 7,
-      updatedAtMs: nowMs - 86_400_000 * 7,
-    },
-  ];
-
-  const reports: ContentReport[] = [
-    {
-      id: 'rep_spam_01',
-      targetType: 'post',
-      targetId: 'post_flagged_4',
-      targetAuthorUid: 'u_spammer_test',
-      targetSummary: 'GET 90% OFF EXTERNAL CRYPTO SIGNALS CLICK HERE FAST >>>',
-      reporterUid: 'u_sophia',
-      reporterName: 'Sophia Chen',
-      category: 'spam',
-      severity: 'high',
-      reason: 'Unsolicited mass promotional link targeting Travel topic feed.',
-      status: 'open',
-      resolutionAction: '',
-      reviewedBy: '',
-      reviewedAtMs: 0,
-      createdAtMs: nowMs - 700_000,
-      updatedAtMs: nowMs - 700_000,
-    },
-    {
-      id: 'rep_attr_02',
-      targetType: 'story',
-      targetId: 'story_1',
-      targetAuthorUid: 'u_sophia',
-      targetSummary: 'Golden hour facade light inspection.',
-      reporterUid: 'u_kofi',
-      reporterName: 'Kofi Mensah',
-      category: 'copyright',
-      severity: 'low',
-      reason: 'Missing architect credit line in story caption (advisory check).',
-      status: 'reviewing',
-      resolutionAction: 'Pending attribution note',
-      reviewedBy: 'admin_operator_1',
-      reviewedAtMs: nowMs - 300_000,
-      createdAtMs: nowMs - 3_200_000,
-      updatedAtMs: nowMs - 300_000,
-    },
-  ];
-
-  const appeals: ModerationAppeal[] = [
-    {
-      id: 'app_01',
-      appellantUid: 'u_spammer_test',
-      appellantName: 'Promo Bot 904',
-      appellantHandle: 'promo_deals_904',
-      reportId: 'rep_spam_01',
-      targetId: 'post_flagged_4',
-      reason: 'Requesting lifting of posting restriction after removing external affiliate links.',
-      status: 'pending',
-      reviewerUid: '',
-      reviewerNote: '',
-      createdAtMs: nowMs - 400_000,
-      updatedAtMs: nowMs - 400_000,
-    },
-  ];
-
-  const announcements: PlatformAnnouncement[] = [
-    {
-      id: 'ann_r2_audio',
-      title: 'Voice Note & Rich Link Unfurling Live',
-      body: 'Audio messaging pipelines on Cloudflare R2 and rich URL previews are now enabled across web and mobile.',
-      severity: 'info',
-      audience: 'all',
-      active: true,
-      authorUid: 'admin_operator_1',
-      authorName: 'Elena Vance',
-      createdAtMs: nowMs - 86_400_000 * 2,
-      updatedAtMs: nowMs - 86_400_000 * 2,
-    },
-  ];
-
-  const auditLogs: AdminAuditEntry[] = [
-    {
-      id: 'audit_init_1',
-      actorUid: 'admin_operator_1',
-      actorEmail: 'prigidholdings@gmail.com',
-      action: 'member.restrict',
-      targetType: 'user',
-      targetId: 'u_spammer_test',
-      summary: 'Restricted @promo_deals_904 after automated spam report.',
-      createdAtMs: nowMs - 600_000,
-    },
-    {
-      id: 'audit_init_2',
-      actorUid: 'admin_operator_1',
-      actorEmail: 'prigidholdings@gmail.com',
-      action: 'announcement.publish',
-      targetType: 'announcement',
-      targetId: 'ann_r2_audio',
-      summary: 'Published announcement: Voice Note & Rich Link Unfurling Live.',
-      createdAtMs: nowMs - 86_400_000 * 2,
-    },
-  ];
-
-  const inquiries: AdminAccessInquiry[] = [
-    {
-      id: 'inq_studio_1',
-      fullName: 'Nadia Patel',
-      email: 'nadia@nordic-atelier.org',
-      organization: 'Nordic Atelier',
-      note: 'Onboarding 12 architectural photographers to private studio feed.',
-      status: 'pending',
-      createdAtMs: nowMs - 4_200_000,
-    },
-  ];
-
-  return {
-    currentProfile,
-    communityUsers,
-    posts,
-    storyGroups,
-    onlineUserIds: ['admin_operator_1', 'u_sophia', 'u_marcus'],
-    moderation: {
-      hiddenPostIds: ['post_flagged_4'],
-      restrictedUids: ['u_spammer_test'],
-    },
-    memberModerationRecords,
-    adminRoles,
-    reports,
-    appeals,
-    announcements,
-    guidelines: {
-      ...DEFAULT_COMMUNITY_GUIDELINES,
-      updatedAtMs: nowMs - 86_400_000 * 5,
-    },
-    featureFlags: {
-      ...DEFAULT_FEATURE_FLAGS,
-      updatedAtMs: nowMs - 86_400_000 * 3,
-    },
-    auditLogs,
-    inquiries,
-  };
-}

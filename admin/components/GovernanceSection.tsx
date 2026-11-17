@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BookOpen, CheckCircle2, Megaphone, Plus, ShieldCheck } from 'lucide-react';
 import { formatRelativeTime } from '../../src/utils/socialLogic';
 import {
@@ -46,6 +46,12 @@ export function GovernanceSection({
   const [version, setVersion] = useState(guidelines.version);
   const [summary, setSummary] = useState(guidelines.summary);
   const [rulesText, setRulesText] = useState(guidelines.rulesText);
+
+  useEffect(() => {
+    setVersion(guidelines.version);
+    setSummary(guidelines.summary);
+    setRulesText(guidelines.rulesText);
+  }, [guidelines.rulesText, guidelines.summary, guidelines.version]);
 
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 

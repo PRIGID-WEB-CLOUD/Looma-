@@ -10,7 +10,6 @@ import {
 export function useAdminRole(input: {
   isAuthorized: boolean;
   firebaseUser: User | null;
-  isLocalAutostart: boolean;
 }): AdminAuthorizationResult & { checkingAdminDoc: boolean } {
   const [hasAdminDoc, setHasAdminDoc] = useState(false);
   const [checkingAdminDoc, setCheckingAdminDoc] = useState(false);
@@ -20,7 +19,7 @@ export function useAdminRole(input: {
   const emailVerified = Boolean(input.firebaseUser?.emailVerified);
 
   useEffect(() => {
-    if (!input.isAuthorized || !uid || !emailVerified || input.isLocalAutostart) {
+    if (!input.isAuthorized || !uid || !emailVerified) {
       setHasAdminDoc(false);
       setCheckingAdminDoc(false);
       return;
@@ -49,14 +48,13 @@ export function useAdminRole(input: {
     return () => {
       cancelled = true;
     };
-  }, [emailVerified, input.isAuthorized, input.isLocalAutostart, uid]);
+  }, [emailVerified, input.isAuthorized, uid]);
 
   const authorization = resolveAdminAuthorization({
     isAuthorized: input.isAuthorized,
     email,
     emailVerified,
     hasAdminDoc,
-    isLocalAutostart: input.isLocalAutostart,
   });
 
   return {

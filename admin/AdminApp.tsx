@@ -25,20 +25,14 @@ import {
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
 import type { Post, StoryGroup, StoryItem, ThemeMode, UserProfile } from '../src/types/social';
 import {
-  ADMIN_PREVIEW_STATE_STORAGE_KEY,
   ADMIN_ROLE_PERMISSIONS,
   DEFAULT_COMMUNITY_GUIDELINES,
   DEFAULT_FEATURE_FLAGS,
   appendAuditEntry,
   assignAdminRole,
   countExpiredStories,
-  createAutostartAdminSeed,
-  readAdminAccessInquiries,
-  readAdminModerationState,
   reviewAppealDecision,
   revokeAdminRole,
-  saveAdminAccessInquiries,
-  saveAdminModerationState,
   setMemberModerationStatus,
   toggleHiddenPostId,
   updateAccessInquiryStatus,
@@ -102,17 +96,21 @@ class AdminErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundar
   }
 }
 
-function isLocalhostPreview(): boolean {
-  if (typeof window === 'undefined') return false;
-  const host = window.location.hostname;
-  const params = new URLSearchParams(window.location.search);
-  const isPreviewHost =
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '0.0.0.0' ||
-    host.endsWith('.run.app') ||
-    host.includes('aistudio');
-  return params.get('autostart') === '1' && isPreviewHost;
+function createEmptyAdminProfile(): UserProfile {
+  return {
+    uid: '',
+    displayName: 'Admin Operator',
+    handle: 'admin',
+    avatarUrl: '',
+    bio: '',
+    location: '',
+    interests: [],
+    followersCount: 0,
+    followingCount: 0,
+    createdAtMs: Date.now(),
+    updatedAtMs: Date.now(),
+    onboardingCompleted: true,
+  };
 }
 
 export interface AdminAppProps {
@@ -120,87 +118,49 @@ export interface AdminAppProps {
 }
 
 function AdminAppInner(_props: AdminAppProps) {
-  const isLocalAutostart = isLocalhostPreview();
-  const initialSeed = isLocalAutostart ? createAutostartAdminSeed() : null;
-
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredThemePreference());
-  const [authReady, setAuthReady] = useState<boolean>(isLocalAutostart);
+  const [authReady, setAuthReady] = useState<boolean>(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [firestoreConnected, setFirestoreConnected] = useState<boolean | null>(
-    isLocalAutostart ? true : null
-  );
+  const [firestoreConnected, setFirestoreConnected] = useState<boolean | null>(null);
 
-  const [currentProfile, setCurrentProfile] = useState<UserProfile>(() =>
-    initialSeed
-      ? initialSeed.currentProfile
-      : {
-          uid: '',
-          displayName: 'Admin Operator',
-          handle: 'admin',
-          avatarUrl: '',
-          bio: '',
-          location: '',
-          interests: [],
-          followersCount: 0,
-          followingCount: 0,
-          createdAtMs: Date.now(),
-          updatedAtMs: Date.now(),
-          onboardingCompleted: true,
-        }
-  );
-
-  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>(
-    () => initialSeed?.communityUsers ?? []
-  );
-  const [posts, setPosts] = useState<Post[]>(() => initialSeed?.posts ?? []);
-  const [storyGroups, setStoryGroups] = useState<StoryGroup[]>(
-    () => initialSeed?.storyGroups ?? []
-  );
-  const [onlineUserIds, setOnlineUserIds] = useState<string[]>(
-    () => initialSeed?.onlineUserIds ?? []
-  );
-  const [moderation, setModeration] = useState<AdminModerationState>(() =>
-    initialSeed ? initialSeed.moderation : readAdminModerationState()
-  );
+  const [currentProfile, setCurrentProfile] = useState<UserProfile>(createEmptyAdminProfile);
+  const [communityUsers, setCommunityUsers] = useState<UserProfile[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+  const [moderation, setModeration] = useState<AdminModerationState>({
+    hiddenPostIds: [],
+    restrictedUids: [],
+  });
   const [memberModerationRecords, setMemberModerationRecords] = useState<
     Record<string, MemberModerationRecord>
-  >(() => initialSeed?.memberModerationRecords ?? {});
-  const [adminRoles, setAdminRoles] = useState<AdminRoleEntry[]>(
-    () => initialSeed?.adminRoles ?? []
-  );
-  const [reports, setReports] = useState<ContentReport[]>(() => initialSeed?.reports ?? []);
-  const [appeals, setAppeals] = useState<ModerationAppeal[]>(() => initialSeed?.appeals ?? []);
-  const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>(
-    () => initialSeed?.announcements ?? []
-  );
+  >({});
+  const [adminRoles, setAdminRoles] = useState<AdminRoleEntry[]>([]);
+  const [reports, setReports] = useState<ContentReport[]>([]);
+  const [appeals, setAppeals] = useState<ModerationAppeal[]>([]);
+  const [announcements, setAnnouncements] = useState<PlatformAnnouncement[]>([]);
   const [guidelines, setGuidelines] = useState<CommunityGuidelinesConfig>(
-    () => initialSeed?.guidelines ?? DEFAULT_COMMUNITY_GUIDELINES
+    DEFAULT_COMMUNITY_GUIDELINES
   );
-  const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(
-    () => initialSeed?.featureFlags ?? DEFAULT_FEATURE_FLAGS
-  );
-  const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>(
-    () => initialSeed?.auditLogs ?? []
-  );
-  const [inquiries, setInquiries] = useState<AdminAccessInquiry[]>(() =>
-    initialSeed ? initialSeed.inquiries : readAdminAccessInquiries()
-  );
+  const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(DEFAULT_FEATURE_FLAGS);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
+  const [inquiries, setInquiries] = useState<AdminAccessInquiry[]>([]);
 
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [healthProbes, setHealthProbes] = useState<SystemHealthProbe[]>(() => [
     {
       id: 'firestore',
       service: 'Cloud Firestore Database',
-      status: isLocalAutostart ? 'preview' : 'degraded',
-      detail: isLocalAutostart ? 'Preview sandbox mode active' : 'Pending probe',
+      status: 'degraded',
+      detail: 'Pending probe',
       checkedAtMs: Date.now(),
       latencyMs: null,
     },
     {
       id: 'r2',
       service: 'Cloudflare R2 Media Pipeline',
-      status: isLocalAutostart ? 'preview' : 'degraded',
+      status: 'degraded',
       detail: 'Awaiting endpoint check',
       checkedAtMs: Date.now(),
       latencyMs: null,
@@ -208,7 +168,7 @@ function AdminAppInner(_props: AdminAppProps) {
     {
       id: 'calls',
       service: 'Cloudflare Calls WebRTC SFU',
-      status: isLocalAutostart ? 'preview' : 'degraded',
+      status: 'degraded',
       detail: 'Awaiting endpoint check',
       checkedAtMs: Date.now(),
       latencyMs: null,
@@ -223,7 +183,7 @@ function AdminAppInner(_props: AdminAppProps) {
       cadence: 'Hourly',
       lastRunAtMs: null,
       lastStatus: 'idle',
-      lastSummary: `${countExpiredStories(initialSeed?.storyGroups ?? [])} expired stories detected`,
+      lastSummary: '0 expired stories detected',
     },
     {
       id: 'job_guidelines_sync',
@@ -253,35 +213,23 @@ function AdminAppInner(_props: AdminAppProps) {
 
   const runHealthProbes = useCallback(async () => {
     setCheckingHealth(true);
-    const now = Date.now();
     const probes: SystemHealthProbe[] = [];
 
     // 1. Firestore Server Probe
-    if (isLocalAutostart) {
-      probes.push({
-        id: 'firestore',
-        service: 'Cloud Firestore Database',
-        status: 'preview',
-        detail: 'Local preview seed loaded cleanly (?autostart=1)',
-        checkedAtMs: now,
-        latencyMs: 1,
-      });
-    } else {
-      const start = performance.now();
-      const ok = await testFirestoreConnection();
-      const latency = Math.round(performance.now() - start);
-      setFirestoreConnected(ok);
-      probes.push({
-        id: 'firestore',
-        service: 'Cloud Firestore Database',
-        status: ok ? 'healthy' : 'offline',
-        detail: ok
-          ? 'Server-side document probe responded cleanly'
-          : 'Unable to reach Firestore backend',
-        checkedAtMs: Date.now(),
-        latencyMs: latency,
-      });
-    }
+    const start = performance.now();
+    const ok = await testFirestoreConnection();
+    const latency = Math.round(performance.now() - start);
+    setFirestoreConnected(ok);
+    probes.push({
+      id: 'firestore',
+      service: 'Cloud Firestore Database',
+      status: ok ? 'healthy' : 'offline',
+      detail: ok
+        ? 'Server-side document probe responded cleanly'
+        : 'Unable to reach Firestore backend',
+      checkedAtMs: Date.now(),
+      latencyMs: latency,
+    });
 
     // 2. Worker R2 Storage Status Probe
     try {
@@ -314,7 +262,7 @@ function AdminAppInner(_props: AdminAppProps) {
       probes.push({
         id: 'r2',
         service: 'Cloudflare R2 Media Pipeline',
-        status: isLocalAutostart ? 'preview' : 'offline',
+        status: 'offline',
         detail: 'Storage status endpoint unreachable',
         checkedAtMs: Date.now(),
         latencyMs: null,
@@ -357,7 +305,7 @@ function AdminAppInner(_props: AdminAppProps) {
       probes.push({
         id: 'calls',
         service: 'Cloudflare Calls WebRTC SFU',
-        status: isLocalAutostart ? 'preview' : 'offline',
+        status: 'offline',
         detail: 'Calls status endpoint unreachable',
         checkedAtMs: Date.now(),
         latencyMs: null,
@@ -366,61 +314,88 @@ function AdminAppInner(_props: AdminAppProps) {
 
     setHealthProbes(probes);
     setCheckingHealth(false);
-  }, [isLocalAutostart]);
+  }, []);
 
-  // Initial connection check & Auth subscription
+  // Firebase Auth subscription (always enforced)
   useEffect(() => {
-    void runHealthProbes();
-
-    if (isLocalAutostart) return;
-
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
       setFirebaseUser(u);
       setAuthReady(true);
-      if (u) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
-          if (userDoc.exists()) {
-            setCurrentProfile({
-              ...(userDoc.data() as UserProfile),
-              uid: u.uid,
-            });
-          } else {
-            setCurrentProfile({
-              uid: u.uid,
-              displayName: u.displayName || 'Admin Member',
-              handle: u.email?.split('@')[0] || 'admin',
-              avatarUrl: u.photoURL || '',
-              bio: '',
-              location: '',
-              interests: [],
-              followersCount: 0,
-              followingCount: 0,
-              createdAtMs: Date.now(),
-              updatedAtMs: Date.now(),
-              onboardingCompleted: true,
-            });
-          }
-        } catch {
-          // Profile fallback already populated
+      if (!u) {
+        setCurrentProfile(createEmptyAdminProfile());
+        return;
+      }
+
+      try {
+        const userDoc = await getDoc(doc(db, 'users', u.uid));
+        if (userDoc.exists()) {
+          setCurrentProfile({
+            ...(userDoc.data() as UserProfile),
+            uid: u.uid,
+          });
+        } else {
+          setCurrentProfile({
+            uid: u.uid,
+            displayName: u.displayName || u.email?.split('@')[0] || 'Admin Operator',
+            handle: u.email?.split('@')[0] || 'admin',
+            avatarUrl: u.photoURL || '',
+            bio: '',
+            location: '',
+            interests: [],
+            followersCount: 0,
+            followingCount: 0,
+            createdAtMs: Date.now(),
+            updatedAtMs: Date.now(),
+            onboardingCompleted: true,
+          });
         }
+      } catch {
+        setCurrentProfile({
+          uid: u.uid,
+          displayName: u.displayName || u.email?.split('@')[0] || 'Admin Operator',
+          handle: u.email?.split('@')[0] || 'admin',
+          avatarUrl: u.photoURL || '',
+          bio: '',
+          location: '',
+          interests: [],
+          followersCount: 0,
+          followingCount: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+          onboardingCompleted: true,
+        });
       }
     });
 
     return () => unsubAuth();
-  }, [isLocalAutostart, runHealthProbes]);
+  }, []);
 
   const adminAuth = useAdminRole({
-    isAuthorized: isLocalAutostart || Boolean(firebaseUser),
+    isAuthorized: Boolean(firebaseUser),
     firebaseUser,
-    isLocalAutostart,
   });
 
   // Guarded Firestore real-time subscriptions (only after Admin RBAC passes)
   useEffect(() => {
-    if (isLocalAutostart || !firebaseUser || !adminAuth.isAdmin) {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      setCommunityUsers([]);
+      setPosts([]);
+      setStoryGroups([]);
+      setOnlineUserIds([]);
+      setModeration({ hiddenPostIds: [], restrictedUids: [] });
+      setMemberModerationRecords({});
+      setAdminRoles([]);
+      setReports([]);
+      setAppeals([]);
+      setAnnouncements([]);
+      setGuidelines(DEFAULT_COMMUNITY_GUIDELINES);
+      setFeatureFlags(DEFAULT_FEATURE_FLAGS);
+      setAuditLogs([]);
+      setInquiries([]);
       return;
     }
+
+    void runHealthProbes();
 
     const unsubs: Array<() => void> = [];
 
@@ -475,7 +450,16 @@ function AdminAppInner(_props: AdminAppProps) {
               );
             }
           });
-          setStoryGroups(Array.from(byAuthor.values()));
+          const nextGroups = Array.from(byAuthor.values());
+          setStoryGroups(nextGroups);
+          const expiredCount = countExpiredStories(nextGroups);
+          setJobs((prev) =>
+            prev.map((job) =>
+              job.id === 'job_expired_stories' && job.lastStatus === 'idle'
+                ? { ...job, lastSummary: `${expiredCount} expired stories detected` }
+                : job
+            )
+          );
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'stories')
       )
@@ -513,10 +497,16 @@ function AdminAppInner(_props: AdminAppProps) {
         collection(db, 'userModeration'),
         (snap) => {
           const map: Record<string, MemberModerationRecord> = {};
+          const restrictedUids: string[] = [];
           snap.forEach((d) => {
-            map[d.id] = { ...(d.data() as MemberModerationRecord), uid: d.id };
+            const record = { ...(d.data() as MemberModerationRecord), uid: d.id };
+            map[d.id] = record;
+            if (record.status === 'restricted') {
+              restrictedUids.push(d.id);
+            }
           });
           setMemberModerationRecords(map);
+          setModeration((prev) => ({ ...prev, restrictedUids }));
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'userModeration')
       )
@@ -568,20 +558,32 @@ function AdminAppInner(_props: AdminAppProps) {
       onSnapshot(
         collection(db, 'adminConfig'),
         (snap) => {
+          let nextHiddenPosts: string[] = [];
+          let hasFlags = false;
+          let hasGuidelines = false;
           snap.forEach((d) => {
             if (d.id === 'featureFlags') {
+              hasFlags = true;
               const data = d.data() as Partial<AdminFeatureFlags>;
-              setFeatureFlags((prev) => ({ ...prev, ...data }));
+              setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS, ...data });
             } else if (d.id === 'guidelines') {
+              hasGuidelines = true;
               const data = d.data() as Partial<CommunityGuidelinesConfig>;
-              setGuidelines((prev) => ({ ...prev, ...data }));
+              setGuidelines({ ...DEFAULT_COMMUNITY_GUIDELINES, ...data });
             } else if (d.id === 'hiddenPosts') {
               const data = d.data() as { hiddenPostIds?: string[] };
               if (Array.isArray(data.hiddenPostIds)) {
-                setModeration((prev) => ({ ...prev, hiddenPostIds: data.hiddenPostIds! }));
+                nextHiddenPosts = data.hiddenPostIds;
               }
             }
           });
+          if (!hasFlags) {
+            setFeatureFlags(DEFAULT_FEATURE_FLAGS);
+          }
+          if (!hasGuidelines) {
+            setGuidelines(DEFAULT_COMMUNITY_GUIDELINES);
+          }
+          setModeration((prev) => ({ ...prev, hiddenPostIds: nextHiddenPosts }));
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'adminConfig')
       )
@@ -609,9 +611,7 @@ function AdminAppInner(_props: AdminAppProps) {
           snap.forEach((d) =>
             list.push({ id: d.id, ...(d.data() as Omit<AdminAccessInquiry, 'id'>) })
           );
-          if (list.length > 0) {
-            setInquiries(list);
-          }
+          setInquiries(list);
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'accessInquiries')
       )
@@ -620,13 +620,13 @@ function AdminAppInner(_props: AdminAppProps) {
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [adminAuth.isAdmin, firebaseUser, isLocalAutostart]);
+  }, [adminAuth.isAdmin, firebaseUser, runHealthProbes]);
 
   const recordAudit = useCallback(
     async (action: string, targetType: string, targetId: string, summary: string) => {
-      const actorUid = currentProfile.uid || firebaseUser?.uid || 'admin_operator';
-      const actorEmail =
-        firebaseUser?.email || (isLocalAutostart ? 'prigidholdings@gmail.com' : currentProfile.handle);
+      if (!firebaseUser || !adminAuth.isAdmin) return;
+      const actorUid = firebaseUser.uid;
+      const actorEmail = firebaseUser.email || currentProfile.handle;
       const createdAtMs = Date.now();
       const id = `audit_${createdAtMs}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -643,33 +643,30 @@ function AdminAppInner(_props: AdminAppProps) {
         })
       );
 
-      if (!isLocalAutostart && firebaseUser) {
-        try {
-          await setDoc(doc(db, 'adminAuditLogs', id), {
-            id,
-            actorUid,
-            actorEmail,
-            action,
-            targetType,
-            targetId,
-            summary,
-            createdAtMs,
-            createdAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `adminAuditLogs/${id}`);
-        }
+      try {
+        await setDoc(doc(db, 'adminAuditLogs', id), {
+          id,
+          actorUid,
+          actorEmail,
+          action,
+          targetType,
+          targetId,
+          summary,
+          createdAtMs,
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `adminAuditLogs/${id}`);
       }
     },
-    [currentProfile.handle, currentProfile.uid, firebaseUser, isLocalAutostart]
+    [adminAuth.isAdmin, currentProfile.handle, firebaseUser]
   );
 
   const handleToggleHidePost = (postId: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     const currentlyHidden = moderation.hiddenPostIds.includes(postId);
     const nextHidden = toggleHiddenPostId(moderation.hiddenPostIds, postId);
-    const nextState = { ...moderation, hiddenPostIds: nextHidden };
-    setModeration(nextState);
-    saveAdminModerationState(nextState);
+    setModeration((prev) => ({ ...prev, hiddenPostIds: nextHidden }));
 
     void recordAudit(
       currentlyHidden ? 'post.restore' : 'post.hide',
@@ -680,33 +677,31 @@ function AdminAppInner(_props: AdminAppProps) {
         : `Hid post ${postId} from public feeds.`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      void setDoc(
-        doc(db, 'adminConfig', 'hiddenPosts'),
-        {
-          id: 'hiddenPosts',
-          hiddenPostIds: nextHidden,
-          updatedBy: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      ).catch((err) => handleFirestoreError(err, OperationType.WRITE, 'adminConfig/hiddenPosts'));
-    }
+    void setDoc(
+      doc(db, 'adminConfig', 'hiddenPosts'),
+      {
+        id: 'hiddenPosts',
+        hiddenPostIds: nextHidden,
+        updatedBy: firebaseUser.uid,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((err) => handleFirestoreError(err, OperationType.WRITE, 'adminConfig/hiddenPosts'));
   };
 
   const handleDeletePost = async (postId: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     setPosts((prev) => prev.filter((p) => p.id !== postId));
     await recordAudit('post.delete', 'post', postId, `Deleted post ${postId}.`);
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await deleteDoc(doc(db, 'posts', postId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `posts/${postId}`);
-      }
+    try {
+      await deleteDoc(doc(db, 'posts', postId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `posts/${postId}`);
     }
   };
 
   const handleDeleteStory = async (storyId: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     setStoryGroups((prev) =>
       prev
         .map((group) => ({
@@ -716,12 +711,10 @@ function AdminAppInner(_props: AdminAppProps) {
         .filter((g) => g.items.length > 0)
     );
     await recordAudit('story.delete', 'story', storyId, `Removed story frame ${storyId}.`);
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await deleteDoc(doc(db, 'stories', storyId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `stories/${storyId}`);
-      }
+    try {
+      await deleteDoc(doc(db, 'stories', storyId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `stories/${storyId}`);
     }
   };
 
@@ -730,12 +723,15 @@ function AdminAppInner(_props: AdminAppProps) {
     status: MemberAccountStatus,
     reason: string
   ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
     const res = setMemberModerationStatus(
       memberModerationRecords,
       targetUid,
       status,
       reason,
-      currentProfile.uid
+      firebaseUser.uid
     );
     if (!res.ok) return { ok: false, error: res.error };
 
@@ -745,9 +741,7 @@ function AdminAppInner(_props: AdminAppProps) {
         status === 'restricted'
           ? Array.from(new Set([...prev.restrictedUids, targetUid]))
           : prev.restrictedUids.filter((id) => id !== targetUid);
-      const nextState = { ...prev, restrictedUids: nextRestricted };
-      saveAdminModerationState(nextState);
-      return nextState;
+      return { ...prev, restrictedUids: nextRestricted };
     });
 
     await recordAudit(
@@ -757,18 +751,16 @@ function AdminAppInner(_props: AdminAppProps) {
       `Set member ${targetUid} status to ${status}: ${reason}`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await setDoc(doc(db, 'userModeration', targetUid), {
-          uid: targetUid,
-          status,
-          reason: res.records[targetUid].reason,
-          updatedBy: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `userModeration/${targetUid}`);
-      }
+    try {
+      await setDoc(doc(db, 'userModeration', targetUid), {
+        uid: targetUid,
+        status,
+        reason: res.records[targetUid].reason,
+        updatedBy: firebaseUser.uid,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `userModeration/${targetUid}`);
     }
 
     return { ok: true };
@@ -780,7 +772,10 @@ function AdminAppInner(_props: AdminAppProps) {
     displayName: string;
     role: AdminRoleLevel;
   }): Promise<{ ok: boolean; error?: string }> => {
-    const res = assignAdminRole(adminRoles, input, currentProfile.uid);
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const res = assignAdminRole(adminRoles, input, firebaseUser.uid);
     if (!res.ok) return { ok: false, error: res.error };
 
     setAdminRoles(res.roles);
@@ -791,38 +786,37 @@ function AdminAppInner(_props: AdminAppProps) {
       `Assigned ${res.entry.role} role to ${res.entry.email}.`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await setDoc(doc(db, 'admins', res.entry.uid), {
-          uid: res.entry.uid,
-          email: res.entry.email,
-          displayName: res.entry.displayName,
-          role: res.entry.role,
-          permissions: ADMIN_ROLE_PERMISSIONS[res.entry.role],
-          grantedBy: firebaseUser.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `admins/${res.entry.uid}`);
-      }
+    try {
+      await setDoc(doc(db, 'admins', res.entry.uid), {
+        uid: res.entry.uid,
+        email: res.entry.email,
+        displayName: res.entry.displayName,
+        role: res.entry.role,
+        permissions: ADMIN_ROLE_PERMISSIONS[res.entry.role],
+        grantedBy: firebaseUser.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `admins/${res.entry.uid}`);
     }
     return { ok: true };
   };
 
   const handleRevokeRole = async (targetUid: string): Promise<{ ok: boolean; error?: string }> => {
-    const res = revokeAdminRole(adminRoles, targetUid, currentProfile.uid);
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const res = revokeAdminRole(adminRoles, targetUid, firebaseUser.uid);
     if (!res.ok) return { ok: false, error: res.error };
 
     setAdminRoles(res.roles);
     await recordAudit('role.revoke', 'admin', targetUid, `Revoked operator role for ${targetUid}.`);
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await deleteDoc(doc(db, 'admins', targetUid));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `admins/${targetUid}`);
-      }
+    try {
+      await deleteDoc(doc(db, 'admins', targetUid));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `admins/${targetUid}`);
     }
     return { ok: true };
   };
@@ -833,9 +827,10 @@ function AdminAppInner(_props: AdminAppProps) {
     resolutionAction: string,
     extraAction?: 'hide-post' | 'restrict-author'
   ) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     const targetReport = reports.find((r) => r.id === reportId);
     setReports((prev) =>
-      updateReportResolution(prev, reportId, status, resolutionAction, currentProfile.uid)
+      updateReportResolution(prev, reportId, status, resolutionAction, firebaseUser.uid)
     );
 
     if (extraAction === 'hide-post' && targetReport?.targetId) {
@@ -857,18 +852,16 @@ function AdminAppInner(_props: AdminAppProps) {
       `Report ${reportId} -> ${status}: ${resolutionAction}`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await updateDoc(doc(db, 'reports', reportId), {
-          status,
-          resolutionAction,
-          reviewedBy: firebaseUser.uid,
-          reviewedAtMs: status === 'open' ? 0 : Date.now(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
-      }
+    try {
+      await updateDoc(doc(db, 'reports', reportId), {
+        status,
+        resolutionAction,
+        reviewedBy: firebaseUser.uid,
+        reviewedAtMs: status === 'open' ? 0 : Date.now(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
     }
   };
 
@@ -877,12 +870,15 @@ function AdminAppInner(_props: AdminAppProps) {
     decision: 'approved' | 'rejected',
     reviewerNote: string
   ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
     const res = reviewAppealDecision(
       appeals,
       appealId,
       decision,
       reviewerNote,
-      currentProfile.uid
+      firebaseUser.uid
     );
     if (!res.ok) return { ok: false, error: res.error };
 
@@ -903,17 +899,15 @@ function AdminAppInner(_props: AdminAppProps) {
       `Appeal ${appealId} ${decision}: ${reviewerNote}`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await updateDoc(doc(db, 'appeals', appealId), {
-          status: decision,
-          reviewerUid: firebaseUser.uid,
-          reviewerNote: reviewerNote.trim(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `appeals/${appealId}`);
-      }
+    try {
+      await updateDoc(doc(db, 'appeals', appealId), {
+        status: decision,
+        reviewerUid: firebaseUser.uid,
+        reviewerNote: reviewerNote.trim(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `appeals/${appealId}`);
     }
     return { ok: true };
   };
@@ -924,6 +918,9 @@ function AdminAppInner(_props: AdminAppProps) {
     severity: AnnouncementSeverity;
     audience: AnnouncementAudience;
   }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
     const check = validateAnnouncementInput(input.title, input.body);
     if (!check.valid) return { ok: false, error: check.error };
 
@@ -936,7 +933,7 @@ function AdminAppInner(_props: AdminAppProps) {
       severity: input.severity,
       audience: input.audience,
       active: true,
-      authorUid: currentProfile.uid || 'admin',
+      authorUid: firebaseUser.uid,
       authorName: currentProfile.displayName,
       createdAtMs: now,
       updatedAtMs: now,
@@ -950,28 +947,27 @@ function AdminAppInner(_props: AdminAppProps) {
       `Published announcement: ${check.title}`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await setDoc(doc(db, 'announcements', id), {
-          id,
-          title: check.title,
-          body: check.body,
-          severity: input.severity,
-          audience: input.audience,
-          active: true,
-          authorUid: firebaseUser.uid,
-          authorName: currentProfile.displayName,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `announcements/${id}`);
-      }
+    try {
+      await setDoc(doc(db, 'announcements', id), {
+        id,
+        title: check.title,
+        body: check.body,
+        severity: input.severity,
+        audience: input.audience,
+        active: true,
+        authorUid: firebaseUser.uid,
+        authorName: currentProfile.displayName,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `announcements/${id}`);
     }
     return { ok: true };
   };
 
   const handleToggleAnnouncement = async (id: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     const existing = announcements.find((a) => a.id === id);
     if (!existing) return;
     const nextActive = !existing.active;
@@ -986,15 +982,13 @@ function AdminAppInner(_props: AdminAppProps) {
       `${nextActive ? 'Activated' : 'Paused'} announcement "${existing.title}".`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await updateDoc(doc(db, 'announcements', id), {
-          active: nextActive,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `announcements/${id}`);
-      }
+    try {
+      await updateDoc(doc(db, 'announcements', id), {
+        active: nextActive,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `announcements/${id}`);
     }
   };
 
@@ -1003,6 +997,9 @@ function AdminAppInner(_props: AdminAppProps) {
     summary: string;
     rulesText: string;
   }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
     const check = validateGuidelinesInput(input.version, input.summary, input.rulesText);
     if (!check.valid) return { ok: false, error: check.error };
 
@@ -1010,7 +1007,7 @@ function AdminAppInner(_props: AdminAppProps) {
       version: check.version,
       summary: check.summary,
       rulesText: check.rulesText,
-      updatedBy: currentProfile.uid,
+      updatedBy: firebaseUser.uid,
       updatedAtMs: Date.now(),
     };
     setGuidelines(next);
@@ -1021,49 +1018,41 @@ function AdminAppInner(_props: AdminAppProps) {
       `Updated community guidelines to revision v${check.version}.`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await setDoc(doc(db, 'adminConfig', 'guidelines'), {
-          id: 'guidelines',
-          version: check.version,
-          summary: check.summary,
-          rulesText: check.rulesText,
-          updatedBy: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'adminConfig/guidelines');
-      }
+    try {
+      await setDoc(doc(db, 'adminConfig', 'guidelines'), {
+        id: 'guidelines',
+        version: check.version,
+        summary: check.summary,
+        rulesText: check.rulesText,
+        updatedBy: firebaseUser.uid,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'adminConfig/guidelines');
     }
     return { ok: true };
   };
 
   const handleUpdateInquiryStatus = (id: string, status: AdminAccessInquiry['status']) => {
-    setInquiries((prev) => {
-      const next = updateAccessInquiryStatus(prev, id, status);
-      saveAdminAccessInquiries(next);
-      return next;
-    });
+    if (!firebaseUser || !adminAuth.isAdmin) return;
+    setInquiries((prev) => updateAccessInquiryStatus(prev, id, status));
     void recordAudit('inquiry.update', 'inquiry', id, `Marked inquiry ${id} as ${status}.`);
 
-    if (!isLocalAutostart && firebaseUser) {
-      void updateDoc(doc(db, 'accessInquiries', id), {
-        status,
-        reviewedBy: firebaseUser.uid,
-        updatedAt: serverTimestamp(),
-      }).catch(() => {
-        // Inquiry may have originated only from localStorage inquiry form
-      });
-    }
+    void updateDoc(doc(db, 'accessInquiries', id), {
+      status,
+      reviewedBy: firebaseUser.uid,
+      updatedAt: serverTimestamp(),
+    }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `accessInquiries/${id}`));
   };
 
   const handleToggleFeatureFlag = async (
     key: keyof Omit<AdminFeatureFlags, 'updatedBy' | 'updatedAtMs'>
   ) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     const nextFlags: AdminFeatureFlags = {
       ...featureFlags,
       [key]: !featureFlags[key],
-      updatedBy: currentProfile.uid,
+      updatedBy: firebaseUser.uid,
       updatedAtMs: Date.now(),
     };
     setFeatureFlags(nextFlags);
@@ -1075,26 +1064,25 @@ function AdminAppInner(_props: AdminAppProps) {
       `Toggled ${key} to ${nextFlags[key] ? 'ON' : 'OFF'}.`
     );
 
-    if (!isLocalAutostart && firebaseUser) {
-      try {
-        await setDoc(doc(db, 'adminConfig', 'featureFlags'), {
-          id: 'featureFlags',
-          storiesEnabled: nextFlags.storiesEnabled,
-          voiceNotesEnabled: nextFlags.voiceNotesEnabled,
-          callsEnabled: nextFlags.callsEnabled,
-          maintenanceMode: nextFlags.maintenanceMode,
-          registrationsOpen: nextFlags.registrationsOpen,
-          strictModerationQueue: nextFlags.strictModerationQueue,
-          updatedBy: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'adminConfig/featureFlags');
-      }
+    try {
+      await setDoc(doc(db, 'adminConfig', 'featureFlags'), {
+        id: 'featureFlags',
+        storiesEnabled: nextFlags.storiesEnabled,
+        voiceNotesEnabled: nextFlags.voiceNotesEnabled,
+        callsEnabled: nextFlags.callsEnabled,
+        maintenanceMode: nextFlags.maintenanceMode,
+        registrationsOpen: nextFlags.registrationsOpen,
+        strictModerationQueue: nextFlags.strictModerationQueue,
+        updatedBy: firebaseUser.uid,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'adminConfig/featureFlags');
     }
   };
 
   const handleRunBackgroundJob = async (jobId: string) => {
+    if (!firebaseUser || !adminAuth.isAdmin) return;
     setJobs((prev) =>
       prev.map((j) => (j.id === jobId ? { ...j, lastStatus: 'running' } : j))
     );
@@ -1148,9 +1136,6 @@ function AdminAppInner(_props: AdminAppProps) {
     await recordAudit('job.execute', 'job', jobId, 'Verified governance & flags schema consistency.');
   };
 
-  // Preserve preview state changes locally cleanly without warnings
-  void ADMIN_PREVIEW_STATE_STORAGE_KEY;
-
   return (
     <AdminView
       theme={theme}
@@ -1158,8 +1143,7 @@ function AdminAppInner(_props: AdminAppProps) {
       checkingAdminDoc={adminAuth.checkingAdminDoc}
       adminAuth={adminAuth}
       currentProfile={currentProfile}
-      accountEmail={firebaseUser?.email || (isLocalAutostart ? 'prigidholdings@gmail.com' : null)}
-      isLocalAutostart={isLocalAutostart}
+      accountEmail={firebaseUser?.email || null}
       firestoreConnected={firestoreConnected}
       authError={authError}
       communityUsers={communityUsers}

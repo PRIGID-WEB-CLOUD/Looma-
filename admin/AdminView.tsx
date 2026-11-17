@@ -62,7 +62,6 @@ interface AdminViewProps {
   adminAuth: AdminAuthorizationResult;
   currentProfile: UserProfile;
   accountEmail: string | null;
-  isLocalAutostart: boolean;
   firestoreConnected: boolean | null;
   authError: string | null;
   communityUsers: UserProfile[];
@@ -152,7 +151,6 @@ export function AdminView({
   adminAuth,
   currentProfile,
   accountEmail,
-  isLocalAutostart,
   firestoreConnected,
   authError,
   communityUsers,
@@ -488,10 +486,7 @@ export function AdminView({
   }
 
   const activeSectionMeta = SECTION_NAV.find((item) => item.id === section)!;
-  const accountLabel =
-    adminAuth.reason === 'ok-local-preview'
-      ? 'Local Preview Mode'
-      : `Operator: ${accountEmail || currentProfile.handle}`;
+  const accountLabel = `Operator: ${accountEmail || currentProfile.handle}`;
 
   return (
     <div
@@ -554,21 +549,19 @@ export function AdminView({
                 {currentProfile.displayName}
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                {accountEmail || (isLocalAutostart ? 'Local Preview Admin' : `@${currentProfile.handle}`)}
+                {accountEmail || `@${currentProfile.handle}`}
               </p>
             </div>
           </div>
 
-          {!isLocalAutostart && (
-            <button
-              type="button"
-              onClick={() => void onSignOut()}
-              className="w-full min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Sign Out</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void onSignOut()}
+            className="w-full min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Sign Out</span>
+          </button>
         </div>
       </aside>
 
@@ -590,16 +583,14 @@ export function AdminView({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              {!isLocalAutostart && (
-                <button
-                  type="button"
-                  onClick={() => void onSignOut()}
-                  className="lg:hidden min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Sign Out</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => void onSignOut()}
+                className="lg:hidden min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Sign Out</span>
+              </button>
               <button
                 type="button"
                 onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -648,7 +639,7 @@ export function AdminView({
                 Maintenance Mode flag is ON — member feeds display a scheduled maintenance banner.
               </div>
             )}
-            {firestoreConnected === false && !isLocalAutostart && (
+            {firestoreConnected === false && (
               <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-xs font-medium text-red-700 dark:text-red-300">
                 Unable to reach Firestore server telemetry check. Verify network connectivity.
               </div>

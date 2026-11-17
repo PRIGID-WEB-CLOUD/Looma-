@@ -565,7 +565,7 @@ export function MembersRolesSection({
               required
               value={roleForm.uid}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, uid: e.target.value }))}
-              placeholder="e.g. u_sophia"
+              placeholder="Member Firebase UID"
               className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>
@@ -579,7 +579,7 @@ export function MembersRolesSection({
               required
               value={roleForm.email}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, email: e.target.value }))}
-              placeholder="moderator@looma.studio"
+              placeholder="operator@domain.com"
               className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>
@@ -593,7 +593,7 @@ export function MembersRolesSection({
               required
               value={roleForm.displayName}
               onChange={(e) => setRoleForm((prev) => ({ ...prev, displayName: e.target.value }))}
-              placeholder="Sophia Chen"
+              placeholder="Operator Full Name"
               className="w-full min-h-[38px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </label>

@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Post, UserProfile } from '../src/types/social';
+import type { Post, StoryGroup, UserProfile } from '../src/types/social';
 import {
+  ADMIN_ROLE_PERMISSIONS,
+  DEFAULT_COMMUNITY_GUIDELINES,
+  DEFAULT_FEATURE_FLAGS,
   appendAuditEntry,
   assignAdminRole,
   computeCategoryBreakdown,
   computeExtendedWorkspaceMetrics,
   computeWorkspaceMetrics,
   countExpiredStories,
-  createAutostartAdminSeed,
   filterAdminMembers,
   filterAdminPosts,
   filterAppeals,
@@ -24,6 +26,13 @@ import {
   updateReportResolution,
   validateAnnouncementInput,
   validateGuidelinesInput,
+  type AdminAccessInquiry,
+  type AdminAuditEntry,
+  type AdminRoleEntry,
+  type ContentReport,
+  type MemberModerationRecord,
+  type ModerationAppeal,
+  type PlatformAnnouncement,
 } from './adminLogic';
 
 test('resolveAdminAuthorization enforces authentication, verified email, and role checks', () => {
@@ -76,16 +85,6 @@ test('resolveAdminAuthorization enforces authentication, verified email, and rol
     }),
     { isAdmin: true, reason: 'ok-admin-doc' }
   );
-
-  assert.deepEqual(
-    resolveAdminAuthorization({
-      isAuthorized: true,
-      email: null,
-      emailVerified: false,
-      isLocalAutostart: true,
-    }),
-    { isAdmin: true, reason: 'ok-local-preview' }
-  );
 });
 
 const SAMPLE_PROFILES: UserProfile[] = [
@@ -105,11 +104,11 @@ const SAMPLE_PROFILES: UserProfile[] = [
   },
   {
     uid: 'u_member',
-    displayName: 'Sophia Chen',
-    handle: 'sophia.studio',
+    displayName: 'Nora Halvorsen',
+    handle: 'nora.studio',
     bio: 'Photographer',
     avatarUrl: '',
-    location: 'San Francisco',
+    location: 'Oslo',
     interests: ['Photography'],
     followersCount: 42,
     followingCount: 19,
@@ -123,8 +122,8 @@ const SAMPLE_POSTS: Post[] = [
   {
     id: 'p_1',
     authorId: 'u_member',
-    authorName: 'Sophia Chen',
-    authorHandle: 'sophia.studio',
+    authorName: 'Nora Halvorsen',
+    authorHandle: 'nora.studio',
     authorAvatar: '',
     caption: 'Concrete study in morning light.',
     imageUrl: '',
@@ -149,6 +148,153 @@ const SAMPLE_POSTS: Post[] = [
     updatedAtMs: 3000,
   },
 ];
+
+function createTestFixture(nowMs: number) {
+  const storyGroups: StoryGroup[] = [
+    {
+      authorId: 'u_member',
+      authorName: 'Nora Halvorsen',
+      authorHandle: 'nora.studio',
+      authorAvatar: '',
+      hasUnviewed: true,
+      latestCreatedAtMs: nowMs - 2_000_000,
+      items: [
+        {
+          id: 'story_live',
+          authorId: 'u_member',
+          authorName: 'Nora Halvorsen',
+          authorHandle: 'nora.studio',
+          authorAvatar: '',
+          imageUrl: '',
+          caption: 'Live frame',
+          createdAtMs: nowMs - 2_000_000,
+          expiresAtMs: nowMs + 84_000_000,
+        },
+        {
+          id: 'story_expired',
+          authorId: 'u_member',
+          authorName: 'Nora Halvorsen',
+          authorHandle: 'nora.studio',
+          authorAvatar: '',
+          imageUrl: '',
+          caption: 'Expired frame',
+          createdAtMs: nowMs - 90_000_000,
+          expiresAtMs: nowMs - 10_000,
+        },
+      ],
+    },
+  ];
+
+  const reports: ContentReport[] = [
+    {
+      id: 'rep_spam_01',
+      targetType: 'post',
+      targetId: 'p_1',
+      targetAuthorUid: 'u_member',
+      targetSummary: 'Spam link report',
+      reporterUid: 'u_admin',
+      reporterName: 'Alex Rivera',
+      category: 'spam',
+      severity: 'high',
+      reason: 'Unsolicited promotional link.',
+      status: 'open',
+      resolutionAction: '',
+      reviewedBy: '',
+      reviewedAtMs: 0,
+      createdAtMs: nowMs - 700_000,
+      updatedAtMs: nowMs - 700_000,
+    },
+    {
+      id: 'rep_attr_02',
+      targetType: 'story',
+      targetId: 'story_live',
+      targetAuthorUid: 'u_member',
+      targetSummary: 'Missing credit note',
+      reporterUid: 'u_admin',
+      reporterName: 'Alex Rivera',
+      category: 'copyright',
+      severity: 'low',
+      reason: 'Missing architect credit.',
+      status: 'reviewing',
+      resolutionAction: 'Pending attribution note',
+      reviewedBy: 'u_admin',
+      reviewedAtMs: nowMs - 300_000,
+      createdAtMs: nowMs - 3_200_000,
+      updatedAtMs: nowMs - 300_000,
+    },
+  ];
+
+  const appeals: ModerationAppeal[] = [
+    {
+      id: 'app_01',
+      appellantUid: 'u_member',
+      appellantName: 'Nora Halvorsen',
+      appellantHandle: 'nora.studio',
+      reportId: 'rep_spam_01',
+      targetId: 'p_1',
+      reason: 'Links removed; requesting restore.',
+      status: 'pending',
+      reviewerUid: '',
+      reviewerNote: '',
+      createdAtMs: nowMs - 400_000,
+      updatedAtMs: nowMs - 400_000,
+    },
+  ];
+
+  const announcements: PlatformAnnouncement[] = [
+    {
+      id: 'ann_1',
+      title: 'Scheduled Maintenance',
+      body: 'Storage maintenance window tonight.',
+      severity: 'info',
+      audience: 'all',
+      active: true,
+      authorUid: 'u_admin',
+      authorName: 'Alex Rivera',
+      createdAtMs: nowMs - 86_400_000,
+      updatedAtMs: nowMs - 86_400_000,
+    },
+  ];
+
+  const adminRoles: AdminRoleEntry[] = [
+    {
+      uid: 'u_admin',
+      email: 'prigidholdings@gmail.com',
+      displayName: 'Alex Rivera',
+      role: 'super_admin',
+      permissions: [...ADMIN_ROLE_PERMISSIONS.super_admin],
+      grantedBy: 'system',
+      createdAtMs: nowMs - 86_400_000,
+      updatedAtMs: nowMs - 86_400_000,
+    },
+  ];
+
+  const memberModerationRecords: Record<string, MemberModerationRecord> = {
+    u_member: {
+      uid: 'u_member',
+      status: 'restricted',
+      reason: 'Pending spam review.',
+      updatedBy: 'u_admin',
+      updatedAtMs: nowMs - 500_000,
+    },
+  };
+
+  const auditLogs: AdminAuditEntry[] = [];
+  const inquiries: AdminAccessInquiry[] = [];
+
+  return {
+    storyGroups,
+    reports,
+    appeals,
+    announcements,
+    adminRoles,
+    memberModerationRecords,
+    auditLogs,
+    inquiries,
+    guidelines: DEFAULT_COMMUNITY_GUIDELINES,
+    featureFlags: DEFAULT_FEATURE_FLAGS,
+  };
+}
 
 test('moderation toggles prevent self-restriction and filter hidden posts + members accurately', () => {
   const afterSelfRestrict = toggleRestrictedMemberUid([], 'u_admin', 'u_admin');
@@ -256,8 +402,8 @@ test('member suspension, restoration, and admin role RBAC prevent self-lockout a
     [],
     {
       uid: 'u_member',
-      email: 'sophia@looma.studio',
-      displayName: 'Sophia Chen',
+      email: 'nora@looma.studio',
+      displayName: 'Nora Halvorsen',
       role: 'moderator',
     },
     'u_admin',
@@ -279,18 +425,18 @@ test('member suspension, restoration, and admin role RBAC prevent self-lockout a
 });
 
 test('reports queue sorting, appeal decisions, governance validation, audit trail, and category analytics work accurately', () => {
-  const seed = createAutostartAdminSeed(1_700_000_000_000);
+  const fixture = createTestFixture(1_700_000_000_000);
 
-  const sortedOpen = filterReports(seed.reports, '', 'all', 'all');
+  const sortedOpen = filterReports(fixture.reports, '', 'all', 'all');
   assert.equal(sortedOpen[0].status, 'open');
   assert.equal(sortedOpen[0].severity, 'high');
 
   const resolvedReports = updateReportResolution(
-    seed.reports,
+    fixture.reports,
     'rep_spam_01',
     'resolved',
     'Removed post & restricted author',
-    'admin_operator_1',
+    'u_admin',
     1_700_000_005_000
   );
   const resolvedItem = resolvedReports.find((r) => r.id === 'rep_spam_01');
@@ -298,24 +444,24 @@ test('reports queue sorting, appeal decisions, governance validation, audit trai
   assert.equal(resolvedItem?.resolutionAction, 'Removed post & restricted author');
 
   const appealMissingNote = reviewAppealDecision(
-    seed.appeals,
+    fixture.appeals,
     'app_01',
     'approved',
     '',
-    'admin_operator_1'
+    'u_admin'
   );
   assert.equal(appealMissingNote.ok, false);
 
   const appealApproved = reviewAppealDecision(
-    seed.appeals,
+    fixture.appeals,
     'app_01',
     'approved',
     'Spam links deleted; restoring standard posting access.',
-    'admin_operator_1',
+    'u_admin',
     1_700_000_010_000
   );
   assert.equal(appealApproved.ok, true);
-  assert.equal(filterAppeals(seed.appeals, '', 'pending').length, 1);
+  assert.equal(filterAppeals(fixture.appeals, '', 'pending').length, 1);
 
   assert.equal(validateAnnouncementInput('ab', 'Too short').valid, false);
   assert.equal(
@@ -333,8 +479,8 @@ test('reports queue sorting, appeal decisions, governance validation, audit trai
     true
   );
 
-  const logs = appendAuditEntry(seed.auditLogs, {
-    actorUid: 'admin_operator_1',
+  const logs = appendAuditEntry(fixture.auditLogs, {
+    actorUid: 'u_admin',
     actorEmail: 'prigidholdings@gmail.com',
     action: 'report.resolve',
     targetType: 'report',
@@ -344,28 +490,29 @@ test('reports queue sorting, appeal decisions, governance validation, audit trai
   });
   assert.equal(filterAuditLogs(logs, 'rep_spam_01', 'report.resolve').length, 1);
 
-  const breakdown = computeCategoryBreakdown(seed.posts);
+  const breakdown = computeCategoryBreakdown(SAMPLE_POSTS);
   assert.equal(breakdown.length, 5);
   assert.equal(breakdown[0].totalLikes > 0, true);
 
-  const expiredCount = countExpiredStories(seed.storyGroups, 1_700_000_000_000);
+  const expiredCount = countExpiredStories(fixture.storyGroups, 1_700_000_000_000);
   assert.equal(expiredCount, 1);
 
   const extended = computeExtendedWorkspaceMetrics({
-    currentProfile: seed.currentProfile,
-    communityUsers: seed.communityUsers,
-    posts: seed.posts,
-    storyGroups: seed.storyGroups,
-    onlineUserIds: seed.onlineUserIds,
-    moderation: seed.moderation,
-    memberModerationRecords: seed.memberModerationRecords,
-    inquiries: seed.inquiries,
-    reports: seed.reports,
-    appeals: seed.appeals,
-    announcements: seed.announcements,
-    adminRoles: seed.adminRoles,
+    currentProfile: SAMPLE_PROFILES[0],
+    communityUsers: [SAMPLE_PROFILES[1]],
+    posts: SAMPLE_POSTS,
+    storyGroups: fixture.storyGroups,
+    onlineUserIds: ['u_admin'],
+    moderation: { hiddenPostIds: [], restrictedUids: ['u_member'] },
+    memberModerationRecords: fixture.memberModerationRecords,
+    inquiries: fixture.inquiries,
+    reports: fixture.reports,
+    appeals: fixture.appeals,
+    announcements: fixture.announcements,
+    adminRoles: fixture.adminRoles,
   });
   assert.equal(extended.openReports, 2);
   assert.equal(extended.pendingAppeals, 1);
   assert.equal(extended.activeAnnouncements, 1);
+  assert.equal(extended.adminOperators, 1);
 });
