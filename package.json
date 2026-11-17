@@ -15,8 +15,8 @@
     "bun:sync": "bun install --lockfile-only",
     "build:landing": "vite build --config vite.landing.config.ts",
     "build:admin": "vite build --config vite.admin.config.ts",
-    "deploy:landing": "npm run build:landing && npx wrangler deploy --config wrangler.landing.jsonc",
-    "deploy:admin": "npm run build:admin && npx wrangler deploy --config wrangler.admin.jsonc"
+    "deploy:landing": "npm run build:landing && npx wrangler deploy --env landing",
+    "deploy:admin": "npm run build:admin && npx wrangler deploy --env admin"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1168.0",
