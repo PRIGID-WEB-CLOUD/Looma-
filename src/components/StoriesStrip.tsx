@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react';
 import type { StoryGroup, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface StoriesStripProps {
   profile: UserProfile;
@@ -67,8 +68,11 @@ export function StoriesStrip({
                   />
                 </div>
               </div>
-              <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                Your Story
+              <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 inline-flex items-center justify-center gap-0.5 max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                <span className="truncate">Your Story</span>
+                {(myGroup.authorVerified || profile.isVerified) && (
+                  <VerifiedBadge size={11} />
+                )}
               </span>
             </button>
           )}
@@ -99,8 +103,9 @@ export function StoriesStrip({
                     />
                   </div>
                 </div>
-                <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                  {firstName}
+                <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 inline-flex items-center justify-center gap-0.5 max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                  <span className="truncate">{firstName}</span>
+                  {group.authorVerified && <VerifiedBadge size={11} />}
                 </span>
               </button>
             );

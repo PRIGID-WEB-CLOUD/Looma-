@@ -13,6 +13,8 @@ import type {
 import {
   filterAndSortFeed,
   filterMediaPosts,
+  mergeCategoryNames,
+  POST_CATEGORIES,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { MediaViewerModal } from './MediaViewerModal';
@@ -28,6 +30,7 @@ interface FeedViewProps {
   bookmarkedPostIds: string[];
   followedUserIds?: string[];
   shareThreads?: ChatThread[];
+  categories?: string[];
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onOpenComposer: () => void;
@@ -62,6 +65,7 @@ export function FeedView({
   bookmarkedPostIds,
   followedUserIds = [],
   shareThreads = [],
+  categories = POST_CATEGORIES,
   searchQuery: externalSearchQuery,
   onSearchQueryChange,
   onOpenComposer,
@@ -130,9 +134,15 @@ export function FeedView({
     return () => observer.disconnect();
   }, [hasMore, items.length]);
 
+  const categoryList = useMemo(
+    () => mergeCategoryNames(categories, POST_CATEGORIES),
+    [categories]
+  );
+
   const filterOptions: { id: FeedFilter; label: string }[] = [
     { id: 'All', label: 'All' },
     { id: 'Following', label: 'Following' },
+    ...categoryList.map((cat) => ({ id: cat, label: cat })),
   ];
 
   const hasActiveFilterOrSearch =
@@ -308,6 +318,7 @@ export function FeedView({
               key={post.id}
               post={post}
               currentUserId={profile.uid}
+              categories={categoryList}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}

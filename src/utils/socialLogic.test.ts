@@ -10,6 +10,8 @@ import {
   countUnreadNotifications,
   createDirectThreadMemberIds,
   DIRECT_CHAT_SHARED_TITLE,
+  enrichCommentWithVerifiedAuthor,
+  enrichPostWithVerifiedAuthor,
   extractFirstUrl,
   filterUsersByQuery,
   findAccountByHandle,
@@ -86,6 +88,7 @@ import type {
   ChatTypingStatus,
   CallSession,
   Post,
+  PostComment,
   StoryItem,
   UserProfile,
 } from '../types/social';
@@ -1528,4 +1531,90 @@ test('governance helpers enforce announcements audience, moderation blocks, veri
   assert.equal(shouldAutoQueuePostReport('Check https://example.com', undefined, false), false);
   assert.equal(shouldAutoQueuePostReport('No links here', '', true), false);
 });
+
+test('verification badge propagation syncs live status across posts, comments, and public profile fallback', () => {
+  const verifiedPost: Post = {
+    ...makePost(12, 'Architecture'),
+    authorVerified: true,
+  };
+
+  // resolvePublicProfile preserves authorVerified when falling back to post metadata
+  const me: UserProfile = {
+    uid: 'me',
+    displayName: 'Alex',
+    handle: 'alex',
+    bio: '',
+    avatarUrl: '',
+    location: 'SF',
+    interests: [],
+    followersCount: 0,
+    followingCount: 0,
+    onboardingCompleted: true,
+    isVerified: false,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+  };
+  const fallbackProfile = resolvePublicProfile('user_12', me, [], [verifiedPost]);
+  assert.equal(fallbackProfile?.isVerified, true);
+
+  // enrichPostWithVerifiedAuthor grants & revokes based on currentProfile and communityUsers
+  const postFromMe: Post = {
+    ...makePost(1),
+    authorId: 'me',
+    authorVerified: false,
+  };
+  const grantedSelfPost = enrichPostWithVerifiedAuthor(
+    postFromMe,
+    [],
+    { uid: 'me', isVerified: true }
+  );
+  assert.equal(grantedSelfPost.authorVerified, true);
+
+  const revokedSelfPost = enrichPostWithVerifiedAuthor(
+    grantedSelfPost,
+    [],
+    { uid: 'me', isVerified: false }
+  );
+  assert.equal(revokedSelfPost.authorVerified, false);
+
+  // enrichCommentWithVerifiedAuthor dynamically reflects live isVerified state
+  const commentFromOther: PostComment = {
+    id: 'c_1',
+    postId: 'p_1',
+    authorId: 'u_creator',
+    authorName: 'Sophia Chen',
+    authorHandle: 'sophia.chen',
+    authorAvatar: '',
+    authorVerified: false,
+    text: 'Wonderful framing!',
+    createdAtMs: 1000,
+  };
+  const grantedComment = enrichCommentWithVerifiedAuthor(
+    commentFromOther,
+    [{ uid: 'u_creator', isVerified: true }],
+    null
+  );
+  assert.equal(grantedComment.authorVerified, true);
+
+  const revokedComment = enrichCommentWithVerifiedAuthor(
+    grantedComment,
+    [{ uid: 'u_creator', isVerified: false }],
+    null
+  );
+  assert.equal(revokedComment.authorVerified, false);
+
+  const selfComment: PostComment = {
+    ...commentFromOther,
+    id: 'c_2',
+    authorId: 'me',
+    authorVerified: false,
+  };
+  const grantedSelfComment = enrichCommentWithVerifiedAuthor(
+    selfComment,
+    [],
+    { uid: 'me', isVerified: true }
+  );
+  assert.equal(grantedSelfComment.authorVerified, true);
+});
+
 

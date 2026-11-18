@@ -22,6 +22,7 @@ import {
   MAX_GROUP_MEMBERS,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface ChatInfoModalProps {
   open: boolean;
@@ -275,8 +276,9 @@ export function ChatInfoModal({
               online={status.isOnline}
             />
             <div>
-              <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                {thread.title}
+              <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white inline-flex items-center justify-center gap-1.5 max-w-full min-w-0 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                <span className="truncate">{thread.title}</span>
+                {matchedUser?.isVerified && <VerifiedBadge size={16} />}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {thread.partnerHandle ? (
@@ -362,8 +364,9 @@ export function ChatInfoModal({
                         online={isUserOnline(candidate.uid, onlineUserIds)}
                       />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold truncate text-slate-900 dark:text-white">
-                          {candidate.displayName}
+                        <p className="text-xs font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                          <span className="truncate">{candidate.displayName}</span>
+                          {candidate.isVerified && <VerifiedBadge size={12} />}
                         </p>
                         <p className="text-[11px] text-slate-500 truncate">
                           @{candidate.handle}
@@ -416,6 +419,9 @@ export function ChatInfoModal({
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 flex items-center gap-1.5">
                           <span className="truncate">{memberName}</span>
+                          {(isMe ? profile.isVerified : member?.isVerified) && (
+                            <VerifiedBadge size={12} />
+                          )}
                           {targetIsAdmin && (
                             <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 shrink-0">
                               Admin

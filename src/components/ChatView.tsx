@@ -58,6 +58,7 @@ import type { ReportCategory } from '../../admin/adminLogic';
 import { Avatar } from './Avatar';
 import { ChatInfoModal } from './ChatInfoModal';
 import { GifPickerModal } from './GifPickerModal';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface ChatViewProps {
   profile: UserProfile;
@@ -494,6 +495,14 @@ export function ChatView({
     }
     return Array.from(byUid.values());
   }, [chatUsers, communityUsers, profile.uid]);
+  const verifiedUidSet = useMemo(() => {
+    const set = new Set<string>();
+    if (profile.isVerified) set.add(profile.uid);
+    for (const u of knownOtherUsers) {
+      if (u.isVerified) set.add(u.uid);
+    }
+    return set;
+  }, [knownOtherUsers, profile.isVerified, profile.uid]);
   const otherCreators = useMemo(
     () => communityUsers.filter((u) => u.uid !== profile.uid),
     [communityUsers, profile.uid]
@@ -1023,8 +1032,13 @@ export function ChatView({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold truncate flex items-center gap-1.5">
+                    <p className="text-sm font-semibold truncate flex items-center gap-1.5 min-w-0">
                       <span className="truncate">{thread.title}</span>
+                      {!thread.isGroup &&
+                        thread.partnerUid &&
+                        verifiedUidSet.has(thread.partnerUid) && (
+                          <VerifiedBadge size={13} />
+                        )}
                       {muted && (
                         <BellOff
                           className="w-3 h-3 text-slate-400 shrink-0"
@@ -1081,8 +1095,13 @@ export function ChatView({
                   />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="font-display text-sm font-semibold truncate flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                  <h2 className="font-display text-sm font-semibold truncate flex items-center gap-1.5 min-w-0 text-slate-900 dark:text-slate-100">
                     <span className="truncate">{activeThread.title}</span>
+                    {!activeThread.isGroup &&
+                      activeThread.partnerUid &&
+                      verifiedUidSet.has(activeThread.partnerUid) && (
+                        <VerifiedBadge size={14} />
+                      )}
                     {activeThreadMuted && (
                       <BellOff
                         className="w-3.5 h-3.5 text-slate-400 shrink-0"
@@ -1205,8 +1224,13 @@ export function ChatView({
               {activeMessages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-sm text-slate-400 gap-2">
                   <Avatar src={activeThread.partnerAvatar} name={activeThread.title} size="lg" />
-                  <p className="font-semibold text-slate-700 dark:text-slate-300">
-                    {activeThread.title}
+                  <p className="font-semibold text-slate-700 dark:text-slate-300 inline-flex items-center gap-1.5 max-w-full min-w-0">
+                    <span className="truncate">{activeThread.title}</span>
+                    {!activeThread.isGroup &&
+                      activeThread.partnerUid &&
+                      verifiedUidSet.has(activeThread.partnerUid) && (
+                        <VerifiedBadge size={14} />
+                      )}
                   </p>
                   <p className="text-xs text-slate-400">
                     Say hello to start the conversation!
@@ -1279,8 +1303,12 @@ export function ChatView({
                           }`}
                         >
                           {!mine && activeThread.isGroup && isLastInGroup && (
-                            <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5">
-                              {resolvedSenderName}
+                            <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-0.5 inline-flex items-center gap-1 max-w-full min-w-0">
+                              <span className="truncate">{resolvedSenderName}</span>
+                              {(liveSender?.isVerified ||
+                                verifiedUidSet.has(msg.senderId)) && (
+                                <VerifiedBadge size={11} />
+                              )}
                             </p>
                           )}
 
@@ -1790,8 +1818,9 @@ export function ChatView({
                               online={online}
                             />
                             <div className="min-w-0">
-                              <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                                {creator.displayName}
+                              <p className="text-sm font-bold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                                <span className="truncate">{creator.displayName}</span>
+                                {creator.isVerified && <VerifiedBadge size={13} />}
                               </p>
                               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                                 @{creator.handle}
@@ -1832,8 +1861,9 @@ export function ChatView({
                             online={online}
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                              {creator.displayName}
+                            <p className="text-sm font-bold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                              <span className="truncate">{creator.displayName}</span>
+                              {creator.isVerified && <VerifiedBadge size={13} />}
                             </p>
                             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                               @{creator.handle} ·{' '}

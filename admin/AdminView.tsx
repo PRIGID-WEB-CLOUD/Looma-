@@ -1,22 +1,32 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  Award,
+  ChevronDown,
+  ExternalLink,
   FileWarning,
   Flag,
+  FolderKanban,
+  Hash,
   LayoutDashboard,
   LogIn,
   LogOut,
   Megaphone,
+  Menu,
   MessagesSquare,
   Moon,
+  Settings,
   ShieldAlert,
   Sparkles,
   Sun,
+  UserCheck,
   Users,
+  X,
 } from 'lucide-react';
 import { Avatar } from '../src/components/Avatar';
 import { LoomaLogo } from '../src/components/LoomaLogo';
-import type { ChatThread, Post, PostCategory, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
+import { VerifiedBadge } from '../src/components/VerifiedBadge';
+import type { ChatThread, Post, PostCategory, PostCategoryRecord, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
 import type { LegalDocId } from '../src/utils/legalLogic';
 import {
   computeCategoryBreakdown,
@@ -46,6 +56,7 @@ import {
   type R2MediaObjectItem,
   type ReportStatus,
   type SystemHealthProbe,
+  type VerificationRequest,
 } from './adminLogic';
 import { OverviewAnalyticsSection } from './components/OverviewAnalyticsSection';
 import { TeamRolesSection } from './components/TeamRolesSection';
@@ -56,12 +67,18 @@ import { GovernanceSection } from './components/GovernanceSection';
 import { SystemOpsSection } from './components/SystemOpsSection';
 import { AdminPublisherSection } from './components/AdminPublisherSection';
 import { CommsMediaOpsSection } from './components/CommsMediaOpsSection';
+import { VerificationRequestsSection } from './components/VerificationRequestsSection';
+import { CategoriesSection } from './components/CategoriesSection';
+import { HashtagsSection } from './components/HashtagsSection';
 
 export type AdminSectionId =
   | 'overview'
+  | 'verification'
+  | 'categories'
+  | 'hashtags'
+  | 'publisher'
   | 'members'
   | 'users'
-  | 'publisher'
   | 'moderation'
   | 'reports'
   | 'comms'
@@ -210,6 +227,12 @@ interface AdminViewProps {
   }) => Promise<{ ok: boolean; error?: string }>;
   savedHashtags?: string[];
   dynamicHashtags?: string[];
+  categories?: PostCategoryRecord[];
+  onCreateCategory?: (
+    name: string,
+    description: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onDeleteCategory?: (categoryId: string) => Promise<{ ok: boolean; error?: string }>;
   onCreateHashtag?: (
     rawTag: string
   ) => Promise<{ ok: boolean; tag?: string; error?: string }>;
@@ -226,6 +249,13 @@ interface AdminViewProps {
   onForceEndCall?: (callId: string) => Promise<{ ok: boolean; error?: string }>;
   onLoadR2Objects?: (prefix?: string) => Promise<void>;
   onDeleteR2Object?: (key: string) => Promise<{ ok: boolean; error?: string }>;
+  verificationRequests: VerificationRequest[];
+  onReviewVerificationRequest: (
+    requestId: string,
+    targetUid: string,
+    decision: 'approved' | 'rejected',
+    note?: string
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -234,6 +264,9 @@ const SECTION_NAV: Array<{
   icon: typeof LayoutDashboard;
 }> = [
   { id: 'overview', label: 'Overview & Analytics', icon: LayoutDashboard },
+  { id: 'verification', label: 'Verification Requests', icon: Award },
+  { id: 'categories', label: 'Categories', icon: FolderKanban },
+  { id: 'hashtags', label: 'Hashtags', icon: Hash },
   { id: 'publisher', label: 'Publisher Hub', icon: Sparkles },
   { id: 'members', label: 'Team & Roles', icon: ShieldAlert },
   { id: 'users', label: 'Community Users', icon: Users },
@@ -313,6 +346,9 @@ export function AdminView({
   onPublishStory,
   savedHashtags = [],
   dynamicHashtags = [],
+  categories = [],
+  onCreateCategory,
+  onDeleteCategory,
   onCreateHashtag,
   onDeleteHashtag,
   onRenameChat,
@@ -321,8 +357,14 @@ export function AdminView({
   onForceEndCall,
   onLoadR2Objects,
   onDeleteR2Object,
+  verificationRequests = [],
+  onReviewVerificationRequest,
 }: AdminViewProps) {
   const [section, setSection] = useState<AdminSectionId>('overview');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [adminProfileModalOpen, setAdminProfileModalOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
   const [showEmailLogin, setShowEmailLogin] = useState(false);
   const [adminLoginEmail, setAdminLoginEmail] = useState('');
   const [adminLoginPassword, setAdminLoginPassword] = useState('');
@@ -650,12 +692,17 @@ export function AdminView({
             {SECTION_NAV.map((item) => {
               const Icon = item.icon;
               const isActive = item.id === section;
+              const pendingVerifications = verificationRequests.filter(
+                (r) => r.status === 'pending'
+              ).length;
               const badgeCount =
-                item.id === 'reports'
-                  ? metrics.openReports + metrics.pendingAppeals
-                  : item.id === 'governance'
-                    ? metrics.pendingInquiries
-                    : 0;
+                item.id === 'verification'
+                  ? pendingVerifications
+                  : item.id === 'reports'
+                    ? metrics.openReports + metrics.pendingAppeals
+                    : item.id === 'governance'
+                      ? metrics.pendingInquiries
+                      : 0;
 
               return (
                 <button
@@ -714,6 +761,14 @@ export function AdminView({
         <header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
           <div className="h-16 px-4 md:px-8 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0">
+              <button
+                type="button"
+                onClick={() => setMobileSidebarOpen(true)}
+                aria-label="Open mobile navigation sidebar"
+                className="lg:hidden min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer shrink-0 mr-1"
+              >
+                <Menu className="w-4 h-4" aria-hidden="true" />
+              </button>
               <span className="font-semibold text-slate-500 dark:text-slate-400 shrink-0">
                 Looma Admin
               </span>
@@ -728,14 +783,6 @@ export function AdminView({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => void onSignOut()}
-                className="lg:hidden min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Sign Out</span>
-              </button>
-              <button
-                type="button"
                 onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
                 aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                 className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer"
@@ -746,28 +793,165 @@ export function AdminView({
                   <Moon className="w-4 h-4" aria-hidden="true" />
                 )}
               </button>
+
+              {/* Users Dropdown Menu */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setUserMenuOpen((prev) => !prev)}
+                  aria-expanded={userMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="Administrator account options"
+                  className="min-h-[40px] px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="xs" />
+                  <span className="hidden sm:inline-flex items-center gap-1 text-xs font-semibold max-w-[120px] truncate text-slate-900 dark:text-white">
+                    <span className="truncate">{currentProfile.displayName}</span>
+                    <VerifiedBadge size={12} />
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                </button>
+
+                {userMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-2 z-50 looma-stage-enter space-y-1"
+                  >
+                    <div className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="sm" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate flex items-center gap-1">
+                            <span className="truncate">{currentProfile.displayName}</span>
+                            <VerifiedBadge size={12} />
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            {accountEmail || `@${currentProfile.handle}`}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[10px] font-mono font-bold text-blue-700 dark:text-blue-300 uppercase">
+                          {adminAuth.role || 'Super Admin'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setAdminProfileModalOpen(true);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <UserCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Admin Profile</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setSection('system');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <Settings className="w-4 h-4 text-slate-500" />
+                      <span>Settings &amp; Flags</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setSection('categories');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <FolderKanban className="w-4 h-4 text-slate-500" />
+                      <span>Manage Categories</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setSection('hashtags');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <Hash className="w-4 h-4 text-slate-500" />
+                      <span>Manage Hashtags</span>
+                    </button>
+
+                    <a
+                      href="/feed"
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer"
+                    >
+                      <ExternalLink className="w-4 h-4 text-slate-500" />
+                      <span>Open Main Feed</span>
+                    </a>
+
+                    <div className="pt-1 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          void onSignOut();
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-2.5 transition-colors cursor-pointer"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Sign Out</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Mobile Section Navigation */}
+          {/* Mobile Section Navigation Pills */}
           <nav
             aria-label="Admin sections mobile"
             className="lg:hidden px-4 pb-2.5 flex items-center gap-1.5 overflow-x-auto"
           >
             {SECTION_NAV.map((item) => {
               const isActive = item.id === section;
+              const pendingVerifications = verificationRequests.filter(
+                (r) => r.status === 'pending'
+              ).length;
+              const badgeCount =
+                item.id === 'verification'
+                  ? pendingVerifications
+                  : item.id === 'reports'
+                    ? metrics.openReports + metrics.pendingAppeals
+                    : item.id === 'governance'
+                      ? metrics.pendingInquiries
+                      : 0;
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => setSection(item.id)}
-                  className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
                     isActive
                       ? 'bg-blue-600 text-white'
                       : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'
                   }`}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {badgeCount > 0 && (
+                    <span className="font-mono text-[11px] tabular-nums opacity-85">
+                      {badgeCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -814,6 +998,38 @@ export function AdminView({
               announcements={announcements}
               accountLabel={accountLabel}
               onNavigateSection={setSection}
+            />
+          )}
+
+          {section === 'verification' && (
+            <VerificationRequestsSection
+              requests={verificationRequests}
+              onReviewRequest={onReviewVerificationRequest}
+            />
+          )}
+
+          {section === 'categories' && (
+            <CategoriesSection
+              categories={categories}
+              posts={posts}
+              onCreateCategory={
+                onCreateCategory ||
+                (async () => ({ ok: false, error: 'Category creation unavailable.' }))
+              }
+              onDeleteCategory={
+                onDeleteCategory ||
+                (async () => ({ ok: false, error: 'Category deletion unavailable.' }))
+              }
+            />
+          )}
+
+          {section === 'hashtags' && (
+            <HashtagsSection
+              savedHashtags={savedHashtags}
+              dynamicHashtags={dynamicHashtags}
+              posts={posts}
+              onCreateHashtag={onCreateHashtag}
+              onDeleteHashtag={onDeleteHashtag}
             />
           )}
 
@@ -947,6 +1163,232 @@ export function AdminView({
           )}
         </main>
       </div>
+
+      {/* Mobile Slide-Over Sidebar Drawer */}
+      {mobileSidebarOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mobile Navigation Sidebar"
+          className="fixed inset-0 z-50 lg:hidden"
+        >
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+
+          {/* Drawer panel */}
+          <aside
+            className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 p-5 flex flex-col justify-between overflow-y-auto shadow-2xl looma-stage-enter z-10"
+          >
+            <div className="space-y-6">
+              <div className="flex items-center justify-between gap-2">
+                <LoomaLogo />
+                <button
+                  type="button"
+                  onClick={() => setMobileSidebarOpen(false)}
+                  aria-label="Close navigation sidebar"
+                  className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <nav className="space-y-1">
+                {SECTION_NAV.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = item.id === section;
+                  const pendingVerifications = verificationRequests.filter(
+                    (r) => r.status === 'pending'
+                  ).length;
+                  const badgeCount =
+                    item.id === 'verification'
+                      ? pendingVerifications
+                      : item.id === 'reports'
+                        ? metrics.openReports + metrics.pendingAppeals
+                        : item.id === 'governance'
+                          ? metrics.pendingInquiries
+                          : 0;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSection(item.id);
+                        setMobileSidebarOpen(false);
+                      }}
+                      className={`w-full min-h-[42px] px-3.5 rounded-xl flex items-center justify-between text-xs font-semibold transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </span>
+                      {badgeCount > 0 && (
+                        <span
+                          className={`font-mono text-[11px] tabular-nums px-1.5 py-0.5 rounded-md ${
+                            isActive
+                              ? 'bg-blue-700 text-white'
+                              : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
+                          }`}
+                        >
+                          {badgeCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="sm" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900 dark:text-white truncate flex items-center gap-1">
+                    <span className="truncate">{currentProfile.displayName}</span>
+                    <VerifiedBadge size={12} />
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {accountEmail || `@${currentProfile.handle}`}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSidebarOpen(false);
+                  setAdminProfileModalOpen(true);
+                }}
+                className="w-full min-h-[38px] px-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                <span>View Admin Profile</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void onSignOut()}
+                className="w-full min-h-[38px] px-3 rounded-xl border border-rose-200 dark:border-rose-900/60 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Admin Profile Modal */}
+      {adminProfileModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Admin Profile Details"
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden looma-stage-enter">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span>Administrator Profile</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setAdminProfileModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-4">
+                <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="lg" />
+                <div className="min-w-0 space-y-1">
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>{currentProfile.displayName}</span>
+                    <VerifiedBadge size={16} />
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    @{currentProfile.handle} · {accountEmail || 'Authorized Administrator'}
+                  </p>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[10px] font-mono font-bold text-blue-700 dark:text-blue-300 uppercase">
+                      {adminAuth.role || 'Super Admin'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono font-semibold">
+                      Verification Badge Active
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 space-y-2">
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Assigned Privileges &amp; Operations
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'users.manage',
+                    'content.moderate',
+                    'verification.review',
+                    'categories.manage',
+                    'hashtags.manage',
+                    'announcements.publish',
+                    'system.ops',
+                  ].map((perm) => (
+                    <span
+                      key={perm}
+                      className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-300"
+                    >
+                      {perm}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">Operator UID</span>
+                  <span className="font-mono font-medium truncate block text-slate-900 dark:text-white mt-0.5">
+                    {currentProfile.uid}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[11px]">Database Status</span>
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400 block mt-0.5">
+                    Connected &amp; Synchronized
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <a
+                  href="/feed"
+                  className="min-h-[38px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors inline-flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Switch to Main Feed</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setAdminProfileModalOpen(false)}
+                  className="min-h-[38px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

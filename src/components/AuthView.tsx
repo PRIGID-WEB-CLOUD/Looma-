@@ -7,10 +7,8 @@ import {
   Lock,
   LogOut,
   Mail,
-  Moon,
   RefreshCw,
   ShieldCheck,
-  Sun,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { ThemeMode, UserProfile } from '../types/social';
@@ -23,7 +21,7 @@ import {
 } from '../utils/legalLogic';
 import { validatePasswordResetEmail } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
-import { LoomaLogo, LoomaLogoMark } from './LoomaLogo';
+import { LoomaLogoMark } from './LoomaLogo';
 
 export type AuthMode = 'signin' | 'signup';
 
@@ -38,8 +36,8 @@ interface AuthViewProps {
   firebaseUser: User | null;
   authLoading: boolean;
   authError: string | null;
-  theme: ThemeMode;
-  onSetTheme: (theme: ThemeMode) => void;
+  theme?: ThemeMode;
+  onSetTheme?: (theme: ThemeMode) => void;
   onLoginGoogle: (options?: {
     isSignup?: boolean;
     consent?: AccountConsentState;
@@ -107,8 +105,6 @@ export function AuthView({
   firebaseUser,
   authLoading,
   authError,
-  theme,
-  onSetTheme,
   onLoginGoogle,
   onLoginApple,
   onLoginEmail,
@@ -440,33 +436,9 @@ export function AuthView({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
-      {/* Responsive Top Header */}
-      <header className="sticky top-0 z-30 h-14 md:h-16 px-4 md:px-8 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto h-full flex items-center justify-between gap-4">
-          <LoomaLogo />
-
-          <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
-              aria-label={
-                theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
-              }
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
-            >
-              {theme === 'dark' ? (
-                <Sun className="w-4 h-4" aria-hidden="true" />
-              ) : (
-                <Moon className="w-4 h-4" aria-hidden="true" />
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
-
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col justify-center transition-colors">
       {/* Main Responsive Auth Canvas */}
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 md:px-8 py-5 md:py-12 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch">
+      <main className="w-full max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-12 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch">
         {/* Editorial Visual Column */}
         <section
           aria-label="Looma community highlights"

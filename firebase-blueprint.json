@@ -193,7 +193,8 @@
         },
         "category": {
           "type": "string",
-          "enum": ["Architecture", "Photography", "Design", "Travel", "Journal"]
+          "minLength": 1,
+          "maxLength": 40
         },
         "likesCount": {
           "type": "number"
@@ -1012,6 +1013,40 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "fullName", "email", "organization", "note", "status", "reviewedBy", "createdAt", "updatedAt"]
+    },
+    "VerificationRequest": {
+      "title": "VerificationRequest",
+      "description": "Member verification badge request submitted for administrator review.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "handle": { "type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-zA-Z0-9_.]+$" },
+        "avatarUrl": { "type": "string", "maxLength": 250000 },
+        "reason": { "type": "string", "minLength": 10, "maxLength": 500 },
+        "links": { "type": "array", "description": "Reference links (1-2 http/https URLs)" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reviewerUid": { "type": "string", "maxLength": 128 },
+        "reviewerNote": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "displayName", "handle", "avatarUrl", "reason", "links", "status", "reviewerUid", "reviewerNote", "createdAt", "updatedAt"]
+    },
+    "PostCategoryRecord": {
+      "title": "PostCategoryRecord",
+      "description": "Administrator-managed topic category for community posts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "description": { "type": "string", "maxLength": 160 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "description", "createdBy", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -1118,6 +1153,14 @@
     "/accessInquiries/{inquiryId}": {
       "schema": { "$ref": "#/entities/AccessInquiryRecord" },
       "description": "Landing and access inquiry approval queue managed by administrators."
+    },
+    "/verificationRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/VerificationRequest" },
+      "description": "Verification badge requests submitted by members for admin review."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/PostCategoryRecord" },
+      "description": "Dynamic post topic categories curated by platform administrators."
     }
   }
 }

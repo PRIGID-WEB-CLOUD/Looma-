@@ -1,5 +1,11 @@
 import type { Post, PostCategory, StoryGroup, UserProfile } from '../src/types/social';
-import { extractHashtags, POST_CATEGORIES } from '../src/utils/socialLogic';
+import {
+  extractHashtags,
+  mergeCategoryNames,
+  normalizeCategoryName,
+  normalizeCategorySlug,
+  POST_CATEGORIES,
+} from '../src/utils/socialLogic';
 import {
   formatLegalDocumentSectionsAsText,
   LEGAL_DOCUMENTS,
@@ -21,6 +27,7 @@ export interface AdminAccessInquiry {
 export const ADMIN_EMAILS = [
   'prigidwebcloud@gmail.com',
   'prigidholdings@gmail.com',
+  'pocketmoofficial@gmail.com',
 ] as const;
 
 export interface AdminModerationState {
@@ -173,6 +180,16 @@ export interface AdminHashtagStat {
   tag: string;
   postCount: number;
   isDynamic: boolean;
+}
+
+export interface AdminCategoryItem {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  isDefault?: boolean;
 }
 
 export interface R2MediaObjectItem {
@@ -348,6 +365,7 @@ export function resolveAdminAuthorization(
   }
   return { isAdmin: false, reason: 'forbidden' };
 }
+
 
 export function toggleHiddenPostId(
   hiddenPostIds: string[],
@@ -802,9 +820,16 @@ export function filterAuditLogs(
     .sort((a, b) => b.createdAtMs - a.createdAtMs);
 }
 
-export function computeCategoryBreakdown(posts: Post[]): CategoryMetric[] {
+export function computeCategoryBreakdown(
+  posts: Post[],
+  categoryNames: string[] = POST_CATEGORIES
+): CategoryMetric[] {
   const total = posts.length;
-  return POST_CATEGORIES.map((category) => {
+  const allCategories = mergeCategoryNames(
+    [...categoryNames, ...posts.map((p) => p.category)],
+    POST_CATEGORIES
+  );
+  return allCategories.map((category) => {
     const bucket = posts.filter((p) => p.category === category);
     const totalLikes = bucket.reduce((sum, p) => sum + (p.likesCount || 0), 0);
     const totalComments = bucket.reduce((sum, p) => sum + (p.commentsCount || 0), 0);
@@ -1016,4 +1041,151 @@ export function formatStorageBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+export type VerificationRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface VerificationRequest {
+  id: string;
+  uid: string;
+  displayName: string;
+  handle: string;
+  avatarUrl: string;
+  reason: string;
+  links: string[];
+  status: VerificationRequestStatus;
+  reviewerUid?: string;
+  reviewerNote?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export function validateVerificationRequestInput(
+  reason: string,
+  links: string[]
+): {
+  valid: boolean;
+  error?: string;
+  cleanReason?: string;
+  cleanLinks?: string[];
+} {
+  const cleanReason = (reason || '').trim();
+  if (cleanReason.length < 10) {
+    return {
+      valid: false,
+      error: 'Please provide a detailed reason (at least 10 characters).',
+    };
+  }
+  if (cleanReason.length > 500) {
+    return { valid: false, error: 'Reason cannot exceed 500 characters.' };
+  }
+  const cleanLinks = (links || []).map((l) => l.trim()).filter(Boolean);
+  if (cleanLinks.length === 0) {
+    return { valid: false, error: 'Please provide at least one reference link.' };
+  }
+  if (cleanLinks.length > 2) {
+    return { valid: false, error: 'Maximum of 2 reference links allowed.' };
+  }
+  for (const link of cleanLinks) {
+    if (link.length > 500) {
+      return {
+        valid: false,
+        error: 'Each reference link must be 500 characters or fewer.',
+      };
+    }
+    try {
+      const parsed = new URL(link);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return {
+          valid: false,
+          error: 'Reference links must start with http:// or https://.',
+        };
+      }
+    } catch {
+      return {
+        valid: false,
+        error: 'Please enter valid URLs starting with http:// or https://.',
+      };
+    }
+  }
+  return { valid: true, cleanReason, cleanLinks };
+}
+
+export function sortVerificationRequests(
+  requests: VerificationRequest[]
+): VerificationRequest[] {
+  return [...requests].sort((a, b) => {
+    if (a.status === 'pending' && b.status !== 'pending') return -1;
+    if (a.status !== 'pending' && b.status === 'pending') return 1;
+    return (b.updatedAtMs || b.createdAtMs) - (a.updatedAtMs || a.createdAtMs);
+  });
+}
+
+export function reviewVerificationRequestDecision(
+  requests: VerificationRequest[],
+  requestId: string,
+  decision: 'approved' | 'rejected',
+  reviewerUid: string,
+  note: string = '',
+  nowMs: number = Date.now()
+):
+  | { ok: true; requests: VerificationRequest[]; updated: VerificationRequest }
+  | { ok: false; error: string } {
+  const target = requests.find((r) => r.id === requestId);
+  if (!target) {
+    return { ok: false, error: 'Verification request not found.' };
+  }
+  if (target.status !== 'pending') {
+    return {
+      ok: false,
+      error: `This request has already been ${target.status}.`,
+    };
+  }
+  const cleanNote = note.trim().slice(0, 400);
+  const updated: VerificationRequest = {
+    ...target,
+    status: decision,
+    reviewerUid,
+    reviewerNote: cleanNote,
+    updatedAtMs: nowMs,
+  };
+  return {
+    ok: true,
+    updated,
+    requests: sortVerificationRequests(
+      requests.map((r) => (r.id === requestId ? updated : r))
+    ),
+  };
+}
+
+export function validateCategoryInput(
+  rawName: string,
+  rawDescription: string = '',
+  existingItems: Array<{ id: string; name: string }> = [],
+  editingId: string | null = null
+):
+  | { valid: true; id: string; name: string; description: string }
+  | { valid: false; error: string } {
+  const name = normalizeCategoryName(rawName || '');
+  const description = (rawDescription || '').trim();
+  if (name.length < 2 || name.length > 40) {
+    return { valid: false, error: 'Category name must be between 2 and 40 characters.' };
+  }
+  if (description.length > 160) {
+    return { valid: false, error: 'Description must be 160 characters or fewer.' };
+  }
+  const duplicate = existingItems.find(
+    (item) =>
+      item.id !== editingId &&
+      item.name.trim().toLowerCase() === name.toLowerCase()
+  );
+  if (duplicate) {
+    return { valid: false, error: `Category "${duplicate.name}" already exists.` };
+  }
+  const slug = normalizeCategorySlug(name);
+  return {
+    valid: true,
+    id: editingId || `cat_${slug}`,
+    name,
+    description,
+  };
+}
 

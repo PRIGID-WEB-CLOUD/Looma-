@@ -33,6 +33,7 @@ import {
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { RichText } from './RichText';
+import { VerifiedBadge } from './VerifiedBadge';
 
 export interface MediaGalleryEntry {
   post: Post;
@@ -230,8 +231,9 @@ export function MediaViewerModal({
         >
           <Avatar src={post.authorAvatar} name={post.authorName} size="md" />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-white truncate group-hover:text-blue-400 transition-colors">
-              {post.authorName}
+            <p className="text-sm font-semibold text-white inline-flex items-center gap-1 max-w-full min-w-0 group-hover:text-blue-400 transition-colors">
+              <span className="truncate">{post.authorName}</span>
+              {post.authorVerified && <VerifiedBadge size={14} />}
             </p>
             <p className="text-xs text-slate-400 truncate">
               @{post.authorHandle} · {formatRelativeTime(post.createdAtMs)}

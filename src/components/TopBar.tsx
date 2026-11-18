@@ -1,4 +1,4 @@
-import { Moon, ShieldCheck, Sun } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import type { TabId, ThemeMode } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -9,9 +9,6 @@ interface TopBarProps {
   unreadNotifications: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
-  isAdmin?: boolean;
-  onOpenAdmin?: () => void;
-  onOpenLanding?: () => void;
 }
 
 export function TopBar({
@@ -20,9 +17,6 @@ export function TopBar({
   unreadNotifications,
   theme,
   onToggleTheme,
-  isAdmin = false,
-  onOpenAdmin,
-  onOpenLanding,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -43,17 +37,6 @@ export function TopBar({
         {/* Zone 1: Static theme-reactive Logo brand */}
         <div className="flex items-center gap-3">
           <LoomaLogo />
-          {isAdmin && onOpenAdmin && (
-            <button
-              type="button"
-              onClick={onOpenAdmin}
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
-              title="Open Platform Administration Console"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Admin</span>
-            </button>
-          )}
         </div>
 
         {/* Zone 2: 4 single-line navigation links */}
@@ -85,16 +68,6 @@ export function TopBar({
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">
-          {onOpenLanding && (
-            <button
-              type="button"
-              onClick={onOpenLanding}
-              className="hidden xl:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Open Showcase Landing Page"
-            >
-              Platform
-            </button>
-          )}
           <div className="lg:hidden">
             <PWAInstallButton compact />
           </div>

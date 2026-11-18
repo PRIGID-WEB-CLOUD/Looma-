@@ -26,6 +26,7 @@ import {
 import { INTEREST_OPTIONS, sanitizeHandle, validateProfileInput } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { LoomaLogo } from './LoomaLogo';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface OnboardingFlowProps {
   profile: UserProfile;
@@ -304,8 +305,9 @@ export function OnboardingFlow({
           <div className="flex items-center gap-3 min-w-0">
             <Avatar src={avatarUrl} name={cleanNamePreview} size="md" />
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                {cleanNamePreview}
+              <p className="text-sm font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                <span className="truncate">{cleanNamePreview}</span>
+                {profile.isVerified && <VerifiedBadge size={13} />}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                 @{cleanHandlePreview} · {cleanLocationPreview}
@@ -571,8 +573,9 @@ export function OnboardingFlow({
                               size="md"
                             />
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                                {creator.displayName}
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                                <span className="truncate">{creator.displayName}</span>
+                                {creator.isVerified && <VerifiedBadge size={13} />}
                               </p>
                               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                                 @{creator.handle}
@@ -786,8 +789,9 @@ export function OnboardingFlow({
             <div className="flex items-start gap-4">
               <Avatar src={avatarUrl} name={cleanNamePreview} size="xl" />
               <div className="min-w-0">
-                <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white truncate">
-                  {cleanNamePreview}
+                <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white inline-flex items-center gap-1.5 max-w-full min-w-0">
+                  <span className="truncate">{cleanNamePreview}</span>
+                  {profile.isVerified && <VerifiedBadge size={16} />}
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   @{cleanHandlePreview}
@@ -855,8 +859,9 @@ export function OnboardingFlow({
                       size="sm"
                     />
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-900 dark:text-white truncate">
-                        {creator.displayName}
+                      <p className="font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                        <span className="truncate">{creator.displayName}</span>
+                        {creator.isVerified && <VerifiedBadge size={12} />}
                       </p>
                       <p className="text-slate-500 dark:text-slate-400 truncate">
                         @{creator.handle} · {creator.location}

@@ -19,6 +19,7 @@ import {
   filterHashtags,
   getHashtagQueryAtCursor,
   getMentionQueryAtCursor,
+  mergeCategoryNames,
   mergeSavedHashtags,
   normalizeHashtag,
   parseRichUrl,
@@ -35,6 +36,7 @@ import {
 } from '../services/storage';
 import { Avatar } from './Avatar';
 import { GifPickerModal } from './GifPickerModal';
+import { VerifiedBadge } from './VerifiedBadge';
 
 const DEFAULT_CATEGORY: PostCategory = 'Journal';
 
@@ -50,6 +52,7 @@ interface CreatePostModalProps {
   profile: UserProfile;
   communityUsers?: UserProfile[];
   savedHashtags?: string[];
+  categories?: string[];
   voiceNotesEnabled?: boolean;
   onSaveHashtag?: (tag: string) => Promise<void> | void;
   onClose: () => void;
@@ -66,11 +69,16 @@ export function CreatePostModal({
   profile,
   communityUsers = [],
   savedHashtags = [],
+  categories = POST_CATEGORIES,
   voiceNotesEnabled = true,
   onSaveHashtag,
   onClose,
   onCreatePost,
 }: CreatePostModalProps) {
+  const categoryOptions = useMemo(
+    () => mergeCategoryNames(categories, POST_CATEGORIES),
+    [categories]
+  );
   const [caption, setCaption] = useState('');
   const [category, setCategory] = useState<PostCategory>(DEFAULT_CATEGORY);
   const [imageUrl, setImageUrl] = useState('');
@@ -236,7 +244,11 @@ export function CreatePostModal({
     setVideoUrl('');
     setAudioUrl('');
     setMediaTitle('');
-    setCategory(DEFAULT_CATEGORY);
+    setCategory(
+      categoryOptions.includes(DEFAULT_CATEGORY)
+        ? DEFAULT_CATEGORY
+        : categoryOptions[0] || DEFAULT_CATEGORY
+    );
     setError(null);
     onClose();
   };
@@ -353,7 +365,12 @@ export function CreatePostModal({
     const hasAttachment = Boolean(
       finalImageUrl || finalVideoUrl || finalAudioUrl || finalLinkUrl
     );
-    const check = validatePostInput(caption, category, hasAttachment);
+    const check = validatePostInput(
+      caption,
+      category,
+      hasAttachment,
+      categoryOptions
+    );
     if (!check.valid) {
       setError(check.error || 'Write a caption or attach a file before posting.');
       return;
@@ -369,7 +386,11 @@ export function CreatePostModal({
         mediaTitle: finalMediaTitle,
       });
       setCaption('');
-      setCategory(DEFAULT_CATEGORY);
+      setCategory(
+        categoryOptions.includes(DEFAULT_CATEGORY)
+          ? DEFAULT_CATEGORY
+          : categoryOptions[0] || DEFAULT_CATEGORY
+      );
       setImageUrl('');
       setVideoUrl('');
       setAudioUrl('');
@@ -446,8 +467,9 @@ export function CreatePostModal({
                   size="md"
                 />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
-                    {profile.displayName}
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                    <span className="truncate">{profile.displayName}</span>
+                    {profile.isVerified && <VerifiedBadge size={14} />}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                     @{profile.handle} · Public to Looma feed
@@ -465,7 +487,7 @@ export function CreatePostModal({
                   aria-label="Post category"
                   className="flex flex-wrap gap-2"
                 >
-                  {POST_CATEGORIES.map((cat) => {
+                  {categoryOptions.map((cat) => {
                     const selected = category === cat;
                     return (
                       <button
@@ -473,7 +495,7 @@ export function CreatePostModal({
                         type="button"
                         aria-pressed={selected}
                         onClick={() => setCategory(cat)}
-                        className={`min-h-[40px] px-3.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                        className={`min-h-[40px] px-3.5 rounded-xl text-xs font-semibold border whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                           selected
                             ? 'bg-blue-600 border-blue-600 text-white dark:bg-blue-500 dark:border-blue-500'
                             : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -533,8 +555,9 @@ export function CreatePostModal({
                         >
                           <Avatar src={creator.avatarUrl} name={creator.displayName} size="sm" />
                           <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                              {creator.displayName}
+                            <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                              <span className="truncate">{creator.displayName}</span>
+                              {creator.isVerified && <VerifiedBadge size={12} />}
                             </p>
                             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                               @{creator.handle}

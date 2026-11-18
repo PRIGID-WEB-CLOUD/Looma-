@@ -193,6 +193,24 @@ export default function App() {
     [dismissedAnnouncementIds, isUserAdmin, store.announcements, store.profile.isVerified]
   );
 
+  const verifiedUidSet = useMemo(() => {
+    const set = new Set<string>();
+    if (store.profile.isVerified || isUserAdmin) {
+      set.add(store.profile.uid);
+    }
+    for (const u of store.communityUsers) {
+      if (u.isVerified) {
+        set.add(u.uid);
+      }
+    }
+    for (const p of store.posts) {
+      if (p.authorVerified) {
+        set.add(p.authorId);
+      }
+    }
+    return set;
+  }, [isUserAdmin, store.communityUsers, store.posts, store.profile.isVerified, store.profile.uid]);
+
   const unreadCount = countUnreadNotifications(store.notifications);
   const appStage = resolveAppStage(
     store.isAuthorized,
@@ -790,9 +808,6 @@ export default function App() {
         unreadNotifications={unreadCount}
         theme={store.theme}
         onToggleTheme={store.toggleTheme}
-        isAdmin={isUserAdmin}
-        onOpenAdmin={() => navigateToPath('/admin/')}
-        onOpenLanding={() => navigateToPath('/landingpage/')}
       />
 
       <PushToast
@@ -1056,6 +1071,7 @@ export default function App() {
               bookmarkedPostIds={store.bookmarkedPostIds}
               followedUserIds={store.followedUserIds}
               shareThreads={store.threads}
+              categories={store.categories}
               searchQuery={feedSearchQuery}
               onSearchQueryChange={setFeedSearchQuery}
               onOpenComposer={() => setComposerOpen(true)}
@@ -1103,6 +1119,7 @@ export default function App() {
                   followingCount={creatorConnections.following.length}
                   friendsCount={creatorConnections.friends.length}
                   posts={store.posts}
+                  categories={store.categories}
                   likedPostIds={store.likedPostIds}
                   bookmarkedPostIds={store.bookmarkedPostIds}
                   commentsByPost={store.commentsByPost}
@@ -1225,6 +1242,7 @@ export default function App() {
             <NotificationsView
               profile={store.profile}
               notifications={store.notifications}
+              verifiedAuthorIds={verifiedUidSet}
               pushPermission={store.pushPermission}
               onEnablePush={store.enablePushNotifications}
               onMarkRead={store.markNotificationRead}
@@ -1238,6 +1256,7 @@ export default function App() {
             <ProfileView
               profile={store.profile}
               posts={store.posts}
+              categories={store.categories}
               followersCount={store.connections.followers.length}
               followingCount={store.connections.following.length}
               friendsCount={store.connections.friends.length}
@@ -1340,9 +1359,8 @@ export default function App() {
                 onUpdateProfile={store.updateProfile}
                 onUpdatePrivateSettings={store.updatePrivateSettings}
                 onBack={() => selectWorkspaceTab('profile')}
-                isAdmin={isUserAdmin}
-                onOpenAdmin={() => navigateToPath('/admin/')}
-                onOpenLanding={() => navigateToPath('/landingpage/')}
+                userVerificationRequest={store.currentUserVerificationRequest}
+                onSubmitVerificationRequest={store.submitVerificationRequest}
               />
             </Suspense>
           )}
@@ -1484,6 +1502,7 @@ export default function App() {
         profile={store.profile}
         communityUsers={store.communityUsers}
         savedHashtags={store.savedHashtags}
+        categories={store.categories}
         voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
         onSaveHashtag={store.saveHashtag}
         onClose={() => setComposerOpen(false)}
@@ -1590,6 +1609,7 @@ export default function App() {
           <CallRoomModal
             session={store.callSession}
             profile={store.profile}
+            verifiedUserIds={verifiedUidSet}
             isLocalAutostart={store.isLocalAutostart}
             onEndCall={store.endCall}
             onToggleMute={store.toggleCallMute}
@@ -1603,6 +1623,11 @@ export default function App() {
 
       <IncomingCallModal
         invite={store.incomingCallInvite}
+        callerVerified={
+          store.incomingCallInvite
+            ? verifiedUidSet.has(store.incomingCallInvite.callerId)
+            : false
+        }
         onAccept={store.acceptIncomingCall}
         onDecline={store.declineIncomingCall}
       />

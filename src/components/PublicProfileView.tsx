@@ -29,6 +29,7 @@ interface PublicProfileViewProps {
   bookmarkedPostIds: string[];
   commentsByPost: Record<string, PostComment[]>;
   shareThreads?: ChatThread[];
+  categories?: string[];
   backLabel?: string;
   onToggleFollow: (uid: string) => void;
   onMessage: (creator: UserProfile) => void;
@@ -67,6 +68,7 @@ export function PublicProfileView({
   bookmarkedPostIds,
   commentsByPost,
   shareThreads = [],
+  categories,
   backLabel = 'Back to Feed',
   onToggleFollow,
   onMessage,
@@ -351,6 +353,7 @@ export function PublicProfileView({
               key={post.id}
               post={post}
               currentUserId={currentUserId}
+              categories={categories}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}

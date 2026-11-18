@@ -22,18 +22,22 @@ import {
   removeMemberFromChatIds,
   resolveAdminAuthorization,
   reviewAppealDecision,
+  reviewVerificationRequestDecision,
   revokeAdminRole,
   setMemberModerationStatus,
+  sortVerificationRequests,
   toggleHiddenPostId,
   toggleRestrictedMemberUid,
   updateAccessInquiryStatus,
   updateReportResolution,
   validateAnnouncementInput,
+  validateCategoryInput,
   validateDirectWarningInput,
   validateGroupChatModerationTitle,
   validateGuidelinesInput,
   validateLegalConfigInput,
   validateProfileSanitizeInput,
+  validateVerificationRequestInput,
   type AdminAccessInquiry,
   type AdminAuditEntry,
   type AdminCommentItem,
@@ -42,6 +46,7 @@ import {
   type MemberModerationRecord,
   type ModerationAppeal,
   type PlatformAnnouncement,
+  type VerificationRequest,
 } from './adminLogic';
 
 test('resolveAdminAuthorization enforces authentication, verified email, and role checks', () => {
@@ -622,4 +627,177 @@ test('comment filtering, hashtag stats, direct warnings, profile sanitization, c
   assert.equal(formatStorageBytes(1536), '1.5 KB');
   assert.equal(formatStorageBytes(2 * 1024 * 1024), '2.00 MB');
 });
+
+test('verification request validation, queue sorting, and terminal review decisions enforce strict rules', () => {
+  // Short / oversized reason
+  assert.equal(
+    validateVerificationRequestInput('too short', ['https://example.com']).valid,
+    false
+  );
+  assert.equal(
+    validateVerificationRequestInput('a'.repeat(501), ['https://example.com']).valid,
+    false
+  );
+
+  // Links constraints: 1-2 valid http/https links
+  assert.equal(
+    validateVerificationRequestInput('Verified creative director at Studio Looma.', []).valid,
+    false
+  );
+  assert.equal(
+    validateVerificationRequestInput('Verified creative director at Studio Looma.', [
+      'https://a.example.com',
+      'https://b.example.com',
+      'https://c.example.com',
+    ]).valid,
+    false
+  );
+  assert.equal(
+    validateVerificationRequestInput('Verified creative director at Studio Looma.', [
+      'ftp://example.com/profile',
+    ]).valid,
+    false
+  );
+  assert.equal(
+    validateVerificationRequestInput('Verified creative director at Studio Looma.', [
+      'not a valid url',
+    ]).valid,
+    false
+  );
+  assert.equal(
+    validateVerificationRequestInput('Verified creative director at Studio Looma.', [
+      `https://example.com/${'x'.repeat(490)}`,
+    ]).valid,
+    false
+  );
+
+  const validSingle = validateVerificationRequestInput(
+    '  Architect publishing monographs and exhibition notes on Looma.  ',
+    ['  https://portfolio.example.com/studio  ', '   ']
+  );
+  assert.equal(validSingle.valid, true);
+  assert.equal(
+    validSingle.cleanReason,
+    'Architect publishing monographs and exhibition notes on Looma.'
+  );
+  assert.deepEqual(validSingle.cleanLinks, ['https://portfolio.example.com/studio']);
+
+  const validTwo = validateVerificationRequestInput(
+    'Photographer featured in Nordic Design Annual.',
+    ['http://press.example.org/feature', 'https://github.com/creator']
+  );
+  assert.equal(validTwo.valid, true);
+  assert.equal(validTwo.cleanLinks?.length, 2);
+
+  // Sorting & reviewing
+  const requests: VerificationRequest[] = [
+    {
+      id: 'vr_approved',
+      uid: 'u_1',
+      displayName: 'Approved Creator',
+      handle: 'approved.creator',
+      avatarUrl: '',
+      reason: 'Portfolio verified.',
+      links: ['https://example.com/1'],
+      status: 'approved',
+      reviewerUid: 'u_admin',
+      reviewerNote: 'Confirmed.',
+      createdAtMs: 5000,
+      updatedAtMs: 5000,
+    },
+    {
+      id: 'vr_pending_old',
+      uid: 'u_2',
+      displayName: 'Pending Old',
+      handle: 'pending.old',
+      avatarUrl: '',
+      reason: 'Need badge for official studio channel.',
+      links: ['https://example.com/2'],
+      status: 'pending',
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+    },
+    {
+      id: 'vr_pending_new',
+      uid: 'u_3',
+      displayName: 'Pending New',
+      handle: 'pending.new',
+      avatarUrl: '',
+      reason: 'Official design publication account.',
+      links: ['https://example.com/3', 'https://github.com/pub'],
+      status: 'pending',
+      createdAtMs: 3000,
+      updatedAtMs: 3000,
+    },
+  ];
+
+  const sorted = sortVerificationRequests(requests);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    ['vr_pending_new', 'vr_pending_old', 'vr_approved']
+  );
+
+  // Unknown id
+  const notFound = reviewVerificationRequestDecision(
+    requests,
+    'vr_missing',
+    'approved',
+    'u_admin'
+  );
+  assert.equal(notFound.ok, false);
+
+  // Terminal lock prevents re-reviewing an already approved/rejected request
+  const alreadyReviewed = reviewVerificationRequestDecision(
+    requests,
+    'vr_approved',
+    'rejected',
+    'u_admin',
+    'Trying to overwrite'
+  );
+  assert.equal(alreadyReviewed.ok, false);
+
+  // Approve pending request
+  const approved = reviewVerificationRequestDecision(
+    requests,
+    'vr_pending_new',
+    'approved',
+    'u_admin',
+    '  Links match studio domain.  ',
+    9000
+  );
+  assert.equal(approved.ok, true);
+  if (approved.ok) {
+    assert.equal(approved.updated.status, 'approved');
+    assert.equal(approved.updated.reviewerUid, 'u_admin');
+    assert.equal(approved.updated.reviewerNote, 'Links match studio domain.');
+    assert.equal(approved.updated.updatedAtMs, 9000);
+    // Once approved, cannot be reviewed again
+    const doubleReview = reviewVerificationRequestDecision(
+      approved.requests,
+      'vr_pending_new',
+      'rejected',
+      'u_admin'
+    );
+    assert.equal(doubleReview.ok, false);
+  }
+
+  // Reject pending request
+  const rejected = reviewVerificationRequestDecision(
+    requests,
+    'vr_pending_old',
+    'rejected',
+    'u_admin',
+    'Could not confirm ownership of reference link.',
+    9500
+  );
+  assert.equal(rejected.ok, true);
+  if (rejected.ok) {
+    assert.equal(rejected.updated.status, 'rejected');
+    assert.equal(
+      rejected.updated.reviewerNote,
+      'Could not confirm ownership of reference link.'
+    );
+  }
+});
+
 

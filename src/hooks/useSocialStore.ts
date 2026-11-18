@@ -48,6 +48,8 @@ import {
   DEFAULT_PRIVACY_CONFIG,
   DEFAULT_TERMS_CONFIG,
   isAllowlistedAdminEmail,
+  sortVerificationRequests,
+  validateVerificationRequestInput,
   type AdminFeatureFlags,
   type CommunityGuidelinesConfig,
   type ContentReport,
@@ -91,6 +93,7 @@ import type {
   ThemeMode,
   UserPrivateSettings,
   UserProfile,
+  VerificationRequest,
 } from '../types/social';
 import {
   addGroupParticipantsState,
@@ -102,7 +105,9 @@ import {
   createGroupThreadRecord,
   deleteNotificationItem,
   DIRECT_CHAT_SHARED_TITLE,
+  enrichCommentWithVerifiedAuthor,
   enrichPostWithVerifiedAuthor,
+  enrichStoryGroupsWithVerifiedAuthors,
   extractFirstUrl,
   extractHashtags,
   extractMentions,
@@ -113,6 +118,7 @@ import {
   groupStoriesByAuthor,
   isAuthorizedSession,
   matchesDirectThreadParticipants,
+  mergeCategoryNames,
   mergeSavedHashtags,
   normalizeAssetUrl,
   normalizeHashtag,
@@ -168,6 +174,7 @@ const STORAGE_KEYS = {
   THEME: 'looma_theme_v1',
   PUSH_ENABLED: 'looma_push_enabled_v1',
   TERMS_CONSENT: 'looma_terms_consent_v1',
+  VERIFICATION_REQUESTS: 'looma_verification_requests_v1',
 };
 
 export const ADMIN_SYNC_STORAGE_KEYS = {
@@ -180,6 +187,7 @@ export const ADMIN_SYNC_STORAGE_KEYS = {
   USER_MODERATION: 'looma_admin_user_moderation_v1',
   REPORTS: 'looma_admin_reports_v1',
   APPEALS: 'looma_admin_appeals_v1',
+  CATEGORIES: 'looma_admin_categories_v1',
 };
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -365,7 +373,7 @@ export function useSocialStore() {
     return [];
   });
 
-  const [commentsByPost, setCommentsByPost] = useState<
+  const [rawCommentsByPost, setCommentsByPost] = useState<
     Record<string, PostComment[]>
   >(() =>
     stripDemoComments(
@@ -539,6 +547,101 @@ export function useSocialStore() {
       readStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, [])
     )
   );
+  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>(() =>
+    sortVerificationRequests(
+      readStorage<VerificationRequest[]>(STORAGE_KEYS.VERIFICATION_REQUESTS, [])
+    )
+  );
+
+  const currentUserVerificationRequest = useMemo(() => {
+    const activeUid = firebaseUser?.uid || profile.uid;
+    const sorted = sortVerificationRequests(
+      verificationRequests.filter((r) => r.uid === activeUid)
+    );
+    return sorted[0] || null;
+  }, [verificationRequests, firebaseUser, profile.uid]);
+
+  const submitVerificationRequest = useCallback(
+    async (
+      reason: string,
+      links: string[]
+    ): Promise<{ ok: boolean; error?: string }> => {
+      if (!firebaseUser && !autostart) {
+        return { ok: false, error: 'Please sign in to submit a verification request.' };
+      }
+      if (firebaseUser && !firebaseUser.emailVerified && !autostart) {
+        return {
+          ok: false,
+          error: 'Please verify your email address before requesting a badge.',
+        };
+      }
+      const check = validateVerificationRequestInput(reason, links);
+      if (!check.valid || !check.cleanReason || !check.cleanLinks) {
+        return {
+          ok: false,
+          error: check.error || 'Please review your verification details.',
+        };
+      }
+
+      const activeUid = firebaseUser?.uid || profile.uid;
+      const reqId = makeSafeId('vr');
+      const now = Date.now();
+      const newReq: VerificationRequest = {
+        id: reqId,
+        uid: activeUid,
+        displayName: profile.displayName,
+        handle: profile.handle,
+        avatarUrl: profile.avatarUrl,
+        reason: check.cleanReason,
+        links: check.cleanLinks,
+        status: 'pending',
+        reviewerUid: '',
+        reviewerNote: '',
+        createdAtMs: now,
+        updatedAtMs: now,
+      };
+
+      if (firebaseUser) {
+        try {
+          await setDoc(doc(db, 'verificationRequests', reqId), {
+            id: reqId,
+            uid: firebaseUser.uid,
+            displayName: newReq.displayName,
+            handle: newReq.handle,
+            avatarUrl: newReq.avatarUrl,
+            reason: newReq.reason,
+            links: newReq.links,
+            status: 'pending',
+            reviewerUid: '',
+            reviewerNote: '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          console.error(
+            `Unable to submit verification request (verificationRequests/${reqId}):`,
+            err
+          );
+          return {
+            ok: false,
+            error:
+              err instanceof Error
+                ? err.message
+                : 'Unable to submit verification request.',
+          };
+        }
+      }
+
+      setVerificationRequests((prev) => {
+        const next = sortVerificationRequests([newReq, ...prev]);
+        writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, next);
+        return next;
+      });
+      return { ok: true };
+    },
+    [autostart, firebaseUser, profile]
+  );
+
   const [savedHashtags, setSavedHashtags] = useState<string[]>(() =>
     mergeSavedHashtags([], readStorage<string[]>(STORAGE_KEYS.HASHTAGS, []))
   );
@@ -598,6 +701,9 @@ export function useSocialStore() {
     readStorage<ModerationAppeal[]>(ADMIN_SYNC_STORAGE_KEYS.APPEALS, []).filter(
       (a) => a.appellantUid === profile.uid
     )
+  );
+  const [customCategoryNames, setCustomCategoryNames] = useState<string[]>(() =>
+    readStorage<string[]>(ADMIN_SYNC_STORAGE_KEYS.CATEGORIES, [])
   );
 
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
@@ -720,7 +826,7 @@ export function useSocialStore() {
 
   useEffect(() => {
     if (!firebaseUser) {
-      writeStorage(STORAGE_KEYS.COMMENTS, commentsByPost);
+      writeStorage(STORAGE_KEYS.COMMENTS, rawCommentsByPost);
       writeStorage(STORAGE_KEYS.LIKED_IDS, likedPostIds);
       writeStorage(STORAGE_KEYS.BOOKMARK_IDS, bookmarkedPostIds);
       writeStorage(STORAGE_KEYS.FOLLOWED_IDS, followedUserIds);
@@ -729,10 +835,11 @@ export function useSocialStore() {
       writeStorage(STORAGE_KEYS.NOTIFICATIONS, notifications);
       writeStorage(STORAGE_KEYS.STORIES, localStories);
       writeStorage(STORAGE_KEYS.HASHTAGS, savedHashtags);
+      writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, verificationRequests);
     }
     writeStorage(STORAGE_KEYS.VIEWED_STORIES, viewedStoryIds);
   }, [
-    commentsByPost,
+    rawCommentsByPost,
     likedPostIds,
     bookmarkedPostIds,
     followedUserIds,
@@ -741,6 +848,7 @@ export function useSocialStore() {
     notifications,
     localStories,
     savedHashtags,
+    verificationRequests,
     viewedStoryIds,
     firebaseUser,
   ]);
@@ -1212,7 +1320,7 @@ export function useSocialStore() {
 
     const postsQuery = query(
       collection(db, 'posts'),
-      where('category', 'in', POST_CATEGORIES)
+      where('category', '!=', '')
     );
     const unsubPosts = onSnapshot(
       postsQuery,
@@ -1641,6 +1749,22 @@ export function useSocialStore() {
       }
     );
 
+    const categoriesQuery = query(
+      collection(db, 'categories'),
+      where('name', '!=', '')
+    );
+    const unsubCategories = onSnapshot(
+      categoriesQuery,
+      (snapshot) => {
+        const names = snapshot.docs
+          .map((d) => String(d.data().name || '').trim())
+          .filter(Boolean);
+        setCustomCategoryNames(names);
+        writeStorage(ADMIN_SYNC_STORAGE_KEYS.CATEGORIES, names);
+      },
+      () => {}
+    );
+
     const unsubHiddenPosts = onSnapshot(
       doc(db, 'adminConfig', 'hiddenPosts'),
       (snap) => {
@@ -1749,6 +1873,49 @@ export function useSocialStore() {
       () => {}
     );
 
+    const unsubVerify = onSnapshot(
+      query(
+        collection(db, 'verificationRequests'),
+        where('uid', '==', firebaseUser.uid)
+      ),
+      (snapshot) => {
+        const list: VerificationRequest[] = [];
+        snapshot.forEach((docSnap) => {
+          const d = docSnap.data();
+          list.push({
+            id: String(d.id || docSnap.id),
+            uid: String(d.uid || ''),
+            displayName: String(d.displayName || ''),
+            handle: String(d.handle || ''),
+            avatarUrl: String(d.avatarUrl || ''),
+            reason: String(d.reason || ''),
+            links: Array.isArray(d.links)
+              ? d.links.filter((l): l is string => typeof l === 'string')
+              : [],
+            status:
+              d.status === 'approved' || d.status === 'rejected'
+                ? d.status
+                : 'pending',
+            reviewerUid: typeof d.reviewerUid === 'string' ? d.reviewerUid : '',
+            reviewerNote: typeof d.reviewerNote === 'string' ? d.reviewerNote : '',
+            createdAtMs: timestampToMs(d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          });
+        });
+        const sorted = sortVerificationRequests(list);
+        setVerificationRequests(sorted);
+        writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, sorted);
+      },
+      (err) => {
+        if (isTransientFirestoreError(err)) return;
+        handleFirestoreError(
+          err,
+          OperationType.LIST,
+          'verificationRequests'
+        );
+      }
+    );
+
     return () => {
       window.clearInterval(presenceInterval);
       unsubOwnProfile();
@@ -1763,11 +1930,13 @@ export function useSocialStore() {
       unsubPresence();
       unsubCalls();
       unsubHashtags();
+      unsubCategories();
       unsubHiddenPosts();
       unsubUserModeration();
       unsubAnnouncements();
       unsubReports();
       unsubAppeals();
+      unsubVerify();
     };
   }, [authReady, firebaseUser]);
 
@@ -2044,6 +2213,16 @@ export function useSocialStore() {
       .filter((p) => !hiddenSet.has(p.id))
       .map((p) => enrichPostWithVerifiedAuthor(p, communityUsers, profile));
   }, [communityUsers, firebaseUser, hiddenPostIds, localPosts, profile, remotePosts]);
+
+  const commentsByPost: Record<string, PostComment[]> = useMemo(() => {
+    const enriched: Record<string, PostComment[]> = {};
+    for (const [postId, list] of Object.entries(rawCommentsByPost)) {
+      enriched[postId] = list.map((c) =>
+        enrichCommentWithVerifiedAuthor(c, communityUsers, profile)
+      );
+    }
+    return enriched;
+  }, [communityUsers, profile, rawCommentsByPost]);
 
   const nowMs = Date.now();
   const stories: StoryItem[] = (firebaseUser ? remoteStories : localStories).filter(
@@ -2588,11 +2767,19 @@ export function useSocialStore() {
       });
 
       if (firebaseUser) {
-        await setDoc(doc(db, 'hashtags', cleanTag), {
-          tag: cleanTag,
-          createdBy: firebaseUser.uid,
-          createdAt: serverTimestamp(),
-        }).catch(() => {});
+        try {
+          const ref = doc(db, 'hashtags', cleanTag);
+          const snap = await getDoc(ref);
+          if (!snap.exists()) {
+            await setDoc(ref, {
+              tag: cleanTag,
+              createdBy: firebaseUser.uid,
+              createdAt: serverTimestamp(),
+            });
+          }
+        } catch {
+          // Ignore duplicate or offline hashtag writes
+        }
       }
     },
     [firebaseUser, savedHashtags]
@@ -2615,13 +2802,21 @@ export function useSocialStore() {
 
       if (firebaseUser) {
         await Promise.all(
-          newTags.map((tag) =>
-            setDoc(doc(db, 'hashtags', tag), {
-              tag,
-              createdBy: firebaseUser.uid,
-              createdAt: serverTimestamp(),
-            }).catch(() => {})
-          )
+          newTags.map(async (tag) => {
+            try {
+              const ref = doc(db, 'hashtags', tag);
+              const snap = await getDoc(ref);
+              if (!snap.exists()) {
+                await setDoc(ref, {
+                  tag,
+                  createdBy: firebaseUser.uid,
+                  createdAt: serverTimestamp(),
+                });
+              }
+            } catch {
+              // Ignore duplicate or offline hashtag writes
+            }
+          })
         );
       }
     },
@@ -2682,7 +2877,6 @@ export function useSocialStore() {
             authorName: profile.displayName,
             authorHandle: profile.handle,
             authorAvatar: profile.avatarUrl,
-            authorEmail: firebaseUser.email || '',
             ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
             caption: newPost.caption,
             imageUrl: newPost.imageUrl,
@@ -2998,8 +3192,6 @@ export function useSocialStore() {
           authorName: profile.displayName,
           authorHandle: profile.handle,
           authorAvatar: profile.avatarUrl,
-          authorVerified: isCommentAuthorVerified,
-          authorEmail: firebaseUser.email || '',
           text: newComment.text,
           createdAt: serverTimestamp(),
         });
@@ -3104,7 +3296,7 @@ export function useSocialStore() {
   const deleteComment = useCallback(
     async (post: Post, commentId: string) => {
       requireAuthorized();
-      const postComments = commentsByPost[post.id] || [];
+      const postComments = rawCommentsByPost[post.id] || [];
       const targetComment = postComments.find((c) => c.id === commentId);
       if (
         targetComment &&
@@ -3156,7 +3348,7 @@ export function useSocialStore() {
         );
       }
     },
-    [commentsByPost, firebaseUser, profile.uid, remotePosts, requireAuthorized]
+    [firebaseUser, profile.uid, rawCommentsByPost, remotePosts, requireAuthorized]
   );
 
   const subscribeChatMessages = useCallback(
@@ -4859,15 +5051,20 @@ export function useSocialStore() {
     [firebaseUser, profile.displayName, profile.handle, profile.uid, requireAuthorized]
   );
 
+  const categories = useMemo(
+    () => mergeCategoryNames(customCategoryNames, POST_CATEGORIES),
+    [customCategoryNames]
+  );
+
   const connections = computeConnections(
     communityUsers,
     followerUserIds,
     followedUserIds
   );
-  const storyGroups = groupStoriesByAuthor(
-    stories,
-    profile.uid,
-    viewedStoryIds
+  const storyGroups = enrichStoryGroupsWithVerifiedAuthors(
+    groupStoriesByAuthor(stories, profile.uid, viewedStoryIds),
+    communityUsers,
+    profile
   );
 
   const normalizedProfile: UserProfile = {
@@ -4959,6 +5156,7 @@ export function useSocialStore() {
     clearAllNotifications,
     savedHashtags,
     saveHashtag,
+    categories,
     callSession,
     incomingCallInvite,
     startCall,
@@ -4983,5 +5181,7 @@ export function useSocialStore() {
     userAppeals,
     submitContentReport,
     submitModerationAppeal,
+    currentUserVerificationRequest,
+    submitVerificationRequest,
   };
 }

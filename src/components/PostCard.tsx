@@ -30,6 +30,7 @@ import {
   deriveMediaDownloadName,
   extractFirstUrl,
   formatRelativeTime,
+  mergeCategoryNames,
   parseRichUrl,
   POST_CATEGORIES,
   resolvePostMediaDescriptor,
@@ -49,6 +50,7 @@ interface PostCardProps {
   isBookmarked: boolean;
   comments: PostComment[];
   shareThreads?: ChatThread[];
+  categories?: string[];
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
@@ -78,6 +80,7 @@ export function PostCard({
   isBookmarked,
   comments,
   shareThreads = [],
+  categories = POST_CATEGORIES,
   onToggleLike,
   onToggleBookmark,
   onAddComment,
@@ -92,6 +95,10 @@ export function PostCard({
   onOpenMedia,
   onReportPost,
 }: PostCardProps) {
+  const editCategoryOptions = useMemo(
+    () => mergeCategoryNames([...categories, post.category], POST_CATEGORIES),
+    [categories, post.category]
+  );
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -245,7 +252,12 @@ export function PostCard({
     const hasAttachment = Boolean(
       post.imageUrl || post.videoUrl || post.audioUrl || post.linkUrl
     );
-    const check = validatePostInput(editCaption, editCategory, hasAttachment);
+    const check = validatePostInput(
+      editCaption,
+      editCategory,
+      hasAttachment,
+      editCategoryOptions
+    );
     if (!check.valid) {
       setEditError(check.error || 'Enter valid post content.');
       return;
@@ -489,7 +501,7 @@ export function PostCard({
                 onChange={(e) => setEditCategory(e.target.value as PostCategory)}
                 className="min-h-[36px] px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"
               >
-                {POST_CATEGORIES.map((cat) => (
+                {editCategoryOptions.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -1048,8 +1060,12 @@ export function PostCard({
 
             <div className="p-5 space-y-4 overflow-y-auto">
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3.5 text-xs text-slate-700 dark:text-slate-300">
-                <p className="font-semibold text-slate-900 dark:text-white">
-                  {post.authorName} · @{post.authorHandle}
+                <p className="font-semibold text-slate-900 dark:text-white inline-flex items-center gap-1 max-w-full min-w-0">
+                  <span className="truncate">{post.authorName}</span>
+                  {post.authorVerified && <VerifiedBadge size={12} />}
+                  <span className="font-normal text-slate-500 dark:text-slate-400 shrink-0">
+                    · @{post.authorHandle}
+                  </span>
                 </p>
                 {post.caption && (
                   <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-400">

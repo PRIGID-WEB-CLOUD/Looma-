@@ -44,6 +44,7 @@ import type {
   ChatThread,
   Post,
   PostCategory,
+  PostCategoryRecord,
   StoryGroup,
   StoryItem,
   ThemeMode,
@@ -61,12 +62,15 @@ import {
   isAllowlistedAdminEmail,
   removeMemberFromChatIds,
   reviewAppealDecision,
+  reviewVerificationRequestDecision,
   revokeAdminRole,
   setMemberModerationStatus,
+  sortVerificationRequests,
   toggleHiddenPostId,
   updateAccessInquiryStatus,
   updateReportResolution,
   validateAnnouncementInput,
+  validateCategoryInput,
   validateDirectWarningInput,
   validateGroupChatModerationTitle,
   validateLegalConfigInput,
@@ -92,6 +96,7 @@ import {
   type R2MediaObjectItem,
   type ReportStatus,
   type SystemHealthProbe,
+  type VerificationRequest,
 } from './adminLogic';
 
 function sanitizeAdminHandle(raw: string | undefined): string {
@@ -218,8 +223,10 @@ function AdminAppInner(_props: AdminAppProps) {
   const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(DEFAULT_FEATURE_FLAGS);
   const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
   const [inquiries, setInquiries] = useState<AdminAccessInquiry[]>([]);
+  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>([]);
   const [savedHashtags, setSavedHashtags] = useState<string[]>(POPULAR_HASHTAGS);
   const [dynamicHashtags, setDynamicHashtags] = useState<string[]>([]);
+  const [categories, setCategories] = useState<PostCategoryRecord[]>([]);
   const [r2Objects, setR2Objects] = useState<R2MediaObjectItem[]>([]);
   const [r2TotalBytes, setR2TotalBytes] = useState(0);
   const [r2Loading, setR2Loading] = useState(false);
@@ -663,6 +670,29 @@ function AdminAppInner(_props: AdminAppProps) {
 
     unsubs.push(
       onSnapshot(
+        collection(db, 'categories'),
+        (snap) => {
+          clearSyncError('categories');
+          const list: PostCategoryRecord[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              id: d.id,
+              name: typeof raw.name === 'string' ? raw.name : d.id,
+              description: typeof raw.description === 'string' ? raw.description : '',
+              createdBy: typeof raw.createdBy === 'string' ? raw.createdBy : '',
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
+          setCategories(list);
+        },
+        (err) => reportSyncError(err, 'categories')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
         query(collectionGroup(db, 'comments'), limit(120)),
         (snap) => {
           clearSyncError('comments');
@@ -1034,6 +1064,42 @@ function AdminAppInner(_props: AdminAppProps) {
           setInquiries(list);
         },
         (err) => reportSyncError(err, 'accessInquiries')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'verificationRequests'),
+        (snap) => {
+          clearSyncError('verificationRequests');
+          const list: VerificationRequest[] = [];
+          snap.forEach((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            list.push({
+              id: String(raw.id || d.id),
+              uid: String(raw.uid || ''),
+              displayName: String(raw.displayName || 'Looma Member'),
+              handle: String(raw.handle || 'looma_member'),
+              avatarUrl: String(raw.avatarUrl || ''),
+              reason: String(raw.reason || ''),
+              links: Array.isArray(raw.links)
+                ? raw.links.filter((l): l is string => typeof l === 'string')
+                : [],
+              status:
+                raw.status === 'approved' || raw.status === 'rejected'
+                  ? raw.status
+                  : 'pending',
+              reviewerUid: typeof raw.reviewerUid === 'string' ? raw.reviewerUid : '',
+              reviewerNote: typeof raw.reviewerNote === 'string' ? raw.reviewerNote : '',
+              createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
+              updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
+            });
+          });
+          const sorted = sortVerificationRequests(list);
+          setVerificationRequests(sorted);
+          mirrorAdminStorage('looma_verification_requests_v1', sorted);
+        },
+        (err) => reportSyncError(err, 'verificationRequests')
       )
     );
 
@@ -1493,6 +1559,98 @@ function AdminAppInner(_props: AdminAppProps) {
     return { ok: true };
   };
 
+  const handleReviewVerificationRequest = async (
+    requestId: string,
+    targetUid: string,
+    decision: 'approved' | 'rejected',
+    note: string = ''
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const res = reviewVerificationRequestDecision(
+      verificationRequests,
+      requestId,
+      decision,
+      firebaseUser.uid,
+      note
+    );
+    if (!res.ok) {
+      return { ok: false, error: res.error };
+    }
+
+    setVerificationRequests(res.requests);
+    mirrorAdminStorage('looma_verification_requests_v1', res.requests);
+
+    try {
+      await updateDoc(doc(db, 'verificationRequests', requestId), {
+        status: decision,
+        reviewerUid: firebaseUser.uid,
+        reviewerNote: res.updated.reviewerNote || '',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `verificationRequests/${requestId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+
+    if (decision === 'approved') {
+      setCommunityUsers((prev) =>
+        prev.map((u) => (u.uid === targetUid ? { ...u, isVerified: true } : u))
+      );
+      if (targetUid === firebaseUser.uid) {
+        setCurrentProfile((prev) => ({ ...prev, isVerified: true }));
+      }
+      try {
+        await updateDoc(doc(db, 'users', targetUid), {
+          isVerified: true,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
+        return { ok: false, error: (err as Error).message || String(err) };
+      }
+    }
+
+    const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const notifTitle =
+      decision === 'approved'
+        ? 'Verification Badge Granted'
+        : 'Verification Request Update';
+    const notifBody =
+      decision === 'approved'
+        ? 'Your account is now verified. Your blue verification badge is visible across Looma.'
+        : res.updated.reviewerNote
+          ? `Your verification request was not approved: ${res.updated.reviewerNote}`.slice(0, 240)
+          : 'Your verification request was not approved at this time. You may submit an updated request from Profile Settings.';
+    try {
+      await setDoc(doc(db, 'users', targetUid, 'notifications', notifId), {
+        id: notifId,
+        recipientId: targetUid,
+        actorId: firebaseUser.uid,
+        actorName: currentProfile.displayName,
+        actorAvatar: currentProfile.avatarUrl || '',
+        type: 'system',
+        title: notifTitle,
+        body: notifBody,
+        targetPostId: '',
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch {
+      // Notification write is best-effort after badge status update
+    }
+
+    await recordAudit(
+      `verification.${decision}`,
+      'user',
+      targetUid,
+      `${decision === 'approved' ? 'Approved' : 'Rejected'} verification request ${requestId} for ${targetUid}.${res.updated.reviewerNote ? ` Note: ${res.updated.reviewerNote}` : ''}`
+    );
+
+    return { ok: true };
+  };
+
   const handleCreateHashtag = async (
     rawTag: string
   ): Promise<{ ok: boolean; tag?: string; error?: string }> => {
@@ -1546,6 +1704,61 @@ function AdminAppInner(_props: AdminAppProps) {
       return { ok: true };
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `hashtags/${clean}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleCreateCategory = async (
+    rawName: string,
+    rawDesc: string
+  ): Promise<{ ok: boolean; category?: PostCategoryRecord; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    const check = validateCategoryInput(rawName, rawDesc, categories);
+    if (!check.valid) {
+      return { ok: false, error: check.error || 'Invalid category inputs.' };
+    }
+    const categoryId = check.id;
+    try {
+      await setDoc(doc(db, 'categories', categoryId), {
+        id: categoryId,
+        name: check.name,
+        description: check.description,
+        createdBy: firebaseUser.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await recordAudit(
+        'category.create',
+        'category',
+        categoryId,
+        `Created category "${check.name}" (${categoryId}).`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `categories/${categoryId}`);
+      return { ok: false, error: (err as Error).message || String(err) };
+    }
+  };
+
+  const handleDeleteCategory = async (
+    categoryId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      await deleteDoc(doc(db, 'categories', categoryId));
+      await recordAudit(
+        'category.delete',
+        'category',
+        categoryId,
+        `Deleted post category ${categoryId}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `categories/${categoryId}`);
       return { ok: false, error: (err as Error).message || String(err) };
     }
   };
@@ -2416,6 +2629,8 @@ function AdminAppInner(_props: AdminAppProps) {
       featureFlags={featureFlags}
       auditLogs={auditLogs}
       inquiries={inquiries}
+      verificationRequests={verificationRequests}
+      onReviewVerificationRequest={handleReviewVerificationRequest}
       healthProbes={healthProbes}
       jobs={jobs}
       checkingHealth={checkingHealth}
@@ -2476,6 +2691,9 @@ function AdminAppInner(_props: AdminAppProps) {
       onPublishStory={handlePublishStory}
       savedHashtags={savedHashtags}
       dynamicHashtags={dynamicHashtags}
+      categories={categories}
+      onCreateCategory={handleCreateCategory}
+      onDeleteCategory={handleDeleteCategory}
       onCreateHashtag={handleCreateHashtag}
       onDeleteHashtag={handleDeleteHashtag}
       onRenameChat={handleModerateChatRename}

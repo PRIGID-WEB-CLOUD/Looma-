@@ -9,6 +9,7 @@ import {
 import type { StoryGroup, StoryItem } from '../types/social';
 import { formatRelativeTime } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface StoryViewerModalProps {
   groups: StoryGroup[];
@@ -177,8 +178,9 @@ export function StoryViewerModal({
               size="md"
             />
             <div className="min-w-0">
-              <p className="font-display text-sm sm:text-base font-semibold text-white truncate group-hover:underline">
-                {activeGroup.authorName}
+              <p className="font-display text-sm sm:text-base font-semibold text-white inline-flex items-center gap-1 max-w-full min-w-0 group-hover:underline">
+                <span className="truncate">{activeGroup.authorName}</span>
+                {activeGroup.authorVerified && <VerifiedBadge size={14} />}
               </p>
               <p className="text-xs text-slate-300 truncate tabular-nums">
                 @{activeGroup.authorHandle} ·{' '}
@@ -259,10 +261,13 @@ export function StoryViewerModal({
                     name={grp.authorName}
                     size="sm"
                   />
-                  <span className="text-xs truncate max-w-[96px]">
-                    {grp.authorId === currentUid
-                      ? 'Your Story'
-                      : grp.authorName.split(' ')[0]}
+                  <span className="text-xs inline-flex items-center gap-1 max-w-[116px] min-w-0">
+                    <span className="truncate">
+                      {grp.authorId === currentUid
+                        ? 'Your Story'
+                        : grp.authorName.split(' ')[0]}
+                    </span>
+                    {grp.authorVerified && <VerifiedBadge size={11} />}
                   </span>
                 </button>
               );

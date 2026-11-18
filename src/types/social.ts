@@ -1,9 +1,13 @@
-export type PostCategory =
-  | 'Architecture'
-  | 'Photography'
-  | 'Design'
-  | 'Travel'
-  | 'Journal';
+export type PostCategory = string;
+
+export interface PostCategoryRecord {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -212,6 +216,7 @@ export interface StoryItem {
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
+  authorVerified?: boolean;
   imageUrl: string;
   caption: string;
   createdAtMs: number;
@@ -223,8 +228,27 @@ export interface StoryGroup {
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
+  authorVerified?: boolean;
   items: StoryItem[];
   hasUnviewed: boolean;
   latestCreatedAtMs: number;
 }
+
+export type VerificationRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface VerificationRequest {
+  id: string;
+  uid: string;
+  displayName: string;
+  handle: string;
+  avatarUrl: string;
+  reason: string;
+  links: string[];
+  status: VerificationRequestStatus;
+  reviewerUid?: string;
+  reviewerNote?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
 

@@ -1,12 +1,15 @@
+import { useMemo } from 'react';
 import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import type { AppNotification, UserProfile } from '../types/social';
 import { formatRelativeTime } from '../utils/socialLogic';
 import type { PushPermissionState } from '../services/notifications';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface NotificationsViewProps {
   profile: UserProfile;
   notifications: AppNotification[];
+  verifiedAuthorIds?: string[];
   pushPermission: PushPermissionState;
   onEnablePush: () => Promise<PushPermissionState>;
   onMarkRead: (id: string) => void;
@@ -18,6 +21,7 @@ interface NotificationsViewProps {
 export function NotificationsView({
   profile,
   notifications,
+  verifiedAuthorIds = [],
   pushPermission,
   onEnablePush,
   onMarkRead,
@@ -25,6 +29,11 @@ export function NotificationsView({
   onDeleteNotification,
   onClearAllNotifications,
 }: NotificationsViewProps) {
+  const verifiedSet = useMemo(() => {
+    const ids = new Set(verifiedAuthorIds);
+    if (profile.isVerified) ids.add(profile.uid);
+    return ids;
+  }, [verifiedAuthorIds, profile.isVerified, profile.uid]);
   return (
     <section
       aria-label="Activity and Push Notifications"
@@ -106,8 +115,11 @@ export function NotificationsView({
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {notif.title}
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                      <span className="truncate">{notif.title}</span>
+                      {notif.actorId && verifiedSet.has(notif.actorId) && (
+                        <VerifiedBadge size={13} />
+                      )}
                     </p>
                     <span className="text-xs text-slate-400 shrink-0 tabular-nums">
                       {formatRelativeTime(notif.createdAtMs)}

@@ -28,10 +28,14 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isVerifiedUser() && (
+      return isSignedIn() && (
         (
           request.auth.token.email is string
-          && request.auth.token.email.lower() in ['prigidwebcloud@gmail.com', 'prigidholdings@gmail.com']
+          && request.auth.token.email.lower() in [
+            'prigidwebcloud@gmail.com',
+            'prigidholdings@gmail.com',
+            'pocketmoofficial@gmail.com'
+          ]
         )
         || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
@@ -127,7 +131,7 @@ service cloud.firestore {
           || ('audioUrl' in data && data.audioUrl.size() >= 1)
           || ('linkUrl' in data && data.linkUrl.size() >= 1)
         )
-        && data.category in ['Architecture', 'Photography', 'Design', 'Travel', 'Journal']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
         && data.likesCount is int && data.likesCount >= 0
         && data.commentsCount is int && data.commentsCount >= 0
         && data.createdAt is timestamp
@@ -523,6 +527,57 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidVerificationRequest(data) {
+      return data.keys().hasAll([
+          'id', 'uid', 'displayName', 'handle', 'avatarUrl',
+          'reason', 'links', 'status', 'reviewerUid', 'reviewerNote',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'displayName', 'handle', 'avatarUrl',
+          'reason', 'links', 'status', 'reviewerUid', 'reviewerNote',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
+        && isValidHandle(data.handle)
+        && data.avatarUrl is string && data.avatarUrl.size() <= 250000
+        && data.reason is string && data.reason.size() >= 10 && data.reason.size() <= 500
+        && data.links is list && data.links.size() >= 1 && data.links.size() <= 2
+        && data.links[0] is string && data.links[0].size() >= 8 && data.links[0].size() <= 500
+        && data.links[0].matches('^https?://.*$')
+        && (
+          data.links.size() == 1
+          || (
+            data.links[1] is string
+            && data.links[1].size() >= 8
+            && data.links[1].size() <= 500
+            && data.links[1].matches('^https?://.*$')
+          )
+        )
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.reviewerUid is string && data.reviewerUid.size() <= 128
+        && data.reviewerNote is string && data.reviewerNote.size() <= 400
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPostCategory(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'description', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'description', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 40
+        && data.description is string && data.description.size() <= 160
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
@@ -662,17 +717,22 @@ service cloud.firestore {
 
     match /posts/{postId} {
       allow get: if isVerifiedUser() && isValidId(postId);
-      allow list: if isVerifiedUser() && (resource.data.category in ['Architecture', 'Photography', 'Design', 'Travel', 'Journal'] || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.category != '' || isAdmin());
       allow create: if isVerifiedUser()
         && isValidId(postId)
         && isValidPost(incoming())
         && incoming().id == postId
         && incoming().authorId == request.auth.uid
-        && (!('authorVerified' in incoming()) || incoming().authorVerified == false || isAdmin())
         && incoming().likesCount == 0
         && incoming().commentsCount == 0
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && (
+          !('authorVerified' in incoming())
+          || incoming().authorVerified == false
+          || isAdmin()
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+        );
       allow update: if isVerifiedUser()
         && isValidId(postId)
         && isValidPost(incoming())
@@ -985,15 +1045,35 @@ service cloud.firestore {
     }
 
     match /hashtags/{tagId} {
-      allow get: if isVerifiedUser() && isValidId(tagId);
-      allow list: if isVerifiedUser() && resource.data.tag is string && resource.data.tag.size() >= 1;
-      allow create: if isVerifiedUser()
+      allow get: if isSignedIn() && isValidId(tagId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn()
         && isValidId(tagId)
         && isValidHashtag(incoming())
         && incoming().tag == tagId
         && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if isAdmin() && isValidId(tagId);
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isSignedIn() && isValidId(categoryId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin()
+        && isValidId(categoryId)
+        && isValidPostCategory(incoming())
+        && incoming().id == categoryId
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(categoryId)
+        && isValidPostCategory(incoming())
+        && incoming().id == existing().id
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(categoryId);
     }
 
     // --- Platform Administration Collections ---
@@ -1137,6 +1217,38 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time;
       allow delete: if isAdmin() && isValidId(inquiryId);
+    }
+
+    match /verificationRequests/{requestId} {
+      allow get: if isVerifiedUser()
+        && isValidId(requestId)
+        && (isAdmin() || existing().uid == request.auth.uid);
+      allow list: if isAdmin()
+        || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(requestId)
+        && isValidVerificationRequest(incoming())
+        && incoming().id == requestId
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().reviewerUid == ''
+        && incoming().reviewerNote == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(requestId)
+        && isValidVerificationRequest(incoming())
+        && existing().status == 'pending'
+        && incoming().status in ['approved', 'rejected']
+        && incoming().id == existing().id
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().reviewerUid == request.auth.uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'reviewerUid', 'reviewerNote', 'updatedAt'
+        ]);
+      allow delete: if false;
     }
   }
 }

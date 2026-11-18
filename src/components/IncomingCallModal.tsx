@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { PhoneIncoming, PhoneOff, Video } from 'lucide-react';
 import type { IncomingCallInvite } from '../types/social';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 
 function playRingingTone(): () => void {
   try {
@@ -40,12 +41,14 @@ function playRingingTone(): () => void {
 
 interface IncomingCallModalProps {
   invite: IncomingCallInvite | null;
+  callerVerified?: boolean;
   onAccept: (invite: IncomingCallInvite) => Promise<void> | void;
   onDecline: (invite: IncomingCallInvite) => Promise<void> | void;
 }
 
 export function IncomingCallModal({
   invite,
+  callerVerified = false,
   onAccept,
   onDecline,
 }: IncomingCallModalProps) {
@@ -118,8 +121,9 @@ export function IncomingCallModal({
           >
             Incoming {invite.isAudioOnly ? 'Voice' : 'Video'} Call
           </p>
-          <h2 className="font-display text-base font-bold text-white truncate">
-            {invite.callerName}
+          <h2 className="font-display text-base font-bold text-white inline-flex items-center gap-1.5 max-w-full min-w-0">
+            <span className="truncate">{invite.callerName}</span>
+            {callerVerified && <VerifiedBadge size={14} />}
           </h2>
           <p className="text-xs text-slate-400 truncate">
             Room: {invite.title}

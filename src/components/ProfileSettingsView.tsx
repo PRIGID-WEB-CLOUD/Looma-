@@ -19,13 +19,16 @@ import type {
   ThemeMode,
   UserPrivateSettings,
   UserProfile,
+  VerificationRequest,
 } from '../types/social';
+import { RequestVerificationModal } from './RequestVerificationModal';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
 } from '../services/storage';
 import { INTEREST_OPTIONS, validateProfileInput } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { VerifiedBadge } from './VerifiedBadge';
 import type { LegalDocId } from '../utils/legalLogic';
 
 interface ProfileSettingsViewProps {
@@ -44,9 +47,8 @@ interface ProfileSettingsViewProps {
     updates: Partial<UserPrivateSettings>
   ) => Promise<void>;
   onBack: () => void;
-  isAdmin?: boolean;
-  onOpenAdmin?: () => void;
-  onOpenLanding?: () => void;
+  userVerificationRequest?: VerificationRequest | null;
+  onSubmitVerificationRequest?: (reason: string, links: string[]) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface SwitchRowProps {
@@ -113,9 +115,8 @@ export function ProfileSettingsView({
   onUpdateProfile,
   onUpdatePrivateSettings,
   onBack,
-  isAdmin = false,
-  onOpenAdmin,
-  onOpenLanding,
+  userVerificationRequest,
+  onSubmitVerificationRequest,
 }: ProfileSettingsViewProps) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.handle);
@@ -123,6 +124,7 @@ export function ProfileSettingsView({
   const [bio, setBio] = useState(profile.bio);
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl);
   const [interests, setInterests] = useState<string[]>(profile.interests);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   const [pushEnabled, setPushEnabled] = useState(privateSettings.pushEnabled);
   const [notifyLikes, setNotifyLikes] = useState(privateSettings.notifyLikes);
@@ -453,6 +455,54 @@ export function ProfileSettingsView({
               })}
             </div>
           </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1.5">
+                  <span>Account Verification Badge</span>
+                  {profile.isVerified && <VerifiedBadge size={14} />}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {profile.isVerified
+                    ? 'Your account is officially verified with a blue checkmark.'
+                    : userVerificationRequest?.status === 'pending'
+                      ? 'Your verification request is currently pending admin review.'
+                      : userVerificationRequest?.status === 'rejected'
+                        ? 'Your previous verification request was not approved. You may submit a new request.'
+                        : 'Request an official verification badge by providing a reason and reference links.'}
+                </p>
+                {!profile.isVerified &&
+                  userVerificationRequest?.status === 'rejected' &&
+                  userVerificationRequest.reviewerNote && (
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                      Admin note: {userVerificationRequest.reviewerNote}
+                    </p>
+                  )}
+              </div>
+              {!profile.isVerified && userVerificationRequest?.status !== 'pending' && (
+                <button
+                  type="button"
+                  onClick={() => setVerifyModalOpen(true)}
+                  className="min-h-[38px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                  <span>Request Verification</span>
+                </button>
+              )}
+              {profile.isVerified && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold">
+                  <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                  Verified Creator
+                </span>
+              )}
+              {!profile.isVerified && userVerificationRequest?.status === 'pending' && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-xs font-semibold">
+                  Pending Review
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* 02 · Appearance & Display */}
@@ -678,8 +728,10 @@ export function ProfileSettingsView({
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-                {profile.displayName} (@{profile.handle})
+              <p className="text-sm font-medium text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                <span className="truncate">{profile.displayName}</span>
+                {profile.isVerified && <VerifiedBadge size={14} />}
+                <span className="text-slate-500 dark:text-slate-400 shrink-0">(@{profile.handle})</span>
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
                 {accountEmail
@@ -736,28 +788,7 @@ export function ProfileSettingsView({
             </div>
           )}
 
-          {isAdmin && onOpenAdmin && (
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-              <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60">
-                <div>
-                  <p className="text-xs font-semibold text-blue-900 dark:text-blue-200">
-                    Platform Administration
-                  </p>
-                  <p className="text-xs text-blue-700/80 dark:text-blue-300/80 mt-0.5">
-                    Access member management, content moderation, reports, and system operations.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onOpenAdmin}
-                  className="min-h-[38px] px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-                  <span>Open Admin Console</span>
-                </button>
-              </div>
-            </div>
-          )}
+
 
           {onDeleteAccount && (
             <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
@@ -862,6 +893,13 @@ export function ProfileSettingsView({
           </button>
         </div>
       </form>
+
+      <RequestVerificationModal
+        isOpen={verifyModalOpen}
+        onClose={() => setVerifyModalOpen(false)}
+        onSubmit={onSubmitVerificationRequest || (async () => ({ ok: true }))}
+        theme={theme}
+      />
     </section>
   );
 }

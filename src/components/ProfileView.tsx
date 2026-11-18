@@ -26,6 +26,7 @@ interface ProfileViewProps {
   bookmarkedPostIds: string[];
   commentsByPost: Record<string, PostComment[]>;
   shareThreads?: ChatThread[];
+  categories?: string[];
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
@@ -56,6 +57,7 @@ export function ProfileView({
   bookmarkedPostIds,
   commentsByPost,
   shareThreads = [],
+  categories,
   onToggleLike,
   onToggleBookmark,
   onAddComment,
@@ -255,6 +257,7 @@ export function ProfileView({
               key={post.id}
               post={post}
               currentUserId={profile.uid}
+              categories={categories}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
               comments={commentsByPost[post.id] || []}

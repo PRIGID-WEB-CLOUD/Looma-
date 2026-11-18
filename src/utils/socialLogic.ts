@@ -9,6 +9,7 @@ import type {
   FeedSortOrder,
   Post,
   PostCategory,
+  PostComment,
   StoryGroup,
   StoryItem,
   UserProfile,
@@ -50,10 +51,42 @@ export function normalizeAssetUrl(url: string): string {
   return url;
 }
 
+export function normalizeCategoryName(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+export function normalizeCategorySlug(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+  return cleaned || 'category';
+}
+
+export function mergeCategoryNames(
+  customNames: string[],
+  defaults: string[] = POST_CATEGORIES
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [...defaults, ...customNames]) {
+    const clean = normalizeCategoryName(raw);
+    const key = clean.toLowerCase();
+    if (clean && !seen.has(key)) {
+      seen.add(key);
+      result.push(clean);
+    }
+  }
+  return result;
+}
+
 export function validatePostInput(
   caption: string,
   category: string,
-  hasAttachment: boolean = false
+  hasAttachment: boolean = false,
+  allowedCategories?: string[]
 ): { valid: boolean; error?: string } {
   const trimmed = caption.trim();
   if (!trimmed && !hasAttachment) {
@@ -65,7 +98,15 @@ export function validatePostInput(
       error: 'Caption must be 1,200 characters or fewer.',
     };
   }
-  if (!POST_CATEGORIES.includes(category as PostCategory)) {
+  const cleanCategory = normalizeCategoryName(category || '');
+  if (!cleanCategory || cleanCategory.length > 40) {
+    return { valid: false, error: 'Choose a valid topic category.' };
+  }
+  const allowed =
+    allowedCategories && allowedCategories.length > 0
+      ? allowedCategories
+      : POST_CATEGORIES;
+  if (!allowed.some((c) => c.toLowerCase() === cleanCategory.toLowerCase())) {
     return { valid: false, error: 'Choose a valid topic category.' };
   }
   return { valid: true };
@@ -289,6 +330,7 @@ export function resolvePublicProfile(
     followersCount: 0,
     followingCount: 0,
     onboardingCompleted: true,
+    isVerified: Boolean(authorPost.authorVerified),
     createdAtMs: authorPost.createdAtMs,
     updatedAtMs: authorPost.updatedAtMs,
   };
@@ -734,6 +776,7 @@ export function groupStoriesByAuthor(
       authorName: latest.authorName,
       authorHandle: latest.authorHandle,
       authorAvatar: latest.authorAvatar,
+      authorVerified: sortedItems.some((s) => Boolean(s.authorVerified)),
       items: sortedItems,
       hasUnviewed,
       latestCreatedAtMs: latest.createdAtMs,
@@ -2160,15 +2203,70 @@ export function enrichPostWithVerifiedAuthor(
   communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
   currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
 ): Post {
-  if (post.authorVerified) return post;
-  if (currentProfile && currentProfile.uid === post.authorId && currentProfile.isVerified) {
-    return { ...post, authorVerified: true };
+  if (currentProfile && currentProfile.uid === post.authorId) {
+    const next = Boolean(currentProfile.isVerified);
+    return Boolean(post.authorVerified) === next
+      ? post
+      : { ...post, authorVerified: next };
   }
   const matched = communityUsers.find((u) => u.uid === post.authorId);
-  if (matched?.isVerified) {
-    return { ...post, authorVerified: true };
+  if (matched) {
+    const next = Boolean(matched.isVerified);
+    return Boolean(post.authorVerified) === next
+      ? post
+      : { ...post, authorVerified: next };
   }
   return post;
+}
+
+export function enrichCommentWithVerifiedAuthor(
+  comment: PostComment,
+  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
+  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+): PostComment {
+  if (currentProfile && currentProfile.uid === comment.authorId) {
+    const next = Boolean(currentProfile.isVerified);
+    return Boolean(comment.authorVerified) === next
+      ? comment
+      : { ...comment, authorVerified: next };
+  }
+  const matched = communityUsers.find((u) => u.uid === comment.authorId);
+  if (matched) {
+    const next = Boolean(matched.isVerified);
+    return Boolean(comment.authorVerified) === next
+      ? comment
+      : { ...comment, authorVerified: next };
+  }
+  return comment;
+}
+
+export function enrichStoryGroupsWithVerifiedAuthors(
+  groups: StoryGroup[],
+  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
+  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+): StoryGroup[] {
+  const verifiedMap = new Map<string, boolean>();
+  for (const user of communityUsers) {
+    verifiedMap.set(user.uid, Boolean(user.isVerified));
+  }
+  if (currentProfile?.uid) {
+    verifiedMap.set(currentProfile.uid, Boolean(currentProfile.isVerified));
+  }
+
+  return groups.map((group) => {
+    const matchedVerified = verifiedMap.get(group.authorId);
+    const nextVerified =
+      matchedVerified !== undefined
+        ? matchedVerified
+        : Boolean(group.authorVerified);
+    if (Boolean(group.authorVerified) === nextVerified) {
+      return group;
+    }
+    return {
+      ...group,
+      authorVerified: nextVerified,
+    };
+  });
 }
 
 export function shouldAutoQueuePostReport(

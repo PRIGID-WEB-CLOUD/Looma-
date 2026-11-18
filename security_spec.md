@@ -9,6 +9,7 @@
 6. **Temporal Integrity**: `createdAt == request.time` on creation and immutable afterward; `updatedAt == request.time` on writes. Stories cap `expiresAtMs` to at most ~25 hours from `request.time`.
 7. **Server-Derived / Protected Follower Counters**: Clients cannot arbitrarily mutate `UserProfile.followersCount` via direct profile updates, and self-follow (`userId == targetUid`) is denied.
 8. **Admin RBAC & Audit Immutability**: Platform administration (`isAdmin()`) requires `request.auth.token.email_verified == true` AND either a verified allowlisted operator email or an explicit `/admins/{uid}` record. Admins cannot suspend/demote themselves (`targetUid != request.auth.uid`), and `/adminAuditLogs/{logId}` entries are strictly append-only (`update, delete: if false`).
+9. **Verification Badge Authority**: Users cannot self-assign `UserProfile.isVerified = true` or approve `/verificationRequests/{requestId}`. Users may only submit `status: 'pending'` verification requests with 1–2 valid HTTP/HTTPS links; only `isAdmin()` may transition a pending request to `'approved'` or `'rejected'` and grant `isVerified` on `/users/{userId}`.
 
 ## 2. The "Dirty Dozen+" Attack Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Post Write**: `POST /posts/p1` with `request.auth == null` -> Denied.
@@ -29,3 +30,6 @@
 16. **Permanent Story TTL Spoof**: `POST /stories/s1` with `expiresAtMs` 10 years in the future -> Denied.
 17. **Non-Admin Privilege Escalation**: Non-admin granting themselves `/admins/{uid}` or toggling `/adminConfig/featureFlags` -> Denied by `isAdmin()`.
 18. **Audit Log Tampering**: Even an administrator attempting `UPDATE` or `DELETE` on `/adminAuditLogs/{logId}` -> Denied (`if false`).
+19. **Self-Verification Escalation**: User setting `isVerified: true` on `/users/{uid}` or creating `/verificationRequests/{id}` with `status: 'approved'` -> Denied.
+20. **Re-Reviewing Closed Verification Request**: Updating `/verificationRequests/{id}` once `status` is `'approved'` or `'rejected'` -> Denied by terminal lock `existing().status == 'pending'`.
+
