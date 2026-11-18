@@ -918,8 +918,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={selectWorkspaceTab}
         unreadNotifications={unreadCount}
-        theme={store.theme}
-        onToggleTheme={store.toggleTheme}
+        onLogoClick={() => setBrandModalOpen(true)}
       />
 
       <PushToast

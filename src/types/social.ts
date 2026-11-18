@@ -13,12 +13,12 @@ export type ThemeMode = 'light' | 'dark';
 
 export type TabId =
   | 'feed'
+  | 'connections'
   | 'messages'
   | 'notifications'
   | 'profile'
   | 'settings'
   | 'public-profile'
-  | 'connections'
   | 'auth';
 
 export type ConnectionsTab = 'followers' | 'following' | 'friends';

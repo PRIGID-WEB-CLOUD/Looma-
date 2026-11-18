@@ -153,7 +153,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'id', 'postId', 'authorId', 'authorName', 'authorHandle',
-          'authorAvatar', 'text', 'createdAt'
+          'authorAvatar', 'authorVerified', 'text', 'createdAt'
         ])
         && isValidId(data.id)
         && isValidId(data.postId) && data.postId == postId
@@ -161,6 +161,7 @@ service cloud.firestore {
         && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
         && isValidHandle(data.authorHandle)
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
+        && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 500
         && data.createdAt is timestamp;
     }
@@ -245,13 +246,14 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'id', 'authorId', 'authorName', 'authorHandle', 'authorAvatar',
-          'imageUrl', 'caption', 'expiresAtMs', 'createdAt'
+          'authorVerified', 'imageUrl', 'caption', 'expiresAtMs', 'createdAt'
         ])
         && isValidId(data.id)
         && isValidId(data.authorId)
         && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
         && isValidHandle(data.authorHandle)
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
+        && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.imageUrl is string && data.imageUrl.size() <= 600000
         && data.caption is string && data.caption.size() <= 280
         && data.expiresAtMs is int && data.expiresAtMs > 0
@@ -798,7 +800,13 @@ service cloud.firestore {
           && isValidPostComment(incoming(), postId)
           && incoming().id == commentId
           && incoming().createdAt == request.time
-          && exists(/databases/$(database)/documents/posts/$(postId));
+          && exists(/databases/$(database)/documents/posts/$(postId))
+          && (
+            !('authorVerified' in incoming())
+            || incoming().authorVerified == false
+            || isAdmin()
+            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+          );
         allow update: if false;
         allow delete: if isVerifiedUser()
           && isValidId(postId)
@@ -958,7 +966,13 @@ service cloud.firestore {
         && incoming().authorId == request.auth.uid
         && incoming().expiresAtMs > request.time.toMillis()
         && incoming().expiresAtMs <= request.time.toMillis() + 90000000
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && (
+          !('authorVerified' in incoming())
+          || incoming().authorVerified == false
+          || isAdmin()
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+        );
       allow update: if false;
       allow delete: if isVerifiedUser()
         && isValidId(storyId)

@@ -19,20 +19,20 @@ export interface RouteAccessResolution {
 
 const TAB_PATH_MAP: Record<ProtectedWorkspaceTab, string> = {
   feed: '/feed',
+  connections: '/connections',
   messages: '/messages',
   notifications: '/notifications',
   profile: '/profile',
   settings: '/settings',
-  connections: '/connections',
 };
 
 const PROTECTED_TAB_BY_PATH: Record<string, { tab: ProtectedWorkspaceTab; label: string }> = {
   '/feed': { tab: 'feed', label: 'Feed posts' },
-  '/messages': { tab: 'messages', label: 'Direct messages' },
+  '/connections': { tab: 'connections', label: 'Friends & connections' },
+  '/messages': { tab: 'messages', label: 'Messages' },
   '/notifications': { tab: 'notifications', label: 'Notifications' },
   '/profile': { tab: 'profile', label: 'Member profile' },
   '/settings': { tab: 'settings', label: 'Profile settings' },
-  '/connections': { tab: 'connections', label: 'Connections' },
 };
 
 export function normalizeAppPathname(pathname: string): string {

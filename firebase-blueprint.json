@@ -282,6 +282,9 @@
           "type": "string",
           "maxLength": 250000
         },
+        "authorVerified": {
+          "type": "boolean"
+        },
         "text": {
           "type": "string",
           "minLength": 1,
@@ -536,6 +539,9 @@
         "authorAvatar": {
           "type": "string",
           "maxLength": 250000
+        },
+        "authorVerified": {
+          "type": "boolean"
         },
         "imageUrl": {
           "type": "string",

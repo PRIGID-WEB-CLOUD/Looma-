@@ -16,7 +16,7 @@ test('unauthenticated visitor at root goes directly to auth and cannot view feed
   assert.equal(root.surface, 'auth');
   assert.equal(root.authMode, 'signin');
 
-  for (const path of ['/feed', '/messages', '/settings', '/profile', '/notifications', '/connections']) {
+  for (const path of ['/feed', '/connections', '/messages', '/notifications', '/profile', '/settings']) {
     const res = resolveRouteAccess({
       pathname: path,
       isAuthorized: false,

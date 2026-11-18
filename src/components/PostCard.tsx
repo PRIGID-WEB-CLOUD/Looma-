@@ -13,7 +13,6 @@ import {
   MessageSquare,
   Music,
   Pencil,
-  PictureInPicture2,
   PlusCircle,
   RotateCcw,
   Search,
@@ -356,20 +355,6 @@ export function PostCard({
     }
   };
 
-  const handleVideoPiP = async () => {
-    const el = videoRef.current;
-    if (!el) return;
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else if (typeof el.requestPictureInPicture === 'function') {
-        await el.requestPictureInPicture();
-      }
-    } catch {
-      // Ignore if PiP blocked by browser
-    }
-  };
-
   return (
     <article
       data-testid="post-card"
@@ -590,87 +575,90 @@ export function PostCard({
         </div>
       )}
 
-      {/* Video Player (YouTube / Vimeo Iframe Embed or Direct HTML5 Video with speed, PiP, download, theater mode) */}
+      {/* Embedded or Direct Video Player */}
       {parsedVideo && (
         <div
           data-testid="post-video-embed"
-          className="mt-3.5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black"
+          className="mt-3.5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
         >
           {(parsedVideo.kind === 'youtube' || parsedVideo.kind === 'vimeo') &&
           parsedVideo.embedUrl ? (
-            <div className="aspect-video w-full">
-              <iframe
-                src={parsedVideo.embedUrl}
-                title={parsedVideo.displayTitle}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="w-full h-full border-0"
-              />
-            </div>
-          ) : videoFailed ? (
-            <div className="h-56 flex flex-col items-center justify-center gap-2.5 text-slate-300 bg-slate-950 p-4 text-center">
-              <p className="text-xs">Unable to load inline video stream.</p>
-              <div className="flex items-center gap-2">
+            <>
+              <div className="aspect-video bg-black">
+                <iframe
+                  src={parsedVideo.embedUrl}
+                  title={parsedVideo.displayTitle}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="w-full h-full border-0"
+                />
+              </div>
+              <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                    {parsedVideo.displayTitle}
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {parsedVideo.subtitle}
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setVideoFailed(false);
-                    setMediaRetryNonce((n) => n + 1);
-                  }}
-                  className="min-h-[34px] px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  onClick={openMediaViewer}
+                  aria-label="Open video in theater viewer"
+                  className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center shrink-0 cursor-pointer"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Retry</span>
+                  <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
-                <a
-                  href={parsedVideo.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-h-[34px] px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold inline-flex items-center gap-1.5"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Open</span>
-                </a>
               </div>
-            </div>
+            </>
           ) : (
-            <video
-              key={`${parsedVideo.url}-${mediaRetryNonce}`}
-              ref={videoRef}
-              src={parsedVideo.url}
-              controls
-              playsInline
-              preload="metadata"
-              onError={() => setVideoFailed(true)}
-              className="w-full max-h-[440px] object-contain bg-black block"
-            />
-          )}
-          <div className="px-3.5 py-2 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
-            <span className="font-semibold text-slate-900 dark:text-white truncate">
-              {parsedVideo.displayTitle}
-            </span>
-            <div className="flex items-center gap-1 shrink-0">
-              {parsedVideo.kind === 'video' && (
-                <>
+            <>
+              {videoFailed ? (
+                <div className="h-52 flex flex-col items-center justify-center gap-2.5 text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900">
+                  <span className="text-xs">Video unavailable right now</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVideoFailed(false);
+                      setMediaRetryNonce((n) => n + 1);
+                    }}
+                    className="min-h-[34px] px-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : (
+                <video
+                  key={`${parsedVideo.url}-${mediaRetryNonce}`}
+                  ref={videoRef}
+                  src={parsedVideo.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onError={() => setVideoFailed(true)}
+                  className="w-full max-h-[440px] bg-black block"
+                />
+              )}
+              <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                    {parsedVideo.displayTitle}
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {parsedVideo.subtitle}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={() => setPlaybackSpeed((s) => cyclePlaybackSpeed(s))}
                     aria-label={`Cycle video speed (current ${playbackSpeed}x)`}
-                    className="min-h-[32px] px-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 font-semibold tabular-nums cursor-pointer"
+                    className="min-h-[32px] px-2 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 tabular-nums cursor-pointer"
                   >
                     {playbackSpeed}x
                   </button>
-                  {typeof document !== 'undefined' &&
-                    document.pictureInPictureEnabled && (
-                      <button
-                        type="button"
-                        onClick={handleVideoPiP}
-                        aria-label="Picture in picture"
-                        className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center cursor-pointer"
-                      >
-                        <PictureInPicture2 className="w-3.5 h-3.5" aria-hidden="true" />
-                      </button>
-                    )}
                   <a
                     href={parsedVideo.url}
                     download={deriveMediaDownloadName(
@@ -681,35 +669,23 @@ export function PostCard({
                       },
                       post.id
                     )}
-                    aria-label="Download video"
+                    aria-label="Download video file"
                     className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center"
                   >
                     <Download className="w-3.5 h-3.5" aria-hidden="true" />
                   </a>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={openMediaViewer}
-                aria-label="Open video in theater viewer"
-                className="min-h-[32px] px-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 inline-flex items-center gap-1 font-medium cursor-pointer"
-              >
-                <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">Theater</span>
-              </button>
-              {!parsedVideo.url.startsWith('data:') && (
-                <a
-                  href={parsedVideo.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Open video source"
-                  className="min-h-[32px] min-w-[32px] rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 inline-flex items-center justify-center"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-                </a>
-              )}
-            </div>
-          </div>
+                  <button
+                    type="button"
+                    onClick={openMediaViewer}
+                    aria-label="Expand video player"
+                    className="min-h-[32px] min-w-[32px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center justify-center cursor-pointer"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

@@ -24,7 +24,7 @@ export function StoriesStrip({
       aria-label="Stories"
       className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-4 py-3.5"
     >
-      <div className="flex items-center gap-2 mb-2.5">
+      <div className="flex items-center gap-2 mb-3">
         <h2 className="font-display text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
           Stories
         </h2>
@@ -32,86 +32,88 @@ export function StoriesStrip({
           type="button"
           onClick={onOpenAddStory}
           aria-label="Add story"
-          title="Add story"
-          className="w-6 h-6 rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 inline-flex items-center justify-center cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          className="w-6 h-6 rounded-full text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 flex items-center justify-center cursor-pointer transition-colors"
         >
           <Plus className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
 
-      {!myGroup && otherGroups.length === 0 ? (
-        <p className="text-xs text-slate-500 dark:text-slate-400 py-2">
-          No active stories yet.
-        </p>
-      ) : (
-        <div className="flex items-start gap-3.5 overflow-x-auto pb-1">
-          {/* Current User Active Story Tile (view-only when user has an active story) */}
-          {myGroup && (
-            <button
-              type="button"
-              onClick={() => onOpenStory(myGroup)}
-              aria-label="View your story"
-              className="flex flex-col items-center gap-1.5 shrink-0 w-[68px] cursor-pointer group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+      <div className="flex items-start gap-4 overflow-x-auto pb-1">
+        {myGroup && (
+          <button
+            type="button"
+            onClick={() => onOpenStory(myGroup)}
+            aria-label={`View your story (${myGroup.items.length} frames)`}
+            className="flex flex-col items-center gap-1.5 shrink-0 w-16 group cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            <div
+              className={`p-0.5 rounded-full ${
+                myGroup.hasUnviewed
+                  ? 'ring-2 ring-blue-600 dark:ring-blue-400'
+                  : 'ring-1 ring-slate-300 dark:ring-slate-700'
+              }`}
             >
-              <div className="p-0.5">
-                <div
-                  className={`rounded-full p-0.5 ${
-                    myGroup.hasUnviewed
-                      ? 'ring-2 ring-blue-600 dark:ring-blue-400'
-                      : 'ring-2 ring-slate-300 dark:ring-slate-700'
-                  }`}
-                >
-                  <Avatar
-                    src={profile.avatarUrl}
-                    name={profile.displayName}
-                    size="lg"
-                  />
-                </div>
+              <Avatar
+                src={profile.avatarUrl}
+                name={profile.displayName}
+                size="lg"
+              />
+            </div>
+            <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full inline-flex items-center gap-0.5">
+              <span className="truncate">Your Story</span>
+              {(myGroup.authorVerified || profile.isVerified) && (
+                <VerifiedBadge size={11} />
+              )}
+            </span>
+          </button>
+        )}
+
+        {otherGroups.map((group) => {
+          const firstName = group.authorName.split(' ')[0] || group.authorName;
+          return (
+            <button
+              key={group.authorId}
+              type="button"
+              onClick={() => onOpenStory(group)}
+              aria-label={`View ${group.authorName}'s story`}
+              className="flex flex-col items-center gap-1.5 shrink-0 w-16 group cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+            >
+              <div
+                className={`p-0.5 rounded-full ${
+                  group.hasUnviewed
+                    ? 'ring-2 ring-blue-600 dark:ring-blue-400'
+                    : 'ring-1 ring-slate-300 dark:ring-slate-700 opacity-85'
+                }`}
+              >
+                <Avatar
+                  src={group.authorAvatar}
+                  name={group.authorName}
+                  size="lg"
+                />
               </div>
-              <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 inline-flex items-center justify-center gap-0.5 max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                <span className="truncate">Your Story</span>
-                {(myGroup.authorVerified || profile.isVerified) && (
-                  <VerifiedBadge size={11} />
-                )}
+              <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full inline-flex items-center gap-0.5">
+                <span className="truncate">{firstName}</span>
+                {group.authorVerified && <VerifiedBadge size={11} />}
               </span>
             </button>
-          )}
+          );
+        })}
 
-          {/* Community Stories */}
-          {otherGroups.map((group) => {
-            const firstName = group.authorName.split(' ')[0] || group.authorName;
-            return (
-              <button
-                key={group.authorId}
-                type="button"
-                onClick={() => onOpenStory(group)}
-                aria-label={`View ${group.authorName}'s story`}
-                className="flex flex-col items-center gap-1.5 shrink-0 w-[68px] cursor-pointer group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-              >
-                <div className="p-0.5">
-                  <div
-                    className={`rounded-full p-0.5 transition-colors ${
-                      group.hasUnviewed
-                        ? 'ring-2 ring-blue-600 dark:ring-blue-400'
-                        : 'ring-2 ring-slate-300 dark:ring-slate-700'
-                    }`}
-                  >
-                    <Avatar
-                      src={group.authorAvatar}
-                      name={group.authorName}
-                      size="lg"
-                    />
-                  </div>
-                </div>
-                <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 inline-flex items-center justify-center gap-0.5 max-w-full group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                  <span className="truncate">{firstName}</span>
-                  {group.authorVerified && <VerifiedBadge size={11} />}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+        {storyGroups.length === 0 && (
+          <button
+            type="button"
+            onClick={onOpenAddStory}
+            className="flex flex-col items-center gap-1.5 shrink-0 w-16 cursor-pointer group"
+          >
+            <div className="w-14 h-14 rounded-full border-2 border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400 group-hover:border-blue-500 group-hover:text-blue-600 transition-colors">
+              <Plus className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              Add Story
+            </span>
+          </button>
+        )}
+      </div>
     </section>
   );
 }

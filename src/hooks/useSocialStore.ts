@@ -396,16 +396,20 @@ export function useSocialStore() {
       (id) => !isDemoPostId(id)
     )
   );
-  const [followedUserIds, setFollowedUserIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.FOLLOWED_IDS, []).filter(
+  const [followedUserIds, setFollowedUserIds] = useState<string[]>(() => {
+    const stored = readStorage<string[]>(STORAGE_KEYS.FOLLOWED_IDS, []).filter(
       (id) => !isDemoUserId(id) && id !== profile.uid
-    )
-  );
-  const [followerUserIds, setFollowerUserIds] = useState<string[]>(() =>
-    readStorage<string[]>(STORAGE_KEYS.FOLLOWER_IDS, []).filter(
+    );
+    if (stored.length > 0) return stored;
+    return autostart ? ['creator_sophia'] : [];
+  });
+  const [followerUserIds, setFollowerUserIds] = useState<string[]>(() => {
+    const stored = readStorage<string[]>(STORAGE_KEYS.FOLLOWER_IDS, []).filter(
       (id) => !isDemoUserId(id) && id !== profile.uid
-    )
-  );
+    );
+    if (stored.length > 0) return stored;
+    return autostart ? ['creator_sophia'] : [];
+  });
   const hasRemoteFollowingRef = useRef(false);
   const [communityUsers, setCommunityUsers] = useState<UserProfile[]>(() => {
     if (autostart) {
@@ -445,9 +449,54 @@ export function useSocialStore() {
   });
 
   const [remoteStories, setRemoteStories] = useState<StoryItem[]>([]);
-  const [localStories, setLocalStories] = useState<StoryItem[]>(() =>
-    stripDemoStories(readStorage<StoryItem[]>(STORAGE_KEYS.STORIES, []))
-  );
+  const [localStories, setLocalStories] = useState<StoryItem[]>(() => {
+    const stored = stripDemoStories(
+      readStorage<StoryItem[]>(STORAGE_KEYS.STORIES, [])
+    );
+    if (stored.length > 0) return stored;
+    if (autostart) {
+      const now = Date.now();
+      return [
+        {
+          id: 'seed_story_alex_1',
+          authorId: profile.uid,
+          authorName: profile.displayName,
+          authorHandle: profile.handle,
+          authorAvatar: profile.avatarUrl,
+          authorVerified: Boolean(profile.isVerified),
+          imageUrl: '/images/post_cafe_workspace_1794518949649.jpg',
+          caption: 'Morning design review notes & espresso before sprint sync.',
+          createdAtMs: now - 1000 * 60 * 50,
+          expiresAtMs: now + 22 * 3_600_000,
+        },
+        {
+          id: 'seed_story_sophia_1',
+          authorId: 'creator_sophia',
+          authorName: 'Sophia Chen',
+          authorHandle: 'sophia.studio',
+          authorAvatar: '/images/avatar_maya_1794518947315.jpg',
+          authorVerified: true,
+          imageUrl: '/images/post_architecture_1794518948238.jpg',
+          caption: 'Timber pavilion skylight geometry at golden hour.',
+          createdAtMs: now - 1000 * 60 * 28,
+          expiresAtMs: now + 23 * 3_600_000,
+        },
+        {
+          id: 'seed_story_marcus_1',
+          authorId: 'creator_marcus',
+          authorName: 'Marcus Vance',
+          authorHandle: 'marcus.vance',
+          authorAvatar: '/images/avatar_kenji_1794518947553.jpg',
+          authorVerified: false,
+          imageUrl: '/images/post_alpine_trail_1794518949014.jpg',
+          caption: 'First ridge mist along the Cascade trail.',
+          createdAtMs: now - 1000 * 60 * 42,
+          expiresAtMs: now + 21 * 3_600_000,
+        },
+      ];
+    }
+    return [];
+  });
   const [viewedStoryIds, setViewedStoryIds] = useState<string[]>(() =>
     readStorage<string[]>(STORAGE_KEYS.VIEWED_STORIES, [])
   );
@@ -1618,6 +1667,7 @@ export function useSocialStore() {
             authorName: d.authorName,
             authorHandle: d.authorHandle,
             authorAvatar: d.authorAvatar,
+            authorVerified: Boolean(d.authorVerified),
             imageUrl: d.imageUrl || '',
             caption: d.caption || '',
             createdAtMs: timestampToMs(d.createdAt),
@@ -3402,6 +3452,7 @@ export function useSocialStore() {
           authorName: profile.displayName,
           authorHandle: profile.handle,
           authorAvatar: profile.avatarUrl,
+          authorVerified: isCommentAuthorVerified,
           text: newComment.text,
           createdAt: serverTimestamp(),
         });
@@ -4521,12 +4572,17 @@ export function useSocialStore() {
         trimmedCaption.length > 280
           ? `${trimmedCaption.slice(0, 277).trimEnd()}...`
           : trimmedCaption;
+      const isAuthorVerified = Boolean(
+        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+          profile.isVerified
+      );
       const newStory: StoryItem = {
         id: storyId,
         authorId: profile.uid,
         authorName: profile.displayName,
         authorHandle: profile.handle,
         authorAvatar: profile.avatarUrl,
+        authorVerified: isAuthorVerified,
         imageUrl,
         caption: safeCaption,
         createdAtMs: now,
@@ -4540,6 +4596,7 @@ export function useSocialStore() {
             authorName: profile.displayName,
             authorHandle: profile.handle,
             authorAvatar: profile.avatarUrl,
+            authorVerified: isAuthorVerified,
             imageUrl: newStory.imageUrl,
             caption: newStory.caption,
             expiresAtMs: newStory.expiresAtMs,
