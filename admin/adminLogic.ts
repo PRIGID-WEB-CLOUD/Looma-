@@ -218,6 +218,7 @@ export interface AdminFeatureFlags {
   storiesEnabled: boolean;
   voiceNotesEnabled: boolean;
   callsEnabled: boolean;
+  marketplaceEnabled: boolean;
   maintenanceMode: boolean;
   registrationsOpen: boolean;
   strictModerationQueue: boolean;
@@ -259,6 +260,7 @@ export const DEFAULT_FEATURE_FLAGS: AdminFeatureFlags = {
   storiesEnabled: true,
   voiceNotesEnabled: true,
   callsEnabled: true,
+  marketplaceEnabled: true,
   maintenanceMode: false,
   registrationsOpen: true,
   strictModerationQueue: false,

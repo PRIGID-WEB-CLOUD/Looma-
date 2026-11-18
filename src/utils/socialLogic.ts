@@ -1082,6 +1082,15 @@ export function resolvePostLinkPreview(
     'caption' | 'linkUrl' | 'imageUrl' | 'videoUrl' | 'audioUrl' | 'mediaTitle'
   >
 ): ParsedRichUrl | null {
+  // Posts with an uploaded photo, video, or audio file render that attachment directly
+  // without adding a redundant external link preview card underneath.
+  const trimmedImage = (post.imageUrl || '').trim();
+  const trimmedVideo = (post.videoUrl || '').trim();
+  const trimmedAudio = (post.audioUrl || '').trim();
+  if (trimmedImage || trimmedVideo || trimmedAudio) {
+    return null;
+  }
+
   const captionUrl = extractFirstUrl(post.caption || '');
   const raw = (post.linkUrl || captionUrl || '').trim();
   if (!raw) return null;
@@ -1090,21 +1099,7 @@ export function resolvePostLinkPreview(
     return null;
   }
 
-  const trimmedImage = (post.imageUrl || '').trim();
-  if (trimmedImage && (trimmedImage === raw || trimmedImage.includes(raw) || raw.includes(trimmedImage))) {
-    return null;
-  }
-
-  const trimmedVideo = (post.videoUrl || '').trim();
-  const trimmedAudio = (post.audioUrl || '').trim();
-  const hasSeparateMedia = Boolean(
-    (trimmedImage && trimmedImage !== raw) ||
-      (trimmedVideo && trimmedVideo !== raw) ||
-      (trimmedAudio && trimmedAudio !== raw)
-  );
-  const customTitle = hasSeparateMedia
-    ? undefined
-    : sanitizeMediaTitle(post.mediaTitle) || undefined;
+  const customTitle = sanitizeMediaTitle(post.mediaTitle) || undefined;
 
   const parsed = parseRichUrl(raw, customTitle);
   if (!parsed) return null;
@@ -1728,6 +1723,19 @@ export function resolvePostMediaDescriptor(
     }
   }
 
+  if (post.imageUrl && post.imageUrl.trim()) {
+    const cleanImageUrl = normalizeAssetUrl(post.imageUrl.trim());
+    const parsedImg = parseRichUrl(cleanImageUrl, titleHint);
+    return {
+      postId: post.id,
+      kind: 'image',
+      url: cleanImageUrl,
+      title: titleHint || parsedImg?.displayTitle || `${post.authorName}'s photo`,
+      subtitle: parsedImg?.subtitle || `${post.category} photo`,
+      hostname: parsedImg?.hostname || 'media',
+    };
+  }
+
   const linkCandidate = post.linkUrl || captionUrl || '';
   if (linkCandidate) {
     const parsed = parseRichUrl(linkCandidate, titleHint);
@@ -1749,7 +1757,7 @@ export function resolvePostMediaDescriptor(
         hostname: parsed.hostname,
       };
     }
-    if (!post.imageUrl && parsed && parsed.kind === 'image') {
+    if (parsed && parsed.kind === 'image') {
       return {
         postId: post.id,
         kind: 'image',
@@ -1759,19 +1767,6 @@ export function resolvePostMediaDescriptor(
         hostname: parsed.hostname,
       };
     }
-  }
-
-  if (post.imageUrl && post.imageUrl.trim()) {
-    const cleanImageUrl = normalizeAssetUrl(post.imageUrl.trim());
-    const parsedImg = parseRichUrl(cleanImageUrl, titleHint);
-    return {
-      postId: post.id,
-      kind: 'image',
-      url: cleanImageUrl,
-      title: titleHint || parsedImg?.displayTitle || `${post.authorName}'s photo`,
-      subtitle: parsedImg?.subtitle || `${post.category} photo`,
-      hostname: parsedImg?.hostname || 'media',
-    };
   }
 
   return null;

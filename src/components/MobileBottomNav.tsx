@@ -1,4 +1,4 @@
-import { Bell, Home, MessageSquare, User } from 'lucide-react';
+import { Bell, Home, MessageSquare, ShoppingBag, User } from 'lucide-react';
 import type { TabId } from '../types/social';
 
 interface MobileBottomNavProps {
@@ -19,6 +19,7 @@ export function MobileBottomNav({
     badge?: number;
   }[] = [
     { id: 'feed', label: 'Feed', icon: Home },
+    { id: 'marketplace', label: 'Market', icon: ShoppingBag },
     { id: 'messages', label: 'Messages', icon: MessageSquare },
     {
       id: 'notifications',
@@ -32,7 +33,7 @@ export function MobileBottomNav({
   return (
     <nav
       aria-label="Mobile bottom navigation"
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center"
+      className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 items-center"
     >
       {items.map((item) => {
         const Icon = item.icon;

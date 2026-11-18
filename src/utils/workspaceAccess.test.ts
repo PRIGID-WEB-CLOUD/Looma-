@@ -129,6 +129,24 @@ test('admin and landing routes resolve directly to their dedicated surfaces with
     });
     assert.equal(auth.surface, 'landing', `expected ${path} to resolve to landing surface for auth`);
   }
+
+  for (const path of ['/seller', '/seller/', '/seller/dashboard', '/seller/products/new']) {
+    const unauth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: false,
+      onboardingCompleted: false,
+      authReady: true,
+    });
+    assert.equal(unauth.surface, 'seller', `expected ${path} to resolve to seller surface for unauth`);
+
+    const auth = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: true,
+      onboardingCompleted: true,
+      authReady: true,
+    });
+    assert.equal(auth.surface, 'seller', `expected ${path} to resolve to seller surface for auth`);
+  }
 });
 
 test('authenticated user who has not completed onboarding is gated to onboarding for protected routes', () => {

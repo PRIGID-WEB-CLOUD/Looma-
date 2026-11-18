@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   ArrowLeft,
   AtSign,
@@ -30,6 +30,10 @@ import {
   validatePostInput,
   type CuratedGif,
 } from '../utils/socialLogic';
+import {
+  fetchDerivedLinkPreview,
+  type LinkPreviewMetadata,
+} from '../utils/linkPreviewLogic';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
@@ -215,9 +219,29 @@ export function CreatePostModal({
     [effectivePreviewUrl, mediaTitle]
   );
 
-  if (!open) return null;
-
   const hasUploadedFile = Boolean(imageUrl || videoUrl || audioUrl);
+  const [derivedLinkPreview, setDerivedLinkPreview] = useState<LinkPreviewMetadata | null>(null);
+  const [derivedImgFailed, setDerivedImgFailed] = useState(false);
+
+  useEffect(() => {
+    setDerivedImgFailed(false);
+    if (hasUploadedFile || !parsedPreview || parsedPreview.kind !== 'link') {
+      setDerivedLinkPreview(null);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void fetchDerivedLinkPreview(parsedPreview.url).then((meta) => {
+        if (active) setDerivedLinkPreview(meta);
+      });
+    }, 350);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [hasUploadedFile, parsedPreview]);
+
+  if (!open) return null;
 
   const cleanupStagedUrls = (urls: string[]) => {
     for (const url of urls) {
@@ -357,17 +381,10 @@ export function CreatePostModal({
           finalLinkUrl = detectedParsed.url;
         }
         if (!finalMediaTitle) {
-          finalMediaTitle = sanitizeMediaTitle(detectedParsed.displayTitle);
+          finalMediaTitle = sanitizeMediaTitle(
+            derivedLinkPreview?.title || detectedParsed.displayTitle
+          );
         }
-      }
-    } else if (
-      finalImageUrl &&
-      captionDetectedUrl &&
-      captionDetectedUrl !== dismissedCaptionUrl
-    ) {
-      const detectedParsed = parseRichUrl(captionDetectedUrl);
-      if (detectedParsed && detectedParsed.kind === 'link') {
-        finalLinkUrl = detectedParsed.url;
       }
     }
 
@@ -783,20 +800,55 @@ export function CreatePostModal({
                     )}
 
                     {parsedPreview.kind === 'link' && (
-                      <div className="p-4 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                          <span className="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wider truncate">
-                            <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
-                            {parsedPreview.hostname}
-                          </span>
-                          <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <div className="overflow-hidden">
+                        {derivedLinkPreview?.embedUrl ? (
+                          <div className="aspect-video bg-black">
+                            <iframe
+                              src={derivedLinkPreview.embedUrl}
+                              title={derivedLinkPreview.title || parsedPreview.displayTitle}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                              className="w-full h-full border-0"
+                            />
+                          </div>
+                        ) : derivedLinkPreview?.videoUrl ? (
+                          <video
+                            src={derivedLinkPreview.videoUrl}
+                            poster={derivedLinkPreview.imageUrl || undefined}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            className="w-full max-h-60 bg-black block"
+                          />
+                        ) : derivedLinkPreview?.imageUrl && !derivedImgFailed ? (
+                          <img
+                            src={derivedLinkPreview.imageUrl}
+                            alt={derivedLinkPreview.title || parsedPreview.displayTitle}
+                            referrerPolicy="no-referrer"
+                            onError={() => setDerivedImgFailed(true)}
+                            className="w-full max-h-52 object-cover block bg-slate-100 dark:bg-slate-900"
+                          />
+                        ) : null}
+                        <div className="p-4 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span className="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wider truncate">
+                              <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
+                              {derivedLinkPreview?.siteName || parsedPreview.hostname}
+                            </span>
+                            <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                            {derivedLinkPreview?.title || parsedPreview.displayTitle}
+                          </p>
+                          {derivedLinkPreview?.description && (
+                            <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                              {derivedLinkPreview.description}
+                            </p>
+                          )}
+                          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            {parsedPreview.url}
+                          </p>
                         </div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                          {parsedPreview.displayTitle}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                          {parsedPreview.url}
-                        </p>
                       </div>
                     )}
                   </div>

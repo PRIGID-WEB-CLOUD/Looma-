@@ -16,6 +16,7 @@ export function TopBar({
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
+    { id: 'marketplace', label: 'Market' },
     { id: 'messages', label: 'Messages' },
     {
       id: 'notifications',

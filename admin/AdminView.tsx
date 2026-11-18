@@ -17,6 +17,7 @@ import {
   Moon,
   Settings,
   ShieldAlert,
+  ShoppingBag,
   Sparkles,
   Sun,
   UserCheck,
@@ -27,6 +28,15 @@ import { Avatar } from '../src/components/Avatar';
 import { LoomaLogo } from '../src/components/LoomaLogo';
 import { VerifiedBadge } from '../src/components/VerifiedBadge';
 import type { ChatThread, Post, PostCategory, PostCategoryRecord, StoryGroup, ThemeMode, UserProfile } from '../src/types/social';
+import type {
+  MarketplaceOrder,
+  MarketplaceProduct,
+  MarketplaceStore,
+  OrderStatus,
+  PaymentStatus,
+  ProductStatus,
+  StorePublishStatus,
+} from '../src/types/marketplace';
 import type { LegalDocId } from '../src/utils/legalLogic';
 import {
   computeCategoryBreakdown,
@@ -70,6 +80,7 @@ import { CommsMediaOpsSection } from './components/CommsMediaOpsSection';
 import { VerificationRequestsSection } from './components/VerificationRequestsSection';
 import { CategoriesSection } from './components/CategoriesSection';
 import { HashtagsSection } from './components/HashtagsSection';
+import { CommerceOpsSection } from './components/CommerceOpsSection';
 
 export type AdminSectionId =
   | 'overview'
@@ -77,6 +88,7 @@ export type AdminSectionId =
   | 'categories'
   | 'hashtags'
   | 'publisher'
+  | 'commerce'
   | 'members'
   | 'users'
   | 'moderation'
@@ -256,6 +268,51 @@ interface AdminViewProps {
     decision: 'approved' | 'rejected',
     note?: string
   ) => Promise<{ ok: boolean; error?: string }>;
+  marketplaceStores?: MarketplaceStore[];
+  marketplaceProducts?: MarketplaceProduct[];
+  marketplaceOrders?: MarketplaceOrder[];
+  onSeedMarketplaceShowroom?: () => Promise<{ ok: boolean; count?: number; error?: string }>;
+  onSaveMarketplaceStore?: (input: {
+    id?: string;
+    slug: string;
+    name: string;
+    tagline: string;
+    ownerUid: string;
+    ownerHandle: string;
+    logoUrl: string;
+    bannerUrl: string;
+    category: string;
+    currency: string;
+    publishStatus: StorePublishStatus;
+    externalStoreId?: string;
+    verified: boolean;
+    featured: boolean;
+    isCreate: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  onSaveMarketplaceProduct?: (input: {
+    id?: string;
+    storeId: string;
+    storeName: string;
+    storeSlug: string;
+    ownerUid: string;
+    title: string;
+    description: string;
+    category: string;
+    priceCents: number;
+    compareAtPriceCents?: number;
+    currency: string;
+    imageUrl: string;
+    stock: number;
+    status: ProductStatus;
+    featured: boolean;
+    tag?: string;
+    isCreate: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  onDeleteMarketplaceProduct?: (productId: string) => Promise<{ ok: boolean; error?: string }>;
+  onUpdateMarketplaceOrder?: (
+    orderId: string,
+    updates: { status: OrderStatus; paymentStatus: PaymentStatus }
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const SECTION_NAV: Array<{
@@ -268,6 +325,7 @@ const SECTION_NAV: Array<{
   { id: 'categories', label: 'Categories', icon: FolderKanban },
   { id: 'hashtags', label: 'Hashtags', icon: Hash },
   { id: 'publisher', label: 'Publisher Hub', icon: Sparkles },
+  { id: 'commerce', label: 'Marketplace & Commerce', icon: ShoppingBag },
   { id: 'members', label: 'Team & Roles', icon: ShieldAlert },
   { id: 'users', label: 'Community Users', icon: Users },
   { id: 'moderation', label: 'Feed & Stories', icon: FileWarning },
@@ -359,8 +417,27 @@ export function AdminView({
   onDeleteR2Object,
   verificationRequests = [],
   onReviewVerificationRequest,
+  marketplaceStores = [],
+  marketplaceProducts = [],
+  marketplaceOrders = [],
+  onSeedMarketplaceShowroom,
+  onSaveMarketplaceStore,
+  onSaveMarketplaceProduct,
+  onDeleteMarketplaceProduct,
+  onUpdateMarketplaceOrder,
 }: AdminViewProps) {
-  const [section, setSection] = useState<AdminSectionId>('overview');
+  const [section, setSection] = useState<AdminSectionId>(() => {
+    if (typeof window === 'undefined') return 'overview';
+    const params = new URLSearchParams(window.location.search || '');
+    if (
+      params.get('crossAuth') === 'true' ||
+      params.get('tab') === 'commerce' ||
+      params.get('section') === 'commerce'
+    ) {
+      return 'commerce';
+    }
+    return 'overview';
+  });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [adminProfileModalOpen, setAdminProfileModalOpen] = useState(false);
@@ -695,14 +772,19 @@ export function AdminView({
               const pendingVerifications = verificationRequests.filter(
                 (r) => r.status === 'pending'
               ).length;
+              const pendingOrders = marketplaceOrders.filter(
+                (o) => o.status === 'PENDING'
+              ).length;
               const badgeCount =
                 item.id === 'verification'
                   ? pendingVerifications
-                  : item.id === 'reports'
-                    ? metrics.openReports + metrics.pendingAppeals
-                    : item.id === 'governance'
-                      ? metrics.pendingInquiries
-                      : 0;
+                  : item.id === 'commerce'
+                    ? pendingOrders
+                    : item.id === 'reports'
+                      ? metrics.openReports + metrics.pendingAppeals
+                      : item.id === 'governance'
+                        ? metrics.pendingInquiries
+                        : 0;
 
               return (
                 <button
@@ -927,14 +1009,19 @@ export function AdminView({
               const pendingVerifications = verificationRequests.filter(
                 (r) => r.status === 'pending'
               ).length;
+              const pendingOrders = marketplaceOrders.filter(
+                (o) => o.status === 'PENDING'
+              ).length;
               const badgeCount =
                 item.id === 'verification'
                   ? pendingVerifications
-                  : item.id === 'reports'
-                    ? metrics.openReports + metrics.pendingAppeals
-                    : item.id === 'governance'
-                      ? metrics.pendingInquiries
-                      : 0;
+                  : item.id === 'commerce'
+                    ? pendingOrders
+                    : item.id === 'reports'
+                      ? metrics.openReports + metrics.pendingAppeals
+                      : item.id === 'governance'
+                        ? metrics.pendingInquiries
+                        : 0;
               return (
                 <button
                   key={item.id}
@@ -1046,6 +1133,39 @@ export function AdminView({
               onPublishPost={onPublishPost}
               onPublishStory={onPublishStory}
               onPublishAnnouncement={onPublishAnnouncement}
+            />
+          )}
+
+          {section === 'commerce' && (
+            <CommerceOpsSection
+              currentProfile={currentProfile}
+              communityUsers={allMembers}
+              stores={marketplaceStores}
+              products={marketplaceProducts}
+              orders={marketplaceOrders}
+              marketplaceEnabled={featureFlags.marketplaceEnabled}
+              onToggleMarketplaceFlag={() => onToggleFeatureFlag('marketplaceEnabled')}
+              onUploadMedia={onUploadMedia}
+              onSeedShowroom={
+                onSeedMarketplaceShowroom ||
+                (async () => ({ ok: false, error: 'Seeding unavailable.' }))
+              }
+              onSaveStore={
+                onSaveMarketplaceStore ||
+                (async () => ({ ok: false, error: 'Store management unavailable.' }))
+              }
+              onSaveProduct={
+                onSaveMarketplaceProduct ||
+                (async () => ({ ok: false, error: 'Product management unavailable.' }))
+              }
+              onDeleteProduct={
+                onDeleteMarketplaceProduct ||
+                (async () => ({ ok: false, error: 'Product deletion unavailable.' }))
+              }
+              onUpdateOrder={
+                onUpdateMarketplaceOrder ||
+                (async () => ({ ok: false, error: 'Order update unavailable.' }))
+              }
             />
           )}
 

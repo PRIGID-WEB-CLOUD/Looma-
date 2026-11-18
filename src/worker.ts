@@ -83,6 +83,19 @@ import {
   sniffMediaSignature,
   type R2Config,
 } from './utils/storageLogic.ts';
+import {
+  buildCommerceUpstreamUrl,
+  isBlockedPublicCommercePath,
+  parseCommerceConfig,
+  requiresVerifiedBuyerAuth,
+  resolveTenantForwardHeaders,
+} from './utils/commerceProxyLogic.ts';
+import {
+  buildFallbackLinkPreview,
+  extractLinkMetadataFromHtml,
+  isSafePublicPreviewUrl,
+  type LinkPreviewMetadata,
+} from './utils/linkPreviewLogic.ts';
 
 export interface WorkerEnv {
   ASSETS?: Fetcher;
@@ -113,6 +126,10 @@ export interface WorkerEnv {
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
   GEMINI_API_KEY?: string;
+  COMMERCE_API_URL?: string;
+  COMMERCE_DEFAULT_STORE_ID?: string;
+  COMMERCE_PUBLISHABLE_KEY?: string;
+  COMMERCE_ADMIN_DASHBOARD_URL?: string;
 }
 
 type AppVariables = {
@@ -372,7 +389,7 @@ export function createWorkerApp() {
       c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       c.header(
         'Access-Control-Allow-Headers',
-        'Authorization, Content-Type, X-Content-Type, X-Filename, X-Folder, X-Call-Session-Token, X-Idempotency-Key'
+        'Authorization, Content-Type, X-Content-Type, X-Filename, X-Folder, X-Call-Session-Token, X-Idempotency-Key, X-Store-Id, X-Publishable-Key, X-Api-Key'
       );
     } else if (reqOrigin) {
       if (c.req.method === 'OPTIONS') {
@@ -1627,6 +1644,288 @@ export function createWorkerApp() {
     }
   });
 
+  // --- Marketplace & Ecommerce Reverse Proxy Endpoints ---
+  app.get('/api/commerce/status', (c) => {
+    const cfg = parseCommerceConfig(c.env);
+    return c.json({
+      configured: Boolean(cfg.apiUrl),
+      upstreamConfigured: Boolean(cfg.apiUrl),
+      defaultStoreId: cfg.defaultStoreId || null,
+      hasPublishableKey: Boolean(cfg.publishableKey),
+      adminDashboardUrl: cfg.adminDashboardUrl || null,
+    });
+  });
+
+  const forwardCommerceRequest = async (
+    c: Context<{ Bindings: WorkerEnv; Variables: AppVariables }>,
+    mountPrefix: '/api/marketplace' | '/api/commerce' | '/api/commerce/admin',
+    options?: { attachAdminIdentity?: boolean }
+  ): Promise<Response> => {
+    const cfg = parseCommerceConfig(c.env);
+    if (!cfg.apiUrl) {
+      return c.json(
+        {
+          code: 'COMMERCE_PROXY_UNCONFIGURED',
+          error:
+            'External Commerce API URL (COMMERCE_API_URL) is not configured. Using Looma Marketplace Firestore mode.',
+        },
+        503
+      );
+    }
+
+    const upstreamUrl = buildCommerceUpstreamUrl(cfg.apiUrl, mountPrefix, c.req.url);
+    const forwardHeaders = new Headers();
+    const tenantHeaders = resolveTenantForwardHeaders({
+      reqHeaders: c.req.raw.headers,
+      requestUrl: c.req.url,
+      defaultStoreId: cfg.defaultStoreId,
+      defaultPublishableKey: cfg.publishableKey,
+    });
+    for (const [key, value] of Object.entries(tenantHeaders)) {
+      forwardHeaders.set(key, value);
+    }
+
+    const contentType = c.req.header('content-type');
+    if (contentType) {
+      forwardHeaders.set('Content-Type', contentType);
+    }
+    const acceptHeader = c.req.header('accept');
+    if (acceptHeader) {
+      forwardHeaders.set('Accept', acceptHeader);
+    }
+    const idempotencyKey = c.req.header('x-idempotency-key');
+    if (idempotencyKey) {
+      forwardHeaders.set('X-Idempotency-Key', idempotencyKey);
+    }
+
+    const authToken = c.get('authToken');
+    const authUser = c.get('authUser');
+    if (authToken) {
+      forwardHeaders.set('Authorization', `Bearer ${authToken}`);
+    } else {
+      const incomingAuth = c.req.header('authorization');
+      if (incomingAuth) {
+        forwardHeaders.set('Authorization', incomingAuth);
+      }
+    }
+
+    if (options?.attachAdminIdentity && authUser) {
+      forwardHeaders.set('X-Looma-Admin-Uid', authUser.uid);
+      if (authUser.email) {
+        forwardHeaders.set('X-Looma-Admin-Email', authUser.email);
+      }
+    }
+
+    const method = c.req.method.toUpperCase();
+    const hasBody = method !== 'GET' && method !== 'HEAD';
+    const bodyBuffer = hasBody ? await c.req.arrayBuffer() : undefined;
+
+    try {
+      const upstreamRes = await fetch(upstreamUrl, {
+        method,
+        headers: forwardHeaders,
+        body: bodyBuffer && bodyBuffer.byteLength > 0 ? bodyBuffer : undefined,
+      });
+
+      const responseHeaders = new Headers();
+      const upstreamType = upstreamRes.headers.get('content-type');
+      if (upstreamType) {
+        responseHeaders.set('Content-Type', upstreamType);
+      }
+      responseHeaders.set('X-Content-Type-Options', 'nosniff');
+      responseHeaders.set('Cache-Control', 'no-store');
+
+      return new Response(upstreamRes.body, {
+        status: upstreamRes.status,
+        headers: responseHeaders,
+      });
+    } catch (err) {
+      console.error('[worker/commerce/proxy] Upstream request failed:', err);
+      return c.json(
+        {
+          code: 'COMMERCE_UPSTREAM_UNREACHABLE',
+          error: 'Unable to reach the configured Commerce API upstream server.',
+        },
+        502
+      );
+    }
+  };
+
+  app.all('/api/marketplace/*', async (c) => {
+    const rateKey = getRateLimitClientKey(c);
+    const rate = rateLimiter.check(`marketplace:${rateKey}`, 120, 60_000);
+    if (!rate.allowed) {
+      return c.json({ error: 'Marketplace rate limit exceeded.' }, 429);
+    }
+    if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      return requireVerifiedAuth(c, async () => {
+        return;
+      }).then((maybeDenied) => {
+        if (maybeDenied instanceof Response) return maybeDenied;
+        return forwardCommerceRequest(c, '/api/marketplace');
+      });
+    }
+    return forwardCommerceRequest(c, '/api/marketplace');
+  });
+
+  app.all('/api/commerce/admin/*', requireVerifiedAuth, async (c) => {
+    const isAdmin = await verifyAdminRequest(c);
+    if (!isAdmin) {
+      return c.json({ error: 'Forbidden: administrator access required.' }, 403);
+    }
+    return forwardCommerceRequest(c, '/api/commerce/admin', {
+      attachAdminIdentity: true,
+    });
+  });
+
+  app.all('/api/commerce/*', async (c) => {
+    const subpath = c.req.path.replace(/^\/api\/commerce/, '') || '/';
+    if (isBlockedPublicCommercePath(subpath)) {
+      return c.json(
+        {
+          error:
+            'Forbidden: administrative commerce endpoints must be accessed via /api/commerce/admin/*.',
+        },
+        403
+      );
+    }
+
+    if (requiresVerifiedBuyerAuth(c.req.method, subpath)) {
+      let authorized = false;
+      const maybeDenied = await requireVerifiedAuth(c, async () => {
+        authorized = true;
+      });
+      if (!authorized) {
+        return (
+          maybeDenied ||
+          c.json({ error: 'Authentication required for commerce actions.' }, 401)
+        );
+      }
+    }
+
+    const rate = rateLimiter.check(`commerce:${getRateLimitClientKey(c)}`, 120, 60_000);
+    if (!rate.allowed) {
+      return c.json({ error: 'Commerce API rate limit exceeded.' }, 429);
+    }
+
+    return forwardCommerceRequest(c, '/api/commerce');
+  });
+
+  // Server-side link metadata preview extractor for text + link posts
+  const linkPreviewCache = new Map<string, { expiresAt: number; data: LinkPreviewMetadata }>();
+
+  app.get('/api/link-preview', async (c) => {
+    const rate = rateLimiter.check(`link_preview:${getRateLimitClientKey(c)}`, 60, 60_000);
+    if (!rate.allowed) {
+      return c.json({ error: 'Link preview rate limit exceeded.' }, 429);
+    }
+
+    const rawUrl = (c.req.query('url') || '').trim();
+    const safety = isSafePublicPreviewUrl(rawUrl);
+    if (!safety.valid || !safety.parsed) {
+      return c.json({ error: safety.reason || 'Invalid or unsafe URL.' }, 400);
+    }
+
+    const canonicalUrl = safety.parsed.href;
+    const cached = linkPreviewCache.get(canonicalUrl);
+    if (cached && cached.expiresAt > Date.now()) {
+      return c.json({ ok: true, preview: cached.data });
+    }
+
+    const saveCache = (data: LinkPreviewMetadata) => {
+      if (linkPreviewCache.size >= 250) {
+        const firstKey = linkPreviewCache.keys().next().value;
+        if (firstKey) linkPreviewCache.delete(firstKey);
+      }
+      linkPreviewCache.set(canonicalUrl, {
+        expiresAt: Date.now() + 15 * 60_000,
+        data,
+      });
+    };
+
+    try {
+      const upstream = await fetch(canonicalUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,image/*,video/*;q=0.8,*/*;q=0.5',
+          'User-Agent': 'Mozilla/5.0 (compatible; LoomaLinkPreview/1.0)',
+        },
+      });
+
+      const finalUrl = upstream.url || canonicalUrl;
+      const finalCheck = isSafePublicPreviewUrl(finalUrl);
+      if (!finalCheck.valid) {
+        return c.json({ error: 'Redirect target is not a public URL.' }, 400);
+      }
+
+      const contentType = (upstream.headers.get('content-type') || '').toLowerCase();
+      if (contentType.startsWith('image/')) {
+        const preview: LinkPreviewMetadata = {
+          ...buildFallbackLinkPreview(finalUrl),
+          url: canonicalUrl,
+          finalUrl,
+          imageUrl: finalUrl,
+          mediaKind: 'image',
+        };
+        saveCache(preview);
+        return c.json({ ok: true, preview });
+      }
+      if (contentType.startsWith('video/')) {
+        const preview: LinkPreviewMetadata = {
+          ...buildFallbackLinkPreview(finalUrl),
+          url: canonicalUrl,
+          finalUrl,
+          videoUrl: finalUrl,
+          mediaKind: 'video',
+        };
+        saveCache(preview);
+        return c.json({ ok: true, preview });
+      }
+
+      if (!upstream.ok || (!contentType.includes('html') && !contentType.includes('xhtml'))) {
+        const fallback = buildFallbackLinkPreview(canonicalUrl);
+        saveCache(fallback);
+        return c.json({ ok: true, preview: fallback });
+      }
+
+      const reader = upstream.body?.getReader();
+      let html = '';
+      if (reader) {
+        const decoder = new TextDecoder();
+        let totalBytes = 0;
+        const maxBytes = 256 * 1024;
+        while (totalBytes < maxBytes) {
+          const { done, value } = await reader.read();
+          if (done || !value) break;
+          totalBytes += value.byteLength;
+          html += decoder.decode(value, { stream: true });
+          if (/<\/head>/i.test(html)) break;
+        }
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+      } else {
+        html = (await upstream.text()).slice(0, 256 * 1024);
+      }
+
+      const extracted = extractLinkMetadataFromHtml(html, finalUrl);
+      const preview: LinkPreviewMetadata = {
+        ...extracted,
+        url: canonicalUrl,
+        finalUrl,
+      };
+      saveCache(preview);
+      return c.json({ ok: true, preview });
+    } catch {
+      const fallback = buildFallbackLinkPreview(canonicalUrl);
+      return c.json({ ok: true, preview: fallback });
+    }
+  });
+
   // Always return clean JSON 404 for unknown /api/* paths
   app.all('/api/*', (c) => {
     const ipKey = getRateLimitClientKey(c);
@@ -1661,6 +1960,12 @@ export function createWorkerApp() {
       }
       if (pathname === '/admin/') {
         return fetchAssetHtml('/admin/index.html');
+      }
+      if (pathname === '/seller') {
+        return c.redirect(`/seller/${url.search}`, 301);
+      }
+      if (pathname.startsWith('/seller')) {
+        return fetchAssetHtml('/index.html');
       }
       if (pathname === '/landingpage' || pathname === '/landing') {
         return c.redirect(`/landingpage/${url.search}`, 301);

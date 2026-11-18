@@ -2,7 +2,7 @@ import type { TabId } from '../types/social';
 import type { AuthMode } from '../components/AuthView';
 import { getLegalRoutePath, parseLegalRoute, type LegalDocId } from './legalLogic';
 
-export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal' | 'admin' | 'landing';
+export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal' | 'admin' | 'landing' | 'seller';
 
 export type ProtectedWorkspaceTab = Exclude<TabId, 'public-profile' | 'auth'>;
 
@@ -19,6 +19,7 @@ export interface RouteAccessResolution {
 
 const TAB_PATH_MAP: Record<ProtectedWorkspaceTab, string> = {
   feed: '/feed',
+  marketplace: '/marketplace',
   connections: '/connections',
   messages: '/messages',
   notifications: '/notifications',
@@ -28,6 +29,7 @@ const TAB_PATH_MAP: Record<ProtectedWorkspaceTab, string> = {
 
 const PROTECTED_TAB_BY_PATH: Record<string, { tab: ProtectedWorkspaceTab; label: string }> = {
   '/feed': { tab: 'feed', label: 'Feed posts' },
+  '/marketplace': { tab: 'marketplace', label: 'Marketplace storefront' },
   '/connections': { tab: 'connections', label: 'Friends & connections' },
   '/messages': { tab: 'messages', label: 'Messages' },
   '/notifications': { tab: 'notifications', label: 'Notifications' },
@@ -92,9 +94,13 @@ export function resolveRouteAccess(input: {
   const pathname = normalizeAppPathname(input.pathname);
   const search = input.search || '';
 
-  // Dedicated Admin and Landing page routes resolve directly to their surfaces without redirect bouncing
+  // Dedicated Admin, Seller (Looma Commerce), and Landing page routes resolve directly to their surfaces without redirect bouncing
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     return { surface: 'admin' };
+  }
+
+  if (pathname === '/seller' || pathname.startsWith('/seller/')) {
+    return { surface: 'seller' };
   }
 
   if (

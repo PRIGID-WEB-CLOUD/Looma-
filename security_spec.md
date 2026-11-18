@@ -10,6 +10,7 @@
 7. **Server-Derived / Protected Follower Counters**: Clients cannot arbitrarily mutate `UserProfile.followersCount` via direct profile updates, and self-follow (`userId == targetUid`) is denied.
 8. **Admin RBAC & Audit Immutability**: Platform administration (`isAdmin()`) requires `request.auth.token.email_verified == true` AND either a verified allowlisted operator email or an explicit `/admins/{uid}` record. Admins cannot suspend/demote themselves (`targetUid != request.auth.uid`), and `/adminAuditLogs/{logId}` entries are strictly append-only (`update, delete: if false`).
 9. **Verification Badge Authority**: Users cannot self-assign `UserProfile.isVerified = true` or approve `/verificationRequests/{requestId}`. Users may only submit `status: 'pending'` verification requests with 1–2 valid HTTP/HTTPS links; only `isAdmin()` may transition a pending request to `'approved'` or `'rejected'` and grant `isVerified` on `/users/{userId}`.
+10. **Marketplace Multi-Tenancy & Order PII Isolation**: Public storefront reads on `/marketplaceStores` and `/marketplaceProducts` require `publishStatus == 'PUBLISHED'` / `status == 'ACTIVE'` unless caller is the store `ownerUid` or `isAdmin()`. Store `verified` and `featured` flags, as well as `SUSPENDED` overrides, are strictly `isAdmin()`-governed. `/marketplaceOrders` contains shipping PII and is readable/listable strictly by `buyerUid`, `storeOwnerUid` (verified on create against the parent `/marketplaceStores/{storeId}.ownerUid`), or `isAdmin()`.
 
 ## 2. The "Dirty Dozen+" Attack Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Post Write**: `POST /posts/p1` with `request.auth == null` -> Denied.
@@ -32,4 +33,6 @@
 18. **Audit Log Tampering**: Even an administrator attempting `UPDATE` or `DELETE` on `/adminAuditLogs/{logId}` -> Denied (`if false`).
 19. **Self-Verification Escalation**: User setting `isVerified: true` on `/users/{uid}` or creating `/verificationRequests/{id}` with `status: 'approved'` -> Denied.
 20. **Re-Reviewing Closed Verification Request**: Updating `/verificationRequests/{id}` once `status` is `'approved'` or `'rejected'` -> Denied by terminal lock `existing().status == 'pending'`.
-
+21. **Marketplace Order PII Scraping**: Any third-party user attempting `GET` or `LIST` on `/marketplaceOrders` where neither `buyerUid` nor `storeOwnerUid` matches `request.auth.uid` -> Denied.
+22. **Fake Store Product Injection**: Attacker creating `/marketplaceProducts/p1` pointing to another merchant's `storeId` -> Denied by Master Gate `get(/marketplaceStores/$(storeId)).data.ownerUid == request.auth.uid`.
+23. **Self-Paid Order Spoofing**: Buyer creating `/marketplaceOrders/o1` with `paymentStatus: 'paid'` or `status: 'DELIVERED'` directly via client SDK -> Denied.

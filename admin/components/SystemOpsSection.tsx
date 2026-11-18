@@ -43,6 +43,11 @@ const FLAG_DEFS: Array<{
     description: 'Enable live audio/video SFU call rooms across group and direct chats.',
   },
   {
+    key: 'marketplaceEnabled',
+    label: 'Marketplace Storefront',
+    description: 'Enable the curated Marketplace & Checkout experience across web and mobile.',
+  },
+  {
     key: 'registrationsOpen',
     label: 'New Member Registrations',
     description: 'Allow new accounts to complete profile onboarding.',

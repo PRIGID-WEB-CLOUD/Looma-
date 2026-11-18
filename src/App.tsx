@@ -7,6 +7,7 @@ import {
   Moon,
   Settings,
   ShieldAlert,
+  ShoppingBag,
   Sun,
   Users,
   X,
@@ -98,8 +99,14 @@ const PublicProfileView = lazy(() =>
     default: m.PublicProfileView,
   }))
 );
+const MarketplaceView = lazy(() =>
+  import('./components/MarketplaceView').then((m) => ({
+    default: m.MarketplaceView,
+  }))
+);
 const AdminApp = lazy(() => import('../admin/AdminApp'));
 const LandingPageApp = lazy(() => import('../landingpage/LandingPageApp'));
+const LoomaCommerceDashboard = lazy(() => import('./components/LoomaCommerceDashboard'));
 import { isAllowlistedAdminEmail } from '../admin/adminLogic';
 
 function RouteLoadingFallback() {
@@ -159,7 +166,7 @@ export default function App() {
   const [previewOnboarding, setPreviewOnboarding] =
     useState<boolean>(onboardingParam);
   const [publicProfileReturnTab, setPublicProfileReturnTab] = useState<
-    'feed' | 'connections' | 'profile' | 'messages'
+    'feed' | 'connections' | 'profile' | 'messages' | 'marketplace'
   >('feed');
   const [composerOpen, setComposerOpen] = useState(false);
   const [addStoryOpen, setAddStoryOpen] = useState(false);
@@ -535,7 +542,7 @@ export default function App() {
   const handleOpenPublicProfile = async (
     targetUid: string,
     fallbackPost?: Post,
-    returnTab: 'feed' | 'connections' | 'profile' | 'messages' = 'feed'
+    returnTab: 'feed' | 'connections' | 'profile' | 'messages' | 'marketplace' = 'feed'
   ) => {
     if (targetUid === store.profile.uid) {
       selectWorkspaceTab('profile');
@@ -666,6 +673,23 @@ export default function App() {
       <div className="looma-stage-enter">
         <Suspense fallback={<RouteLoadingFallback />}>
           <AdminApp embedded />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (routeAccess.surface === 'seller') {
+    return (
+      <div className="looma-stage-enter">
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <LoomaCommerceDashboard
+            profile={store.profile}
+            accountEmail={store.firebaseUser?.email || null}
+            isFirebaseBacked={Boolean(store.firebaseUser) && !store.isLocalAutostart}
+            onReturnToMarketplace={() => {
+              navigateToPath('/marketplace');
+            }}
+          />
         </Suspense>
       </div>
     );
@@ -1133,6 +1157,22 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => selectWorkspaceTab('marketplace')}
+              className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === 'marketplace'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <ShoppingBag className="w-4 h-4" aria-hidden="true" />
+                <span>Marketplace</span>
+              </span>
+              <span className="text-slate-400">Shop</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => selectWorkspaceTab('settings')}
               className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === 'settings'
@@ -1165,7 +1205,9 @@ export default function App() {
           className={
             isMessagesFullScreen
               ? 'w-full flex-1 min-h-0 flex flex-col pb-14 md:pb-0'
-              : 'flex-1 min-w-0 max-w-2xl mx-auto lg:mx-0'
+              : activeTab === 'marketplace'
+                ? 'flex-1 min-w-0'
+                : 'flex-1 min-w-0 max-w-2xl mx-auto lg:mx-0'
           }
         >
           {activeTab === 'feed' && (
@@ -1211,6 +1253,59 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'marketplace' && (
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <MarketplaceView
+                profile={store.profile}
+                knownUsers={[store.profile, ...store.allKnownChatUsers]}
+                followedUserIds={store.followedUserIds}
+                threads={store.threads}
+                accountEmail={store.firebaseUser?.email || null}
+                isFirebaseBacked={
+                  Boolean(store.firebaseUser) && !store.isLocalAutostart
+                }
+                initialStoreSlug={
+                  searchParams?.get('store') || searchParams?.get('storeId') || null
+                }
+                marketplaceEnabled={store.featureFlags.marketplaceEnabled ?? true}
+                onMessageSeller={async (sellerUid, initialMessage, listingContext) => {
+                  if (!sellerUid || sellerUid === store.profile.uid) return;
+                  const cached = store.allKnownChatUsers.find(
+                    (u) => u.uid === sellerUid
+                  );
+                  const targetUser =
+                    cached || (await store.fetchPublicUserProfile(sellerUid));
+                  if (!targetUser) {
+                    handleOpenPublicProfile(sellerUid, undefined, 'marketplace');
+                    return;
+                  }
+                  const thread = await store.startDirectThread(targetUser);
+                  if (initialMessage && initialMessage.trim()) {
+                    const formatted = listingContext
+                      ? `${initialMessage.trim()}\n[${listingContext.title} · ${listingContext.priceFormatted}]`
+                      : initialMessage.trim();
+                    await store.sendChatMessage(thread, formatted);
+                    setActiveChatId(thread.id);
+                    return;
+                  }
+                  setActiveChatId(thread.id);
+                  selectWorkspaceTab('messages');
+                }}
+                onToggleFollowSeller={(sellerUid) => store.toggleFollowUser(sellerUid)}
+                onOpenInbox={() => selectWorkspaceTab('messages')}
+                onOpenChatThread={(threadId) => {
+                  if (threadId) {
+                    setActiveChatId(threadId);
+                  }
+                  selectWorkspaceTab('messages');
+                }}
+                onOpenSellerProfile={(sellerUid) =>
+                  handleOpenPublicProfile(sellerUid, undefined, 'marketplace')
+                }
+              />
+            </Suspense>
+          )}
+
           {activeTab === 'public-profile' && selectedPublicProfile && (() => {
             const liveCreator =
               resolveLiveProfile(
@@ -1244,7 +1339,9 @@ export default function App() {
                         ? 'Back to Profile'
                         : publicProfileReturnTab === 'messages'
                           ? 'Back to Messages'
-                          : 'Back to Feed'
+                          : publicProfileReturnTab === 'marketplace'
+                            ? 'Back to Marketplace'
+                            : 'Back to Feed'
                   }
                   onToggleFollow={store.toggleFollowUser}
                   onMessage={handleOpenDm}
@@ -1516,7 +1613,7 @@ export default function App() {
         </div>
 
         {/* Right Discovery & Active Chats Sidebar (Desktop) */}
-        {activeTab !== 'messages' && (
+        {activeTab !== 'messages' && activeTab !== 'marketplace' && (
           <aside
             aria-label="Community creators and active conversations"
             className="hidden xl:flex xl:w-80 shrink-0 flex-col gap-4 sticky top-23"

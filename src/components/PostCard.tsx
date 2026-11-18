@@ -39,6 +39,10 @@ import {
   validateCommentInput,
   validatePostInput,
 } from '../utils/socialLogic';
+import {
+  fetchDerivedLinkPreview,
+  type LinkPreviewMetadata,
+} from '../utils/linkPreviewLogic';
 import { Avatar } from './Avatar';
 import { ExpandablePostText } from './ExpandablePostText';
 import { MediaViewerModal } from './MediaViewerModal';
@@ -312,10 +316,19 @@ export function PostCard({
     }
   };
 
+  const hasUploadedImage = Boolean(post.imageUrl && post.imageUrl.trim());
+  const hasUploadedVideo = Boolean(post.videoUrl && post.videoUrl.trim());
+  const hasUploadedAudio = Boolean(post.audioUrl && post.audioUrl.trim());
+  const hasUploadedMedia = hasUploadedImage || hasUploadedVideo || hasUploadedAudio;
+
   const captionUrl = useMemo(() => extractFirstUrl(post.caption), [post.caption]);
 
   const parsedVideo = useMemo(() => {
-    const raw = post.videoUrl || post.linkUrl || captionUrl || '';
+    const raw = hasUploadedVideo
+      ? post.videoUrl || ''
+      : !hasUploadedMedia
+        ? post.linkUrl || captionUrl || ''
+        : '';
     if (!raw) return null;
     const parsed = parseRichUrl(raw, post.mediaTitle || undefined);
     if (
@@ -327,19 +340,41 @@ export function PostCard({
       return parsed;
     }
     return null;
-  }, [captionUrl, post.linkUrl, post.mediaTitle, post.videoUrl]);
+  }, [captionUrl, hasUploadedMedia, hasUploadedVideo, post.linkUrl, post.mediaTitle, post.videoUrl]);
 
   const parsedAudio = useMemo(() => {
-    const raw = post.audioUrl || post.linkUrl || captionUrl || '';
+    const raw = hasUploadedAudio
+      ? post.audioUrl || ''
+      : !hasUploadedMedia
+        ? post.linkUrl || captionUrl || ''
+        : '';
     if (!raw) return null;
     const parsed = parseRichUrl(raw, post.mediaTitle || undefined);
     return parsed && parsed.kind === 'audio' ? parsed : null;
-  }, [captionUrl, post.audioUrl, post.linkUrl, post.mediaTitle]);
+  }, [captionUrl, hasUploadedAudio, hasUploadedMedia, post.audioUrl, post.linkUrl, post.mediaTitle]);
 
   const parsedLink = useMemo(() => resolvePostLinkPreview(post), [post]);
 
+  const [derivedLinkMeta, setDerivedLinkMeta] = useState<LinkPreviewMetadata | null>(null);
+  const [derivedImgFailed, setDerivedImgFailed] = useState(false);
+
+  useEffect(() => {
+    setDerivedImgFailed(false);
+    if (hasUploadedMedia || !parsedLink || parsedLink.kind !== 'link') {
+      setDerivedLinkMeta(null);
+      return;
+    }
+    let active = true;
+    void fetchDerivedLinkPreview(parsedLink.url).then((meta) => {
+      if (active) setDerivedLinkMeta(meta);
+    });
+    return () => {
+      active = false;
+    };
+  }, [hasUploadedMedia, parsedLink]);
+
   const resolvedImageUrl = normalizeAssetUrl(
-    post.imageUrl || (parsedLink?.kind === 'image' ? parsedLink.url : '')
+    post.imageUrl || (!hasUploadedMedia && parsedLink?.kind === 'image' ? parsedLink.url : '')
   );
 
   const localMediaDescriptor = useMemo(
@@ -771,29 +806,73 @@ export function PostCard({
         </div>
       )}
 
-      {/* Rich External Link Preview Card */}
-      {parsedLink && parsedLink.kind === 'link' && (
-        <a
+      {/* Rich External Link Preview Card (only for text + link posts without uploaded media) */}
+      {!hasUploadedMedia && parsedLink && parsedLink.kind === 'link' && (
+        <div
           data-testid="post-link-preview"
-          href={parsedLink.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3.5 block rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 hover:bg-slate-100 dark:hover:bg-slate-900 transition group"
+          className="mt-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 overflow-hidden"
         >
-          <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-            <span className="inline-flex items-center gap-1.5 truncate uppercase tracking-wider font-semibold">
-              <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
-              {parsedLink.hostname}
-            </span>
-            <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          </div>
-          <p className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
-            {parsedLink.displayTitle}
-          </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-            {parsedLink.url}
-          </p>
-        </a>
+          {derivedLinkMeta?.embedUrl ? (
+            <div className="aspect-video bg-black">
+              <iframe
+                src={derivedLinkMeta.embedUrl}
+                title={derivedLinkMeta.title || parsedLink.displayTitle}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="w-full h-full border-0"
+              />
+            </div>
+          ) : derivedLinkMeta?.videoUrl ? (
+            <video
+              src={derivedLinkMeta.videoUrl}
+              poster={derivedLinkMeta.imageUrl || undefined}
+              controls
+              playsInline
+              preload="metadata"
+              className="w-full max-h-[380px] bg-black block"
+            />
+          ) : derivedLinkMeta?.imageUrl && !derivedImgFailed ? (
+            <a
+              href={parsedLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block bg-slate-100 dark:bg-slate-900 overflow-hidden"
+            >
+              <img
+                src={derivedLinkMeta.imageUrl}
+                alt={derivedLinkMeta.title || parsedLink.displayTitle}
+                referrerPolicy="no-referrer"
+                onError={() => setDerivedImgFailed(true)}
+                className="w-full max-h-72 object-cover block"
+              />
+            </a>
+          ) : null}
+          <a
+            href={parsedLink.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block p-4 hover:bg-slate-100 dark:hover:bg-slate-900 transition group"
+          >
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+              <span className="inline-flex items-center gap-1.5 truncate uppercase tracking-wider font-semibold">
+                <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
+                {derivedLinkMeta?.siteName || parsedLink.hostname}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            </div>
+            <p className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
+              {derivedLinkMeta?.title || parsedLink.displayTitle}
+            </p>
+            {derivedLinkMeta?.description && (
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">
+                {derivedLinkMeta.description}
+              </p>
+            )}
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+              {parsedLink.url}
+            </p>
+          </a>
+        </div>
       )}
 
       {/* Action Bar */}

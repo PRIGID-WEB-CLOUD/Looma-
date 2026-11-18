@@ -471,13 +471,15 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'updatedBy', 'updatedAt'])
         && data.keys().hasOnly([
           'id', 'storiesEnabled', 'voiceNotesEnabled', 'callsEnabled',
-          'maintenanceMode', 'registrationsOpen', 'strictModerationQueue',
-          'hiddenPostIds', 'version', 'summary', 'rulesText', 'updatedBy', 'updatedAt'
+          'marketplaceEnabled', 'maintenanceMode', 'registrationsOpen',
+          'strictModerationQueue', 'hiddenPostIds', 'version', 'summary',
+          'rulesText', 'updatedBy', 'updatedAt'
         ])
         && isValidId(data.id)
         && (!('storiesEnabled' in data) || data.storiesEnabled is bool)
         && (!('voiceNotesEnabled' in data) || data.voiceNotesEnabled is bool)
         && (!('callsEnabled' in data) || data.callsEnabled is bool)
+        && (!('marketplaceEnabled' in data) || data.marketplaceEnabled is bool)
         && (!('maintenanceMode' in data) || data.maintenanceMode is bool)
         && (!('registrationsOpen' in data) || data.registrationsOpen is bool)
         && (!('strictModerationQueue' in data) || data.strictModerationQueue is bool)
@@ -576,6 +578,113 @@ service cloud.firestore {
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 40
         && data.description is string && data.description.size() <= 160
         && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMarketplaceSlug(slug) {
+      return slug is string && slug.size() >= 2 && slug.size() <= 64 && slug.matches('^[a-z0-9\\-]+$');
+    }
+
+    function isValidMarketplaceStore(data) {
+      return data.keys().hasAll([
+          'id', 'slug', 'name', 'tagline', 'ownerUid', 'ownerHandle',
+          'logoUrl', 'bannerUrl', 'category', 'currency', 'publishStatus',
+          'verified', 'featured', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'slug', 'name', 'tagline', 'ownerUid', 'ownerHandle',
+          'logoUrl', 'bannerUrl', 'category', 'currency', 'publishStatus',
+          'externalStoreId', 'verified', 'featured', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidMarketplaceSlug(data.slug)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.tagline is string && data.tagline.size() <= 180
+        && isValidId(data.ownerUid)
+        && isValidHandle(data.ownerHandle)
+        && data.logoUrl is string && data.logoUrl.size() <= 250000
+        && data.bannerUrl is string && data.bannerUrl.size() <= 250000
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
+        && data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 8
+        && data.publishStatus in ['DRAFT', 'PUBLISHED', 'SUSPENDED']
+        && (!('externalStoreId' in data) || (data.externalStoreId is string && data.externalStoreId.size() <= 128))
+        && data.verified is bool
+        && data.featured is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMarketplaceProduct(data) {
+      return data.keys().hasAll([
+          'id', 'storeId', 'storeName', 'storeSlug', 'ownerUid',
+          'title', 'description', 'category', 'priceCents', 'currency',
+          'imageUrl', 'stock', 'status', 'featured', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'storeId', 'storeName', 'storeSlug', 'ownerUid',
+          'title', 'description', 'category', 'priceCents', 'compareAtPriceCents',
+          'currency', 'imageUrl', 'stock', 'status', 'featured', 'tag',
+          'location', 'condition', 'galleryUrls',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.storeId)
+        && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
+        && isValidMarketplaceSlug(data.storeSlug)
+        && isValidId(data.ownerUid)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && data.description is string && data.description.size() <= 1000
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
+        && data.priceCents is int && data.priceCents >= 0 && data.priceCents <= 100000000
+        && (!('compareAtPriceCents' in data) || (data.compareAtPriceCents is int && data.compareAtPriceCents >= 0 && data.compareAtPriceCents <= 100000000))
+        && data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 8
+        && data.imageUrl is string && data.imageUrl.size() <= 600000
+        && data.stock is int && data.stock >= 0 && data.stock <= 1000000
+        && data.status in ['ACTIVE', 'DRAFT', 'ARCHIVED']
+        && data.featured is bool
+        && (!('tag' in data) || (data.tag is string && data.tag.size() <= 40))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 80))
+        && (!('condition' in data) || data.condition in ['New', 'Used - Like New', 'Used - Good', 'Used - Fair'])
+        && (!('galleryUrls' in data) || (data.galleryUrls is list && data.galleryUrls.size() <= 4 && (data.galleryUrls.size() == 0 || (data.galleryUrls[0] is string && data.galleryUrls[0].size() <= 600000))))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMarketplaceOrder(data) {
+      return data.keys().hasAll([
+          'id', 'buyerUid', 'buyerName', 'buyerEmail', 'storeId', 'storeName', 'storeOwnerUid',
+          'items', 'subtotalCents', 'shippingCents', 'totalCents', 'currency',
+          'paymentMethod', 'paymentStatus', 'status', 'shippingName', 'shippingPhone',
+          'shippingAddress', 'shippingCity', 'note', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'buyerUid', 'buyerName', 'buyerEmail', 'storeId', 'storeName', 'storeOwnerUid',
+          'items', 'subtotalCents', 'shippingCents', 'totalCents', 'currency',
+          'paymentMethod', 'paymentStatus', 'status', 'shippingName', 'shippingPhone',
+          'shippingAddress', 'shippingCity', 'note', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.buyerUid)
+        && data.buyerName is string && data.buyerName.size() >= 1 && data.buyerName.size() <= 80
+        && data.buyerEmail is string && data.buyerEmail.size() <= 200
+        && isValidId(data.storeId)
+        && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
+        && isValidId(data.storeOwnerUid)
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 25
+        && data.items[0] is map
+        && data.subtotalCents is int && data.subtotalCents >= 0 && data.subtotalCents <= 100000000
+        && data.shippingCents is int && data.shippingCents >= 0 && data.shippingCents <= 10000000
+        && data.totalCents is int && data.totalCents >= 0 && data.totalCents <= 110000000
+        && data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 8
+        && data.paymentMethod in ['card', 'cod', 'wallet']
+        && data.paymentStatus in ['pending', 'paid', 'refunded']
+        && data.status in ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED']
+        && data.shippingName is string && data.shippingName.size() >= 1 && data.shippingName.size() <= 80
+        && data.shippingPhone is string && data.shippingPhone.size() >= 3 && data.shippingPhone.size() <= 40
+        && data.shippingAddress is string && data.shippingAddress.size() >= 3 && data.shippingAddress.size() <= 240
+        && data.shippingCity is string && data.shippingCity.size() >= 1 && data.shippingCity.size() <= 80
+        && data.note is string && data.note.size() <= 400
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -1262,6 +1371,154 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'status', 'reviewerUid', 'reviewerNote', 'updatedAt'
         ]);
+      allow delete: if false;
+    }
+
+    // --- Marketplace & E-Commerce Collections ---
+    match /marketplaceStores/{storeId} {
+      allow get: if isVerifiedUser()
+        && isValidId(storeId)
+        && (existing().publishStatus == 'PUBLISHED' || existing().ownerUid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser()
+        && (resource.data.publishStatus == 'PUBLISHED' || resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(storeId)
+        && isValidMarketplaceStore(incoming())
+        && incoming().id == storeId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            incoming().ownerUid == request.auth.uid
+            && incoming().verified == false
+            && incoming().featured == false
+            && incoming().publishStatus in ['DRAFT', 'PUBLISHED']
+          )
+        );
+      allow update: if isVerifiedUser()
+        && isValidId(storeId)
+        && isValidMarketplaceStore(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            existing().ownerUid == request.auth.uid
+            && existing().publishStatus != 'SUSPENDED'
+            && incoming().verified == existing().verified
+            && incoming().featured == existing().featured
+            && incoming().publishStatus in ['DRAFT', 'PUBLISHED']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'slug', 'name', 'tagline', 'logoUrl', 'bannerUrl',
+              'category', 'currency', 'publishStatus', 'externalStoreId', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(storeId);
+    }
+
+    match /marketplaceProducts/{productId} {
+      allow get: if isVerifiedUser()
+        && isValidId(productId)
+        && (existing().status == 'ACTIVE' || existing().ownerUid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser()
+        && (resource.data.status == 'ACTIVE' || resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(productId)
+        && isValidMarketplaceProduct(incoming())
+        && incoming().id == productId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId))
+        && (
+          isAdmin()
+          || (
+            incoming().ownerUid == request.auth.uid
+            && incoming().featured == false
+            && get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.ownerUid == request.auth.uid
+          )
+        );
+      allow update: if isVerifiedUser()
+        && isValidId(productId)
+        && isValidMarketplaceProduct(incoming())
+        && incoming().id == existing().id
+        && incoming().storeId == existing().storeId
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            existing().ownerUid == request.auth.uid
+            && incoming().featured == existing().featured
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'storeName', 'storeSlug', 'title', 'description', 'category',
+              'priceCents', 'compareAtPriceCents', 'currency', 'imageUrl',
+              'stock', 'status', 'tag', 'location', 'condition', 'galleryUrls', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(productId)
+        && (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /marketplaceOrders/{orderId} {
+      allow get: if isVerifiedUser()
+        && isValidId(orderId)
+        && (
+          existing().buyerUid == request.auth.uid
+          || existing().storeOwnerUid == request.auth.uid
+          || isAdmin()
+        );
+      allow list: if isVerifiedUser()
+        && (
+          resource.data.buyerUid == request.auth.uid
+          || resource.data.storeOwnerUid == request.auth.uid
+          || isAdmin()
+        );
+      allow create: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidMarketplaceOrder(incoming())
+        && incoming().id == orderId
+        && incoming().buyerUid == request.auth.uid
+        && incoming().status == 'PENDING'
+        && incoming().paymentStatus == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId))
+        && get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.publishStatus == 'PUBLISHED'
+        && incoming().storeOwnerUid == get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.ownerUid;
+      allow update: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidMarketplaceOrder(incoming())
+        && incoming().id == existing().id
+        && incoming().buyerUid == existing().buyerUid
+        && incoming().storeId == existing().storeId
+        && incoming().storeOwnerUid == existing().storeOwnerUid
+        && incoming().items == existing().items
+        && incoming().subtotalCents == existing().subtotalCents
+        && incoming().shippingCents == existing().shippingCents
+        && incoming().totalCents == existing().totalCents
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            existing().storeOwnerUid == request.auth.uid
+            && !(existing().status in ['DELIVERED', 'CANCELLED'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])
+          )
+          || (
+            existing().buyerUid == request.auth.uid
+            && existing().status == 'PENDING'
+            && incoming().status == 'CANCELLED'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
       allow delete: if false;
     }
   }

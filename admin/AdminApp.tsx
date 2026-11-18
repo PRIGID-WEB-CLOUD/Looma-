@@ -31,6 +31,25 @@ import {
   updateAuthUserProfile,
 } from '../src/services/firebase';
 import { uploadMediaToCloudflareR2 } from '../src/services/storage';
+import {
+  deleteMarketplaceProductRecord,
+  saveMarketplaceProductRecord,
+  saveMarketplaceStoreRecord,
+  seedStarterMarketplaceShowroom,
+  subscribeAllMarketplaceOrdersAdmin,
+  subscribeAllMarketplaceProductsAdmin,
+  subscribeAllMarketplaceStoresAdmin,
+  updateMarketplaceOrderAdmin,
+} from '../src/services/commerce';
+import type {
+  MarketplaceOrder,
+  MarketplaceProduct,
+  MarketplaceStore,
+  OrderStatus,
+  PaymentStatus,
+  ProductStatus,
+  StorePublishStatus,
+} from '../src/types/marketplace';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
 import { ADMIN_SYNC_STORAGE_KEYS } from '../src/hooks/useSocialStore';
 import {
@@ -239,6 +258,9 @@ function AdminAppInner(_props: AdminAppProps) {
   const [r2Loading, setR2Loading] = useState(false);
   const [r2Error, setR2Error] = useState<string | null>(null);
   const [autoMaintenanceEnabled, setAutoMaintenanceEnabled] = useState(false);
+  const [marketplaceStores, setMarketplaceStores] = useState<MarketplaceStore[]>([]);
+  const [marketplaceProducts, setMarketplaceProducts] = useState<MarketplaceProduct[]>([]);
+  const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>([]);
 
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [healthProbes, setHealthProbes] = useState<SystemHealthProbe[]>(() => [
@@ -444,6 +466,31 @@ function AdminAppInner(_props: AdminAppProps) {
 
     setHealthProbes(probes);
     setCheckingHealth(false);
+  }, []);
+
+  // Handle Social Marketplace Cross-Authentication
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      if (params.get('crossAuth') === 'true') {
+        const socialUid = params.get('socialUid');
+        const socialName = params.get('socialName');
+        const socialHandle = params.get('socialHandle');
+        const socialEmail = params.get('socialEmail');
+        const socialAvatar = params.get('socialAvatar');
+        if (socialUid) {
+          const payload = {
+            uid: socialUid,
+            displayName: socialName || 'Marketplace Seller',
+            handle: socialHandle || 'seller',
+            email: socialEmail || '',
+            avatarUrl: socialAvatar || '',
+          };
+          localStorage.setItem('looma_social_cross_auth_v1', JSON.stringify(payload));
+        }
+      }
+    } catch {}
   }, []);
 
   // Firebase Auth subscription (always enforced)
@@ -1113,6 +1160,36 @@ function AdminAppInner(_props: AdminAppProps) {
           mirrorAdminStorage('looma_verification_requests_v1', sorted);
         },
         (err) => reportSyncError(err, 'verificationRequests')
+      )
+    );
+
+    unsubs.push(
+      subscribeAllMarketplaceStoresAdmin(
+        (items) => {
+          clearSyncError('marketplaceStores');
+          setMarketplaceStores(items);
+        },
+        (err) => reportSyncError(err, 'marketplaceStores')
+      )
+    );
+
+    unsubs.push(
+      subscribeAllMarketplaceProductsAdmin(
+        (items) => {
+          clearSyncError('marketplaceProducts');
+          setMarketplaceProducts(items);
+        },
+        (err) => reportSyncError(err, 'marketplaceProducts')
+      )
+    );
+
+    unsubs.push(
+      subscribeAllMarketplaceOrdersAdmin(
+        (items) => {
+          clearSyncError('marketplaceOrders');
+          setMarketplaceOrders(items);
+        },
+        (err) => reportSyncError(err, 'marketplaceOrders')
       )
     );
 
@@ -2538,6 +2615,7 @@ function AdminAppInner(_props: AdminAppProps) {
         storiesEnabled: nextFlags.storiesEnabled,
         voiceNotesEnabled: nextFlags.voiceNotesEnabled,
         callsEnabled: nextFlags.callsEnabled,
+        marketplaceEnabled: nextFlags.marketplaceEnabled,
         maintenanceMode: nextFlags.maintenanceMode,
         registrationsOpen: nextFlags.registrationsOpen,
         strictModerationQueue: nextFlags.strictModerationQueue,
@@ -2546,6 +2624,158 @@ function AdminAppInner(_props: AdminAppProps) {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'adminConfig/featureFlags');
+    }
+  };
+
+  const handleSeedMarketplaceShowroom = async (): Promise<{
+    ok: boolean;
+    count?: number;
+    error?: string;
+  }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      const res = await seedStarterMarketplaceShowroom({
+        uid: firebaseUser.uid,
+        handle: sanitizeAdminHandle(currentProfile.handle),
+        displayName: currentProfile.displayName,
+      });
+      await recordAudit(
+        'commerce.seed',
+        'marketplaceStore',
+        res.storeId,
+        `Seeded Luxe Atelier starter showroom with ${res.productCount} products.`
+      );
+      return { ok: true, count: res.productCount };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to seed starter showroom.',
+      };
+    }
+  };
+
+  const handleSaveMarketplaceStore = async (input: {
+    id?: string;
+    slug: string;
+    name: string;
+    tagline: string;
+    ownerUid: string;
+    ownerHandle: string;
+    logoUrl: string;
+    bannerUrl: string;
+    category: string;
+    currency: string;
+    publishStatus: StorePublishStatus;
+    externalStoreId?: string;
+    verified: boolean;
+    featured: boolean;
+    isCreate: boolean;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      const id = await saveMarketplaceStoreRecord(input);
+      await recordAudit(
+        input.isCreate ? 'commerce.store.create' : 'commerce.store.update',
+        'marketplaceStore',
+        id,
+        `${input.isCreate ? 'Created' : 'Updated'} storefront "${input.name}" (${input.publishStatus}).`
+      );
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to save storefront.',
+      };
+    }
+  };
+
+  const handleSaveMarketplaceProduct = async (input: {
+    id?: string;
+    storeId: string;
+    storeName: string;
+    storeSlug: string;
+    ownerUid: string;
+    title: string;
+    description: string;
+    category: string;
+    priceCents: number;
+    compareAtPriceCents?: number;
+    currency: string;
+    imageUrl: string;
+    stock: number;
+    status: ProductStatus;
+    featured: boolean;
+    tag?: string;
+    isCreate: boolean;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      const id = await saveMarketplaceProductRecord(input);
+      await recordAudit(
+        input.isCreate ? 'commerce.product.create' : 'commerce.product.update',
+        'marketplaceProduct',
+        id,
+        `${input.isCreate ? 'Created' : 'Updated'} product "${input.title}" in ${input.storeName}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to save product.',
+      };
+    }
+  };
+
+  const handleDeleteMarketplaceProduct = async (
+    productId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      await deleteMarketplaceProductRecord(productId);
+      await recordAudit(
+        'commerce.product.delete',
+        'marketplaceProduct',
+        productId,
+        `Deleted marketplace product ${productId}.`
+      );
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to delete product.',
+      };
+    }
+  };
+
+  const handleUpdateMarketplaceOrder = async (
+    orderId: string,
+    updates: { status: OrderStatus; paymentStatus: PaymentStatus }
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!firebaseUser || !adminAuth.isAdmin) {
+      return { ok: false, error: 'Administrator authentication is required.' };
+    }
+    try {
+      await updateMarketplaceOrderAdmin(orderId, updates);
+      await recordAudit(
+        'commerce.order.update',
+        'marketplaceOrder',
+        orderId,
+        `Updated order ${orderId} to status ${updates.status} (${updates.paymentStatus}).`
+      );
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to update order.',
+      };
     }
   };
 
@@ -2797,6 +3027,14 @@ function AdminAppInner(_props: AdminAppProps) {
       onForceEndCall={handleForceEndCall}
       onLoadR2Objects={handleLoadR2Objects}
       onDeleteR2Object={handleDeleteR2Object}
+      marketplaceStores={marketplaceStores}
+      marketplaceProducts={marketplaceProducts}
+      marketplaceOrders={marketplaceOrders}
+      onSeedMarketplaceShowroom={handleSeedMarketplaceShowroom}
+      onSaveMarketplaceStore={handleSaveMarketplaceStore}
+      onSaveMarketplaceProduct={handleSaveMarketplaceProduct}
+      onDeleteMarketplaceProduct={handleDeleteMarketplaceProduct}
+      onUpdateMarketplaceOrder={handleUpdateMarketplaceOrder}
     />
   );
 }

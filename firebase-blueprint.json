@@ -974,6 +974,7 @@
         "storiesEnabled": { "type": "boolean" },
         "voiceNotesEnabled": { "type": "boolean" },
         "callsEnabled": { "type": "boolean" },
+        "marketplaceEnabled": { "type": "boolean" },
         "maintenanceMode": { "type": "boolean" },
         "registrationsOpen": { "type": "boolean" },
         "strictModerationQueue": { "type": "boolean" },
@@ -1053,6 +1054,102 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "description", "createdBy", "createdAt", "updatedAt"]
+    },
+    "MarketplaceStore": {
+      "title": "MarketplaceStore",
+      "description": "Multi-tenant merchant storefront linked to a Looma creator/admin and optional external commerce storeId.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "tagline": { "type": "string", "maxLength": 180 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerHandle": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "logoUrl": { "type": "string", "maxLength": 250000 },
+        "bannerUrl": { "type": "string", "maxLength": 250000 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+        "publishStatus": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "SUSPENDED"] },
+        "externalStoreId": { "type": "string", "maxLength": 128 },
+        "verified": { "type": "boolean" },
+        "featured": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "slug", "name", "tagline", "ownerUid", "ownerHandle",
+        "logoUrl", "bannerUrl", "category", "currency", "publishStatus",
+        "verified", "featured", "createdAt", "updatedAt"
+      ]
+    },
+    "MarketplaceProduct": {
+      "title": "MarketplaceProduct",
+      "description": "Catalog SKU published inside a Marketplace storefront.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storeName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "storeSlug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "priceCents": { "type": "number" },
+        "compareAtPriceCents": { "type": "number" },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+        "imageUrl": { "type": "string", "maxLength": 600000 },
+        "stock": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "DRAFT", "ARCHIVED"] },
+        "featured": { "type": "boolean" },
+        "tag": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 80 },
+        "condition": { "type": "string", "enum": ["New", "Used - Like New", "Used - Good", "Used - Fair"] },
+        "galleryUrls": { "type": "array", "description": "Optional additional listing photo URLs (max 4)" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "storeId", "storeName", "storeSlug", "ownerUid",
+        "title", "description", "category", "priceCents", "currency",
+        "imageUrl", "stock", "status", "featured", "createdAt", "updatedAt"
+      ]
+    },
+    "MarketplaceOrder": {
+      "title": "MarketplaceOrder",
+      "description": "Buyer order placed through the Marketplace Storefront.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "buyerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "buyerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "buyerEmail": { "type": "string", "maxLength": 200 },
+        "storeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storeName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "storeOwnerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "items": { "type": "array", "description": "Bounded line items (1-25)" },
+        "subtotalCents": { "type": "number" },
+        "shippingCents": { "type": "number" },
+        "totalCents": { "type": "number" },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+        "paymentMethod": { "type": "string", "enum": ["card", "cod", "wallet"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid", "refunded"] },
+        "status": { "type": "string", "enum": ["PENDING", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] },
+        "shippingName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "shippingPhone": { "type": "string", "minLength": 3, "maxLength": 40 },
+        "shippingAddress": { "type": "string", "minLength": 3, "maxLength": 240 },
+        "shippingCity": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "note": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "buyerUid", "buyerName", "buyerEmail", "storeId", "storeName", "storeOwnerUid",
+        "items", "subtotalCents", "shippingCents", "totalCents", "currency",
+        "paymentMethod", "paymentStatus", "status", "shippingName", "shippingPhone",
+        "shippingAddress", "shippingCity", "note", "createdAt", "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -1167,6 +1264,18 @@
     "/categories/{categoryId}": {
       "schema": { "$ref": "#/entities/PostCategoryRecord" },
       "description": "Dynamic post topic categories curated by platform administrators."
+    },
+    "/marketplaceStores/{storeId}": {
+      "schema": { "$ref": "#/entities/MarketplaceStore" },
+      "description": "Multi-tenant merchant storefronts curated in the Ecommerce Dashboard and displayed in the Marketplace."
+    },
+    "/marketplaceProducts/{productId}": {
+      "schema": { "$ref": "#/entities/MarketplaceProduct" },
+      "description": "Marketplace product catalog items belonging to a published storefront."
+    },
+    "/marketplaceOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/MarketplaceOrder" },
+      "description": "Buyer order records containing shipping PII strictly scoped to buyer, store owner, and admins."
     }
   }
 }

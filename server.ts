@@ -33,6 +33,10 @@ function buildNodeWorkerEnv(): WorkerEnv {
     TURN_USERNAME: process.env.TURN_USERNAME,
     TURN_CREDENTIAL: process.env.TURN_CREDENTIAL,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    COMMERCE_API_URL: process.env.COMMERCE_API_URL,
+    COMMERCE_DEFAULT_STORE_ID: process.env.COMMERCE_DEFAULT_STORE_ID,
+    COMMERCE_PUBLISHABLE_KEY: process.env.COMMERCE_PUBLISHABLE_KEY,
+    COMMERCE_ADMIN_DASHBOARD_URL: process.env.COMMERCE_ADMIN_DASHBOARD_URL,
   };
 }
 
@@ -55,22 +59,31 @@ const MIME_BY_EXT: Record<string, string> = {
 
 function serveDistAsset(req: http.IncomingMessage, res: http.ServerResponse): void {
   const distDir = path.resolve(process.cwd(), 'dist');
+  const commerceDistDir = path.resolve(process.cwd(), 'dist-commerce');
   const reqUrl = new URL(req.url || '/', 'http://localhost');
   let cleanRel = decodeURIComponent(reqUrl.pathname).replace(/^\/+/, '');
+
   let targetPath = path.resolve(distDir, cleanRel || 'index.html');
 
-  if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
-    targetPath = path.join(targetPath, 'index.html');
-  }
+  if (cleanRel.startsWith('commerce') || cleanRel.startsWith('looma-commerce') || cleanRel.startsWith('seller')) {
+    const commerceRel = cleanRel.replace(/^(commerce|looma-commerce|seller)\/?/, '');
+    targetPath = path.resolve(commerceDistDir, commerceRel || 'index.html');
+    if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+      targetPath = path.join(commerceDistDir, 'index.html');
+    }
+  } else {
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+      targetPath = path.join(targetPath, 'index.html');
+    }
 
-  if (!targetPath.startsWith(distDir) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
-    // Check if it's an admin or landing subpath
-    if (cleanRel.startsWith('admin')) {
-      targetPath = path.join(distDir, 'admin', 'index.html');
-    } else if (cleanRel.startsWith('landingpage')) {
-      targetPath = path.join(distDir, 'landingpage', 'index.html');
-    } else {
-      targetPath = path.join(distDir, 'index.html');
+    if (!targetPath.startsWith(distDir) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+      if (cleanRel.startsWith('admin')) {
+        targetPath = path.join(distDir, 'admin', 'index.html');
+      } else if (cleanRel.startsWith('landingpage')) {
+        targetPath = path.join(distDir, 'landingpage', 'index.html');
+      } else {
+        targetPath = path.join(distDir, 'index.html');
+      }
     }
   }
 
@@ -103,14 +116,25 @@ async function startDevServer(): Promise<void> {
   );
 
   let viteMiddlewares: ((req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void) | null = null;
+  let commerceViteMiddlewares: ((req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void) | null = null;
 
-  const httpServer = http.createServer((req, res) => {
+  const httpServer = http.createServer(async (req, res) => {
     const rawUrl = req.url || '/';
     const [pathname, search] = rawUrl.split('?');
     const queryString = search ? `?${search}` : '';
 
     if (pathname === '/admin') {
       res.writeHead(302, { Location: `/admin/${queryString}` });
+      res.end();
+      return;
+    }
+    if (pathname === '/commerce' || pathname === '/looma-commerce') {
+      res.writeHead(302, { Location: `/commerce/${queryString}` });
+      res.end();
+      return;
+    }
+    if (pathname === '/seller') {
+      res.writeHead(302, { Location: `/seller/${queryString}` });
       res.end();
       return;
     }
@@ -125,11 +149,24 @@ async function startDevServer(): Promise<void> {
       return;
     }
 
-    if (!isProd && viteMiddlewares) {
-      viteMiddlewares(req, res, () => {
-        void honoListener(req, res);
-      });
-      return;
+    if (!isProd) {
+      if (pathname.startsWith('/commerce') || pathname.startsWith('/looma-commerce') || pathname.startsWith('/seller')) {
+        if (commerceViteMiddlewares) {
+          // Strip prefix for commerce vite app
+          const origUrl = req.url;
+          req.url = req.url?.replace(/^\/(commerce|looma-commerce|seller)/, '') || '/';
+          commerceViteMiddlewares(req, res, () => {
+            req.url = origUrl;
+            serveDistAsset(req, res);
+          });
+          return;
+        }
+      } else if (viteMiddlewares) {
+        viteMiddlewares(req, res, () => {
+          void honoListener(req, res);
+        });
+        return;
+      }
     }
 
     serveDistAsset(req, res);
@@ -146,6 +183,20 @@ async function startDevServer(): Promise<void> {
       appType: 'spa',
     });
     viteMiddlewares = vite.middlewares;
+
+    try {
+      const commerceVite = await createViteServer({
+        configFile: path.resolve(process.cwd(), 'vite.commerce.config.ts'),
+        server: {
+          middlewareMode: true,
+          allowedHosts: true,
+        },
+        appType: 'spa',
+      });
+      commerceViteMiddlewares = commerceVite.middlewares;
+    } catch (e) {
+      console.warn('Failed to start commerce vite middleware:', e);
+    }
   }
 
   httpServer.listen(port, '0.0.0.0', () => {

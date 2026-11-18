@@ -13,6 +13,7 @@ export type ThemeMode = 'light' | 'dark';
 
 export type TabId =
   | 'feed'
+  | 'marketplace'
   | 'connections'
   | 'messages'
   | 'notifications'

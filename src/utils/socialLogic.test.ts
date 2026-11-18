@@ -1627,7 +1627,7 @@ test('verification badge propagation syncs live status across posts, comments, a
   assert.equal(grantedSelfComment.authorVerified, true);
 });
 
-test('prefixed opaque upload filenames and attached photo mediaTitle never leak into external link previews', () => {
+test('posts with uploaded photo, video, or audio suppress link previews while text+link posts derive link previews', () => {
   assert.equal(isOpaqueMediaIdentifier('file_00000000f47082108baed036cbd83873'), true);
   assert.equal(isOpaqueMediaIdentifier('img_a1b2c3d4e5f67890'), true);
   assert.equal(isOpaqueMediaIdentifier('screenshot_014b2671aabbccddeeff'), true);
@@ -1637,25 +1637,25 @@ test('prefixed opaque upload filenames and attached photo mediaTitle never leak 
   );
   assert.equal(sanitizeMediaTitle('file_00000000f47082108baed036cbd83873'), '');
 
-  const previewWithLegacyOpaqueTitle = resolvePostLinkPreview({
+  // Uploaded photo + link in caption or linkUrl -> no link preview card needed
+  const previewWithPhotoAndLink = resolvePostLinkPreview({
     caption: 'Check https://looma.prigidcollection.workers.dev/ for the new badge!',
     linkUrl: 'https://looma.prigidcollection.workers.dev/',
     imageUrl: '/api/storage/file/uploads/u1/posts/123-abc.png',
-    mediaTitle: 'file_00000000f47082108baed036cbd83873',
-  });
-  assert.equal(previewWithLegacyOpaqueTitle?.displayTitle, 'looma.prigidcollection.workers.dev');
-  assert.equal(previewWithLegacyOpaqueTitle?.hostname, 'looma.prigidcollection.workers.dev');
-
-  // Even a valid human image title must not overwrite the external link card title when an image is also attached
-  const previewWithPhotoAndLink = resolvePostLinkPreview({
-    caption: 'Visit https://looma.prigidcollection.workers.dev/',
-    linkUrl: 'https://looma.prigidcollection.workers.dev/',
-    imageUrl: '/api/storage/file/uploads/u1/posts/photo.jpg',
     mediaTitle: 'Studio Launch Banner',
   });
-  assert.equal(previewWithPhotoAndLink?.displayTitle, 'looma.prigidcollection.workers.dev');
+  assert.equal(previewWithPhotoAndLink, null);
 
-  // Standalone link post with explicit custom mediaTitle preserves the link title
+  // Uploaded video + link -> no link preview card needed
+  const previewWithVideoAndLink = resolvePostLinkPreview({
+    caption: 'More at https://example.com/notes',
+    linkUrl: 'https://example.com/notes',
+    imageUrl: '',
+    videoUrl: '/api/storage/file/uploads/u1/posts/clip.mp4',
+  });
+  assert.equal(previewWithVideoAndLink, null);
+
+  // Standalone text + link post (no uploaded media) derives link preview cleanly
   const standaloneLink = resolvePostLinkPreview({
     caption: 'Read the notes https://example.com/guide',
     linkUrl: 'https://example.com/guide',
@@ -1663,6 +1663,7 @@ test('prefixed opaque upload filenames and attached photo mediaTitle never leak 
     mediaTitle: 'Looma Guide',
   });
   assert.equal(standaloneLink?.displayTitle, 'Looma Guide');
+  assert.equal(standaloneLink?.hostname, 'example.com');
 });
 
 test('parseTextWithTagsAndMentions preserves paragraphs, emojis, hashtags, mentions, and clickable URLs', () => {
