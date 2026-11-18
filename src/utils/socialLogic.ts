@@ -1086,7 +1086,15 @@ export function resolvePostLinkPreview(
   const raw = (post.linkUrl || captionUrl || '').trim();
   if (!raw) return null;
 
+  if (isOpaqueMediaIdentifier(raw) || raw.includes('/file_') || raw.includes('/upload/') || raw.includes('r2-storage')) {
+    return null;
+  }
+
   const trimmedImage = (post.imageUrl || '').trim();
+  if (trimmedImage && (trimmedImage === raw || trimmedImage.includes(raw) || raw.includes(trimmedImage))) {
+    return null;
+  }
+
   const trimmedVideo = (post.videoUrl || '').trim();
   const trimmedAudio = (post.audioUrl || '').trim();
   const hasSeparateMedia = Boolean(

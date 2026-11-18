@@ -2709,6 +2709,12 @@ export function useSocialStore() {
           ? prev.map((acc) => (acc.uid === next.uid ? next : acc))
           : [next, ...prev];
       });
+      setCommunityUsers((prev) => {
+        const exists = prev.some((u) => u.uid === next.uid);
+        return exists
+          ? prev.map((u) => (u.uid === next.uid ? next : u))
+          : [next, ...prev];
+      });
       setLocalPosts((prev) =>
         prev.map((p) =>
           p.authorId === next.uid
