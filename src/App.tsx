@@ -23,13 +23,17 @@ import type {
 import {
   computeOtherUserConnections,
   countUnreadNotifications,
+  extractAnnouncementIdFromNotificationId,
   filterActiveAnnouncementsForMember,
   formatLastMessageSnippet,
   formatRelativeTime,
   formatSharedPostMessage,
   getThreadOnlineStatus,
   isUserOnline,
+  mergeAnnouncementsIntoNotifications,
+  normalizeHashtag,
   resolveAppStage,
+  resolveLiveProfile,
   resolvePublicProfile,
 } from './utils/socialLogic';
 import {
@@ -176,7 +180,47 @@ export default function App() {
     followingIds: string[];
   } | null>(null);
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
-  const [dismissedAnnouncementIds, setDismissedAnnouncementIds] = useState<string[]>([]);
+
+  const readStoredUidList = (prefix: string, uid: string): string[] => {
+    if (typeof window === 'undefined' || !uid) return [];
+    try {
+      const raw = window.localStorage.getItem(`${prefix}_${uid}`);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is string => typeof id === 'string')
+        : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const writeStoredUidList = (prefix: string, uid: string, ids: string[]) => {
+    if (typeof window === 'undefined' || !uid) return;
+    try {
+      window.localStorage.setItem(`${prefix}_${uid}`, JSON.stringify(ids));
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
+
+  const [dismissedAnnouncementIds, setDismissedAnnouncementIds] = useState<string[]>(() =>
+    readStoredUidList('looma_ann_dismissed_v1', store.profile.uid)
+  );
+  const [readAnnouncementIds, setReadAnnouncementIds] = useState<string[]>(() =>
+    readStoredUidList('looma_ann_read_v1', store.profile.uid)
+  );
+  const [deletedAnnouncementIds, setDeletedAnnouncementIds] = useState<string[]>(() =>
+    readStoredUidList('looma_ann_deleted_v1', store.profile.uid)
+  );
+
+  useEffect(() => {
+    const uid = store.profile.uid;
+    setDismissedAnnouncementIds(readStoredUidList('looma_ann_dismissed_v1', uid));
+    setReadAnnouncementIds(readStoredUidList('looma_ann_read_v1', uid));
+    setDeletedAnnouncementIds(readStoredUidList('looma_ann_deleted_v1', uid));
+  }, [store.profile.uid]);
+
   const [appealModalOpen, setAppealModalOpen] = useState(false);
   const [appealReason, setAppealReason] = useState('');
   const [submittingAppeal, setSubmittingAppeal] = useState(false);
@@ -189,9 +233,73 @@ export default function App() {
         isVerified: Boolean(store.profile.isVerified),
         isAdmin: isUserAdmin,
         dismissedIds: dismissedAnnouncementIds,
+        readIds: readAnnouncementIds,
+        deletedIds: deletedAnnouncementIds,
       }),
-    [dismissedAnnouncementIds, isUserAdmin, store.announcements, store.profile.isVerified]
+    [
+      deletedAnnouncementIds,
+      dismissedAnnouncementIds,
+      isUserAdmin,
+      readAnnouncementIds,
+      store.announcements,
+      store.profile.isVerified,
+    ]
   );
+
+  const activityNotifications = useMemo(
+    () =>
+      mergeAnnouncementsIntoNotifications(store.notifications, store.announcements, {
+        recipientId: store.profile.uid,
+        isVerified: Boolean(store.profile.isVerified),
+        isAdmin: isUserAdmin,
+        readAnnouncementIds,
+        deletedAnnouncementIds,
+      }),
+    [
+      deletedAnnouncementIds,
+      isUserAdmin,
+      readAnnouncementIds,
+      store.announcements,
+      store.notifications,
+      store.profile.isVerified,
+      store.profile.uid,
+    ]
+  );
+
+  const persistDismissedAnnouncements = (ids: string[]) => {
+    setDismissedAnnouncementIds((prev) => {
+      const merged = Array.from(new Set([...prev, ...ids]));
+      writeStoredUidList('looma_ann_dismissed_v1', store.profile.uid, merged);
+      return merged;
+    });
+  };
+
+  const persistReadAnnouncements = (ids: string[]) => {
+    setReadAnnouncementIds((prev) => {
+      const merged = Array.from(new Set([...prev, ...ids]));
+      writeStoredUidList('looma_ann_read_v1', store.profile.uid, merged);
+      return merged;
+    });
+    persistDismissedAnnouncements(ids);
+  };
+
+  const persistDeletedAnnouncements = (ids: string[]) => {
+    setDeletedAnnouncementIds((prev) => {
+      const merged = Array.from(new Set([...prev, ...ids]));
+      writeStoredUidList('looma_ann_deleted_v1', store.profile.uid, merged);
+      return merged;
+    });
+    persistReadAnnouncements(ids);
+  };
+
+  // Once the member views the Activity page, dismiss active popup banners so they don't pop up again
+  useEffect(() => {
+    if (activeTab !== 'notifications') return;
+    store.dismissToast();
+    if (visibleAnnouncements.length > 0) {
+      persistDismissedAnnouncements(visibleAnnouncements.map((a) => a.id));
+    }
+  }, [activeTab, visibleAnnouncements]);
 
   const verifiedUidSet = useMemo(() => {
     const set = new Set<string>();
@@ -211,7 +319,7 @@ export default function App() {
     return set;
   }, [isUserAdmin, store.communityUsers, store.posts, store.profile.isVerified, store.profile.uid]);
 
-  const unreadCount = countUnreadNotifications(store.notifications);
+  const unreadCount = countUnreadNotifications(activityNotifications);
   const appStage = resolveAppStage(
     store.isAuthorized,
     store.profile.onboardingCompleted,
@@ -409,8 +517,12 @@ export default function App() {
   };
 
   const handleHashtagClick = (tag: string) => {
-    setFeedSearchQuery(tag ? `#${tag}` : '');
+    const clean = normalizeHashtag(tag);
+    setFeedSearchQuery(clean ? `#${clean}` : '');
     selectWorkspaceTab('feed');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleOpenDm = async (creator: UserProfile) => {
@@ -433,7 +545,7 @@ export default function App() {
     const immediate = resolvePublicProfile(
       targetUid,
       store.profile,
-      store.communityUsers,
+      store.allKnownChatUsers,
       fallbackPost ? [fallbackPost, ...store.posts] : store.posts
     );
     if (immediate) {
@@ -896,11 +1008,7 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    setDismissedAnnouncementIds((prev) =>
-                      prev.includes(ann.id) ? prev : [...prev, ann.id]
-                    )
-                  }
+                  onClick={() => persistReadAnnouncements([ann.id])}
                   aria-label={`Dismiss announcement ${ann.title}`}
                   className="min-h-[36px] min-w-[36px] rounded-lg flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 shrink-0 cursor-pointer"
                 >
@@ -1105,15 +1213,21 @@ export default function App() {
           )}
 
           {activeTab === 'public-profile' && selectedPublicProfile && (() => {
-            const creatorConnections = getConnectionsForUser(selectedPublicProfile);
+            const liveCreator =
+              resolveLiveProfile(
+                selectedPublicProfile,
+                store.profile,
+                store.allKnownChatUsers
+              ) || selectedPublicProfile;
+            const creatorConnections = getConnectionsForUser(liveCreator);
             return (
               <Suspense fallback={<RouteLoadingFallback />}>
                 <PublicProfileView
-                  creator={selectedPublicProfile}
+                  creator={liveCreator}
                   currentUserId={store.profile.uid}
                   loading={loadingPublicProfile}
                   isFollowing={store.followedUserIds.includes(
-                    selectedPublicProfile.uid
+                    liveCreator.uid
                   )}
                   followersCount={creatorConnections.followers.length}
                   followingCount={creatorConnections.following.length}
@@ -1137,7 +1251,7 @@ export default function App() {
                   onMessage={handleOpenDm}
                   onStartCallWithUser={store.startCallWithUser}
                   onOpenConnections={(tab) =>
-                    openConnections(tab, selectedPublicProfile)
+                    openConnections(tab, liveCreator)
                   }
                   onBack={() => selectWorkspaceTab(publicProfileReturnTab)}
                   onToggleLike={store.toggleLike}
@@ -1241,14 +1355,44 @@ export default function App() {
           {activeTab === 'notifications' && (
             <NotificationsView
               profile={store.profile}
-              notifications={store.notifications}
-              verifiedAuthorIds={verifiedUidSet}
+              notifications={activityNotifications}
+              verifiedAuthorIds={Array.from(verifiedUidSet)}
               pushPermission={store.pushPermission}
               onEnablePush={store.enablePushNotifications}
-              onMarkRead={store.markNotificationRead}
-              onMarkAllRead={store.markAllNotificationsRead}
-              onDeleteNotification={store.deleteNotification}
-              onClearAllNotifications={store.clearAllNotifications}
+              onMarkRead={(id) => {
+                const annId = extractAnnouncementIdFromNotificationId(id);
+                if (annId) {
+                  persistReadAnnouncements([annId]);
+                } else {
+                  store.markNotificationRead(id);
+                }
+              }}
+              onMarkAllRead={() => {
+                const activeAnnIds = activityNotifications
+                  .map((item) => item.announcementId)
+                  .filter((id): id is string => Boolean(id));
+                if (activeAnnIds.length > 0) {
+                  persistReadAnnouncements(activeAnnIds);
+                }
+                store.markAllNotificationsRead();
+              }}
+              onDeleteNotification={(id) => {
+                const annId = extractAnnouncementIdFromNotificationId(id);
+                if (annId) {
+                  persistDeletedAnnouncements([annId]);
+                } else {
+                  return store.deleteNotification(id);
+                }
+              }}
+              onClearAllNotifications={async () => {
+                const activeAnnIds = activityNotifications
+                  .map((item) => item.announcementId)
+                  .filter((id): id is string => Boolean(id));
+                if (activeAnnIds.length > 0) {
+                  persistDeletedAnnouncements(activeAnnIds);
+                }
+                await store.clearAllNotifications();
+              }}
             />
           )}
 
@@ -1294,16 +1438,22 @@ export default function App() {
           )}
 
           {activeTab === 'connections' && (() => {
+            const liveConnectionsOwner = resolveLiveProfile(
+              connectionsOwner,
+              store.profile,
+              store.allKnownChatUsers
+            );
             const viewingOther =
-              connectionsOwner && connectionsOwner.uid !== store.profile.uid;
+              liveConnectionsOwner &&
+              liveConnectionsOwner.uid !== store.profile.uid;
             const activeConnections = viewingOther
-              ? getConnectionsForUser(connectionsOwner)
+              ? getConnectionsForUser(liveConnectionsOwner)
               : store.connections;
             return (
               <Suspense fallback={<RouteLoadingFallback />}>
                 <ConnectionsView
                   initialTab={connectionsTab}
-                  targetUser={viewingOther ? connectionsOwner : null}
+                  targetUser={viewingOther ? liveConnectionsOwner : null}
                   currentUserId={store.profile.uid}
                   followers={activeConnections.followers}
                   following={activeConnections.following}
@@ -1312,7 +1462,7 @@ export default function App() {
                   followedUserIds={store.followedUserIds}
                   onBack={() => {
                     if (viewingOther) {
-                      setSelectedPublicProfile(connectionsOwner);
+                      setSelectedPublicProfile(liveConnectionsOwner);
                       setActiveTab('public-profile');
                     } else {
                       selectWorkspaceTab('profile');
@@ -1609,7 +1759,7 @@ export default function App() {
           <CallRoomModal
             session={store.callSession}
             profile={store.profile}
-            verifiedUserIds={verifiedUidSet}
+            verifiedUserIds={Array.from(verifiedUidSet)}
             isLocalAutostart={store.isLocalAutostart}
             onEndCall={store.endCall}
             onToggleMute={store.toggleCallMute}

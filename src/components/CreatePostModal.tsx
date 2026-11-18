@@ -360,6 +360,15 @@ export function CreatePostModal({
           finalMediaTitle = sanitizeMediaTitle(detectedParsed.displayTitle);
         }
       }
+    } else if (
+      finalImageUrl &&
+      captionDetectedUrl &&
+      captionDetectedUrl !== dismissedCaptionUrl
+    ) {
+      const detectedParsed = parseRichUrl(captionDetectedUrl);
+      if (detectedParsed && detectedParsed.kind === 'link') {
+        finalLinkUrl = detectedParsed.url;
+      }
     }
 
     const hasAttachment = Boolean(

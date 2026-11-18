@@ -206,6 +206,7 @@ function playRingingTone(initialMuted: boolean): RingingToneController {
 export function CallRoomModal({
   session,
   profile,
+  verifiedUserIds = [],
   isLocalAutostart = false,
   onEndCall,
   onToggleMute,

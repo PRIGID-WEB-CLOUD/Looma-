@@ -13,6 +13,7 @@ import type {
   StoryGroup,
   StoryItem,
   UserProfile,
+  VerificationRequest,
 } from '../types/social';
 
 export const POST_CATEGORIES: PostCategory[] = [
@@ -186,6 +187,12 @@ export function filterAndSortFeed(params: {
         return false;
       }
       if (!query) return true;
+      if (query.startsWith('#')) {
+        const cleanTag = normalizeHashtag(query);
+        if (cleanTag && extractHashtags(post.caption).includes(cleanTag)) {
+          return true;
+        }
+      }
       return (
         post.caption.toLowerCase().includes(query) ||
         post.authorName.toLowerCase().includes(query) ||
@@ -726,8 +733,9 @@ export function resolveChatThreadForViewer(
     return {
       ...thread,
       memberIds: uniqueMembers,
-      partnerAvatar:
-        normalizeAssetUrl(leadProfile?.avatarUrl || thread.partnerAvatar || ''),
+      partnerAvatar: leadProfile
+        ? normalizeAssetUrl(leadProfile.avatarUrl || '')
+        : normalizeAssetUrl(thread.partnerAvatar || ''),
       partnerHandle: `${uniqueMembers.length} members`,
       isParticipantResolved: true,
     };
@@ -889,6 +897,12 @@ export function isOpaqueMediaIdentifier(raw: string): boolean {
   if (!trimmed) return true;
   const compact = trimmed.replace(/[\s_-]+/g, '');
   if (/^[a-f0-9]{12,}$/i.test(compact)) {
+    return true;
+  }
+  if (/^(?:file|img|image|photo|media|asset|upload|attachment|doc|tmp|temp)[_-]?[a-f0-9]{12,}$/i.test(trimmed)) {
+    return true;
+  }
+  if (/^.+[_-][a-f0-9]{16,}$/i.test(trimmed)) {
     return true;
   }
   if (
@@ -1062,6 +1076,41 @@ function deriveTitleFromPath(parsed: URL): string {
   return last.replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 80);
 }
 
+export function resolvePostLinkPreview(
+  post: Pick<
+    Post,
+    'caption' | 'linkUrl' | 'imageUrl' | 'videoUrl' | 'audioUrl' | 'mediaTitle'
+  >
+): ParsedRichUrl | null {
+  const captionUrl = extractFirstUrl(post.caption || '');
+  const raw = (post.linkUrl || captionUrl || '').trim();
+  if (!raw) return null;
+
+  const trimmedImage = (post.imageUrl || '').trim();
+  const trimmedVideo = (post.videoUrl || '').trim();
+  const trimmedAudio = (post.audioUrl || '').trim();
+  const hasSeparateMedia = Boolean(
+    (trimmedImage && trimmedImage !== raw) ||
+      (trimmedVideo && trimmedVideo !== raw) ||
+      (trimmedAudio && trimmedAudio !== raw)
+  );
+  const customTitle = hasSeparateMedia
+    ? undefined
+    : sanitizeMediaTitle(post.mediaTitle) || undefined;
+
+  const parsed = parseRichUrl(raw, customTitle);
+  if (!parsed) return null;
+  if (
+    parsed.kind === 'youtube' ||
+    parsed.kind === 'vimeo' ||
+    parsed.kind === 'video' ||
+    parsed.kind === 'audio'
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
 export function canSharePostToStory(
   postAuthorId: string,
   currentUid: string
@@ -1102,7 +1151,7 @@ export function buildStoryFromPost(post: Post): {
 }
 
 export interface TextToken {
-  type: 'text' | 'hashtag' | 'mention';
+  type: 'text' | 'hashtag' | 'mention' | 'url';
   value: string;
   raw: string;
 }
@@ -1175,17 +1224,73 @@ export function extractMentions(text: string): string[] {
   return matches;
 }
 
+function splitUrlAndTrailingPunctuation(rawUrl: string): {
+  url: string;
+  trailing: string;
+} {
+  let url = rawUrl;
+  let trailing = '';
+  while (url.length > 0) {
+    const last = url[url.length - 1];
+    if (/[.,!?;:\]"'>]/.test(last)) {
+      trailing = last + trailing;
+      url = url.slice(0, -1);
+    } else if (last === ')') {
+      const opens = (url.match(/\(/g) || []).length;
+      const closes = (url.match(/\)/g) || []).length;
+      if (closes > opens) {
+        trailing = last + trailing;
+        url = url.slice(0, -1);
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  return { url, trailing };
+}
+
 export function parseTextWithTagsAndMentions(text: string): TextToken[] {
   if (!text) return [];
   const tokens: TextToken[] = [];
-  const tokenRegex = /(^|\s)(#[a-zA-Z0-9_]+|@[a-zA-Z0-9_.]{2,32})/g;
+  const tokenRegex =
+    /(https?:\/\/[^\s<>"']+)|(^|\s)(#[a-zA-Z0-9_]+|@[a-zA-Z0-9_.]{2,32})/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
   while ((match = tokenRegex.exec(text)) !== null) {
-    const fullMatch = match[0];
-    const leadingSpace = match[1];
-    const tagOrMention = match[2];
+    if (match[1]) {
+      const rawUrlMatch = match[1];
+      const urlStart = match.index;
+      if (urlStart > lastIndex) {
+        tokens.push({
+          type: 'text',
+          value: text.slice(lastIndex, urlStart),
+          raw: text.slice(lastIndex, urlStart),
+        });
+      }
+      const { url, trailing } = splitUrlAndTrailingPunctuation(rawUrlMatch);
+      if (url) {
+        tokens.push({
+          type: 'url',
+          value: url,
+          raw: url,
+        });
+      }
+      if (trailing) {
+        tokens.push({
+          type: 'text',
+          value: trailing,
+          raw: trailing,
+        });
+      }
+      lastIndex = urlStart + rawUrlMatch.length;
+      continue;
+    }
+
+    const leadingSpace = match[2];
+    const tagOrMention = match[3];
     const matchStart = match.index;
     const tagStart = matchStart + leadingSpace.length;
 
@@ -1649,11 +1754,12 @@ export function resolvePostMediaDescriptor(
   }
 
   if (post.imageUrl && post.imageUrl.trim()) {
-    const parsedImg = parseRichUrl(post.imageUrl, titleHint);
+    const cleanImageUrl = normalizeAssetUrl(post.imageUrl.trim());
+    const parsedImg = parseRichUrl(cleanImageUrl, titleHint);
     return {
       postId: post.id,
       kind: 'image',
-      url: post.imageUrl.trim(),
+      url: cleanImageUrl,
       title: titleHint || parsedImg?.displayTitle || `${post.authorName}'s photo`,
       subtitle: parsedImg?.subtitle || `${post.category} photo`,
       hostname: parsedImg?.hostname || 'media',
@@ -2132,7 +2238,32 @@ export interface GovernanceAnnouncementItem {
   severity: 'info' | 'warning' | 'maintenance';
   audience: 'all' | 'verified' | 'admins';
   active: boolean;
+  authorUid?: string;
+  authorName?: string;
   createdAtMs?: number;
+  updatedAtMs?: number;
+}
+
+export const ANNOUNCEMENT_NOTIFICATION_PREFIX = 'ann_';
+
+export function getAnnouncementNotificationId(announcementId: string): string {
+  return `${ANNOUNCEMENT_NOTIFICATION_PREFIX}${announcementId}`;
+}
+
+export function extractAnnouncementIdFromNotificationId(
+  notificationId: string
+): string | null {
+  if (!notificationId.startsWith(ANNOUNCEMENT_NOTIFICATION_PREFIX)) {
+    return null;
+  }
+  const rest = notificationId.slice(ANNOUNCEMENT_NOTIFICATION_PREFIX.length);
+  return rest || null;
+}
+
+export interface ActivityNotificationItem extends AppNotification {
+  isAnnouncement?: boolean;
+  announcementId?: string;
+  announcementSeverity?: GovernanceAnnouncementItem['severity'];
 }
 
 export function filterActiveAnnouncementsForMember<
@@ -2143,12 +2274,18 @@ export function filterActiveAnnouncementsForMember<
     isVerified?: boolean;
     isAdmin?: boolean;
     dismissedIds?: string[];
+    readIds?: string[];
+    deletedIds?: string[];
   }
 ): T[] {
-  const dismissed = new Set(options.dismissedIds || []);
+  const suppressed = new Set([
+    ...(options.dismissedIds || []),
+    ...(options.readIds || []),
+    ...(options.deletedIds || []),
+  ]);
   return announcements
     .filter((item) => {
-      if (!item.active || dismissed.has(item.id)) return false;
+      if (!item.active || suppressed.has(item.id)) return false;
       if (item.audience === 'admins') return Boolean(options.isAdmin);
       if (item.audience === 'verified') {
         return Boolean(options.isVerified || options.isAdmin);
@@ -2156,6 +2293,55 @@ export function filterActiveAnnouncementsForMember<
       return true;
     })
     .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+}
+
+export function mergeAnnouncementsIntoNotifications(
+  notifications: AppNotification[],
+  announcements: GovernanceAnnouncementItem[],
+  options: {
+    recipientId: string;
+    isVerified?: boolean;
+    isAdmin?: boolean;
+    readAnnouncementIds?: string[];
+    deletedAnnouncementIds?: string[];
+  }
+): ActivityNotificationItem[] {
+  const readSet = new Set(options.readAnnouncementIds || []);
+  const deletedSet = new Set(options.deletedAnnouncementIds || []);
+
+  const announcementItems: ActivityNotificationItem[] = announcements
+    .filter((item) => {
+      if (!item.active || deletedSet.has(item.id)) return false;
+      if (item.audience === 'admins') return Boolean(options.isAdmin);
+      if (item.audience === 'verified') {
+        return Boolean(options.isVerified || options.isAdmin);
+      }
+      return true;
+    })
+    .map((ann) => ({
+      id: getAnnouncementNotificationId(ann.id),
+      recipientId: options.recipientId,
+      actorId: ann.authorUid || 'looma_admin',
+      actorName: ann.authorName || 'Looma Admin',
+      actorAvatar: '',
+      type: 'system',
+      title: ann.title,
+      body: ann.body,
+      targetPostId: '',
+      read: readSet.has(ann.id),
+      createdAtMs: ann.createdAtMs || ann.updatedAtMs || 0,
+      isAnnouncement: true,
+      announcementId: ann.id,
+      announcementSeverity: ann.severity,
+    }));
+
+  const regularItems: ActivityNotificationItem[] = notifications.map((item) => ({
+    ...item,
+  }));
+
+  return [...announcementItems, ...regularItems].sort(
+    (a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0)
+  );
 }
 
 export type ModerationActionKind =
@@ -2198,75 +2384,331 @@ export function shouldBlockActionByModeration(
   return { blocked: false };
 }
 
+export type AuthorProfileSnapshot = Pick<UserProfile, 'uid' | 'isVerified'> &
+  Partial<Pick<UserProfile, 'displayName' | 'handle' | 'avatarUrl'>>;
+
+export function normalizeProfileUpdateFields(
+  current: UserProfile,
+  updates: Partial<UserProfile>,
+  nowMs: number = Date.now()
+): UserProfile {
+  const rawDisplayName =
+    typeof updates.displayName === 'string'
+      ? updates.displayName.trim().slice(0, 60)
+      : current.displayName.trim().slice(0, 60);
+  const displayName = rawDisplayName || current.displayName || 'Looma Member';
+
+  const handle =
+    typeof updates.handle === 'string'
+      ? sanitizeHandle(updates.handle)
+      : sanitizeHandle(current.handle);
+
+  const bio = (
+    typeof updates.bio === 'string' ? updates.bio : current.bio || ''
+  )
+    .trim()
+    .slice(0, 280);
+
+  const location = (
+    typeof updates.location === 'string'
+      ? updates.location
+      : current.location || ''
+  )
+    .trim()
+    .slice(0, 80);
+
+  const avatarUrl = normalizeAssetUrl(
+    (typeof updates.avatarUrl === 'string'
+      ? updates.avatarUrl
+      : current.avatarUrl || ''
+    ).trim()
+  ).slice(0, 250000);
+
+  const rawInterests = Array.isArray(updates.interests)
+    ? updates.interests
+    : current.interests || [];
+  const interests = rawInterests
+    .map((item) => String(item || '').trim().slice(0, 40))
+    .filter(Boolean)
+    .slice(0, 8);
+
+  return {
+    ...current,
+    ...updates,
+    displayName,
+    handle,
+    bio,
+    location,
+    avatarUrl,
+    interests,
+    followersCount: Math.max(0, Math.floor(Number(updates.followersCount ?? current.followersCount ?? 0))),
+    followingCount: Math.max(0, Math.floor(Number(updates.followingCount ?? current.followingCount ?? 0))),
+    onboardingCompleted:
+      typeof updates.onboardingCompleted === 'boolean'
+        ? updates.onboardingCompleted
+        : Boolean(current.onboardingCompleted),
+    isVerified:
+      typeof updates.isVerified === 'boolean'
+        ? updates.isVerified
+        : Boolean(current.isVerified),
+    updatedAtMs: nowMs,
+  };
+}
+
+export function resolveLiveProfile(
+  target: UserProfile | null,
+  currentProfile: UserProfile,
+  communityUsers: UserProfile[]
+): UserProfile | null {
+  if (!target) return null;
+  if (target.uid === currentProfile.uid) {
+    return currentProfile;
+  }
+  const matched = communityUsers.find((u) => u.uid === target.uid);
+  return matched || target;
+}
+
+function applyAuthorSnapshotToPost(
+  post: Post,
+  author: AuthorProfileSnapshot
+): Post {
+  const nextVerified = Boolean(author.isVerified);
+  const nextName =
+    typeof author.displayName === 'string' && author.displayName.trim()
+      ? author.displayName.trim()
+      : post.authorName;
+  const nextHandle =
+    typeof author.handle === 'string' && author.handle.trim()
+      ? sanitizeHandle(author.handle)
+      : post.authorHandle;
+  const nextAvatar =
+    typeof author.avatarUrl === 'string'
+      ? normalizeAssetUrl(author.avatarUrl)
+      : post.authorAvatar;
+
+  if (
+    Boolean(post.authorVerified) === nextVerified &&
+    post.authorName === nextName &&
+    post.authorHandle === nextHandle &&
+    post.authorAvatar === nextAvatar
+  ) {
+    return post;
+  }
+
+  return {
+    ...post,
+    authorName: nextName,
+    authorHandle: nextHandle,
+    authorAvatar: nextAvatar,
+    authorVerified: nextVerified,
+  };
+}
+
 export function enrichPostWithVerifiedAuthor(
   post: Post,
-  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
-  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+  communityUsers: AuthorProfileSnapshot[],
+  currentProfile?: AuthorProfileSnapshot | null
 ): Post {
   if (currentProfile && currentProfile.uid === post.authorId) {
-    const next = Boolean(currentProfile.isVerified);
-    return Boolean(post.authorVerified) === next
-      ? post
-      : { ...post, authorVerified: next };
+    return applyAuthorSnapshotToPost(post, currentProfile);
   }
   const matched = communityUsers.find((u) => u.uid === post.authorId);
   if (matched) {
-    const next = Boolean(matched.isVerified);
-    return Boolean(post.authorVerified) === next
-      ? post
-      : { ...post, authorVerified: next };
+    return applyAuthorSnapshotToPost(post, matched);
   }
   return post;
 }
 
+function applyAuthorSnapshotToComment(
+  comment: PostComment,
+  author: AuthorProfileSnapshot
+): PostComment {
+  const nextVerified = Boolean(author.isVerified);
+  const nextName =
+    typeof author.displayName === 'string' && author.displayName.trim()
+      ? author.displayName.trim()
+      : comment.authorName;
+  const nextHandle =
+    typeof author.handle === 'string' && author.handle.trim()
+      ? sanitizeHandle(author.handle)
+      : comment.authorHandle;
+  const nextAvatar =
+    typeof author.avatarUrl === 'string'
+      ? normalizeAssetUrl(author.avatarUrl)
+      : comment.authorAvatar;
+
+  if (
+    Boolean(comment.authorVerified) === nextVerified &&
+    comment.authorName === nextName &&
+    comment.authorHandle === nextHandle &&
+    comment.authorAvatar === nextAvatar
+  ) {
+    return comment;
+  }
+
+  return {
+    ...comment,
+    authorName: nextName,
+    authorHandle: nextHandle,
+    authorAvatar: nextAvatar,
+    authorVerified: nextVerified,
+  };
+}
+
 export function enrichCommentWithVerifiedAuthor(
   comment: PostComment,
-  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
-  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+  communityUsers: AuthorProfileSnapshot[],
+  currentProfile?: AuthorProfileSnapshot | null
 ): PostComment {
   if (currentProfile && currentProfile.uid === comment.authorId) {
-    const next = Boolean(currentProfile.isVerified);
-    return Boolean(comment.authorVerified) === next
-      ? comment
-      : { ...comment, authorVerified: next };
+    return applyAuthorSnapshotToComment(comment, currentProfile);
   }
   const matched = communityUsers.find((u) => u.uid === comment.authorId);
   if (matched) {
-    const next = Boolean(matched.isVerified);
-    return Boolean(comment.authorVerified) === next
-      ? comment
-      : { ...comment, authorVerified: next };
+    return applyAuthorSnapshotToComment(comment, matched);
   }
   return comment;
 }
 
 export function enrichStoryGroupsWithVerifiedAuthors(
   groups: StoryGroup[],
-  communityUsers: Array<Pick<UserProfile, 'uid' | 'isVerified'>>,
-  currentProfile?: Pick<UserProfile, 'uid' | 'isVerified'> | null
+  communityUsers: AuthorProfileSnapshot[],
+  currentProfile?: AuthorProfileSnapshot | null
 ): StoryGroup[] {
-  const verifiedMap = new Map<string, boolean>();
+  const authorMap = new Map<string, AuthorProfileSnapshot>();
   for (const user of communityUsers) {
-    verifiedMap.set(user.uid, Boolean(user.isVerified));
+    authorMap.set(user.uid, user);
   }
   if (currentProfile?.uid) {
-    verifiedMap.set(currentProfile.uid, Boolean(currentProfile.isVerified));
+    authorMap.set(currentProfile.uid, currentProfile);
   }
 
   return groups.map((group) => {
-    const matchedVerified = verifiedMap.get(group.authorId);
-    const nextVerified =
-      matchedVerified !== undefined
-        ? matchedVerified
-        : Boolean(group.authorVerified);
-    if (Boolean(group.authorVerified) === nextVerified) {
+    const matched = authorMap.get(group.authorId);
+    if (!matched) return group;
+
+    const nextVerified = Boolean(matched.isVerified);
+    const nextName =
+      typeof matched.displayName === 'string' && matched.displayName.trim()
+        ? matched.displayName.trim()
+        : group.authorName;
+    const nextHandle =
+      typeof matched.handle === 'string' && matched.handle.trim()
+        ? sanitizeHandle(matched.handle)
+        : group.authorHandle;
+    const nextAvatar =
+      typeof matched.avatarUrl === 'string'
+        ? normalizeAssetUrl(matched.avatarUrl)
+        : group.authorAvatar;
+
+    if (
+      Boolean(group.authorVerified) === nextVerified &&
+      group.authorName === nextName &&
+      group.authorHandle === nextHandle &&
+      group.authorAvatar === nextAvatar
+    ) {
       return group;
     }
+
     return {
       ...group,
+      authorName: nextName,
+      authorHandle: nextHandle,
+      authorAvatar: nextAvatar,
       authorVerified: nextVerified,
+      items: group.items.map((item) => ({
+        ...item,
+        authorName: nextName,
+        authorHandle: nextHandle,
+        authorAvatar: nextAvatar,
+      })),
     };
   });
+}
+
+export function enrichNotificationWithAuthor(
+  notif: AppNotification,
+  communityUsers: AuthorProfileSnapshot[],
+  currentProfile?: AuthorProfileSnapshot | null
+): AppNotification {
+  const actor =
+    currentProfile && currentProfile.uid === notif.actorId
+      ? currentProfile
+      : communityUsers.find((u) => u.uid === notif.actorId);
+  if (!actor) {
+    const normalizedExisting = normalizeAssetUrl(notif.actorAvatar || '');
+    return normalizedExisting === notif.actorAvatar
+      ? notif
+      : { ...notif, actorAvatar: normalizedExisting };
+  }
+
+  const preserveBrandActor =
+    notif.type === 'system' && notif.actorName.trim().toLowerCase() === 'looma';
+  const nextName =
+    !preserveBrandActor &&
+    typeof actor.displayName === 'string' &&
+    actor.displayName.trim()
+      ? actor.displayName.trim()
+      : notif.actorName;
+  const nextAvatar =
+    typeof actor.avatarUrl === 'string'
+      ? normalizeAssetUrl(actor.avatarUrl)
+      : normalizeAssetUrl(notif.actorAvatar || '');
+
+  if (notif.actorName === nextName && notif.actorAvatar === nextAvatar) {
+    return notif;
+  }
+
+  return {
+    ...notif,
+    actorName: nextName,
+    actorAvatar: nextAvatar,
+  };
+}
+
+export function enrichVerificationRequestWithUser(
+  req: VerificationRequest,
+  communityUsers: AuthorProfileSnapshot[],
+  currentProfile?: AuthorProfileSnapshot | null
+): VerificationRequest {
+  const matched =
+    currentProfile && currentProfile.uid === req.uid
+      ? currentProfile
+      : communityUsers.find((u) => u.uid === req.uid);
+  if (!matched) {
+    const normalizedExisting = normalizeAssetUrl(req.avatarUrl || '');
+    return normalizedExisting === req.avatarUrl
+      ? req
+      : { ...req, avatarUrl: normalizedExisting };
+  }
+
+  const nextName =
+    typeof matched.displayName === 'string' && matched.displayName.trim()
+      ? matched.displayName.trim()
+      : req.displayName;
+  const nextHandle =
+    typeof matched.handle === 'string' && matched.handle.trim()
+      ? sanitizeHandle(matched.handle)
+      : req.handle;
+  const nextAvatar =
+    typeof matched.avatarUrl === 'string'
+      ? normalizeAssetUrl(matched.avatarUrl)
+      : normalizeAssetUrl(req.avatarUrl || '');
+
+  if (
+    req.displayName === nextName &&
+    req.handle === nextHandle &&
+    req.avatarUrl === nextAvatar
+  ) {
+    return req;
+  }
+
+  return {
+    ...req,
+    displayName: nextName,
+    handle: nextHandle,
+    avatarUrl: nextAvatar,
+  };
 }
 
 export function shouldAutoQueuePostReport(
@@ -2278,4 +2720,5 @@ export function shouldAutoQueuePostReport(
   if (linkUrl && linkUrl.trim().length > 0) return true;
   return Boolean(extractFirstUrl(caption));
 }
+
 

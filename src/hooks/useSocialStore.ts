@@ -35,6 +35,7 @@ import {
   signUpWithEmail,
   signOutAccount,
   testFirestoreConnection,
+  updateAuthUserProfile,
 } from '../services/firebase';
 import { deleteUploadedMedia } from '../services/storage';
 import {
@@ -106,8 +107,10 @@ import {
   deleteNotificationItem,
   DIRECT_CHAT_SHARED_TITLE,
   enrichCommentWithVerifiedAuthor,
+  enrichNotificationWithAuthor,
   enrichPostWithVerifiedAuthor,
   enrichStoryGroupsWithVerifiedAuthors,
+  enrichVerificationRequestWithUser,
   extractFirstUrl,
   extractHashtags,
   extractMentions,
@@ -122,6 +125,7 @@ import {
   mergeSavedHashtags,
   normalizeAssetUrl,
   normalizeHashtag,
+  normalizeProfileUpdateFields,
   POPULAR_HASHTAGS,
   POST_CATEGORIES,
   promoteGroupAdminState,
@@ -175,6 +179,7 @@ const STORAGE_KEYS = {
   PUSH_ENABLED: 'looma_push_enabled_v1',
   TERMS_CONSENT: 'looma_terms_consent_v1',
   VERIFICATION_REQUESTS: 'looma_verification_requests_v1',
+  SEEN_TOAST_IDS: 'looma_seen_toast_ids_v1',
 };
 
 export const ADMIN_SYNC_STORAGE_KEYS = {
@@ -542,15 +547,23 @@ export function useSocialStore() {
     Record<string, ChatReadReceipt[]>
   >({});
 
-  const [notifications, setNotifications] = useState<AppNotification[]>(() =>
+  const [rawNotifications, setRawNotifications] = useState<AppNotification[]>(() =>
     stripDemoNotifications(
       readStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, [])
     )
   );
-  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>(() =>
+  const [rawVerificationRequests, setRawVerificationRequests] = useState<VerificationRequest[]>(() =>
     sortVerificationRequests(
       readStorage<VerificationRequest[]>(STORAGE_KEYS.VERIFICATION_REQUESTS, [])
     )
+  );
+
+  const verificationRequests = useMemo(
+    () =>
+      rawVerificationRequests.map((req) =>
+        enrichVerificationRequestWithUser(req, communityUsers, profile)
+      ),
+    [communityUsers, profile, rawVerificationRequests]
   );
 
   const currentUserVerificationRequest = useMemo(() => {
@@ -632,7 +645,7 @@ export function useSocialStore() {
         }
       }
 
-      setVerificationRequests((prev) => {
+      setRawVerificationRequests((prev) => {
         const next = sortVerificationRequests([newReq, ...prev]);
         writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, next);
         return next;
@@ -708,6 +721,13 @@ export function useSocialStore() {
 
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const seenToastIdsRef = useRef<Set<string>>(
+    new Set(
+      typeof window !== 'undefined'
+        ? readStorage<string[]>(STORAGE_KEYS.SEEN_TOAST_IDS, [])
+        : []
+    )
+  );
   const broadcastRef = useRef<BroadcastChannel | null>(null);
   const themeRef = useRef<ThemeMode>(theme);
   const pushEnabledRef = useRef<boolean>(pushEnabled);
@@ -733,6 +753,14 @@ export function useSocialStore() {
     }
     return Array.from(byUid.values());
   }, [communityUsers, fetchedChatUsers, profile.uid]);
+
+  const notifications = useMemo(
+    () =>
+      rawNotifications.map((notif) =>
+        enrichNotificationWithAuthor(notif, allKnownChatUsers, profile)
+      ),
+    [allKnownChatUsers, profile, rawNotifications]
+  );
 
   const threads = useMemo(
     () =>
@@ -855,6 +883,14 @@ export function useSocialStore() {
 
   const showToast = useCallback(
     (notif: AppNotification) => {
+      if (notif.read) return;
+      if (notif.id && !notif.id.startsWith('push_test')) {
+        if (seenToastIdsRef.current.has(notif.id)) return;
+        seenToastIdsRef.current.add(notif.id);
+        const recent = Array.from(seenToastIdsRef.current).slice(-200);
+        seenToastIdsRef.current = new Set(recent);
+        writeStorage(STORAGE_KEYS.SEEN_TOAST_IDS, recent);
+      }
       setActiveToast(notif);
       if (pushEnabled) {
         dispatchBrowserPush(notif.title, notif.body);
@@ -914,7 +950,7 @@ export function useSocialStore() {
         read: false,
         createdAtMs: Date.now(),
       };
-      setNotifications((prev) => [newNotif, ...prev]);
+      setRawNotifications((prev) => [newNotif, ...prev]);
       showToast(newNotif);
     },
     [showToast]
@@ -934,7 +970,8 @@ export function useSocialStore() {
         | { type: 'chat:read'; receipt: ChatReadReceipt }
         | { type: 'chat:thread_created'; thread: ChatThread }
         | { type: 'chat:thread_updated'; thread: ChatThread }
-        | { type: 'notif:new'; notification: AppNotification };
+        | { type: 'notif:new'; notification: AppNotification }
+        | { type: 'profile:updated'; profile: UserProfile };
       if (!payload) return;
       if (payload.type === 'post:new') {
         setLocalPosts((prev) =>
@@ -1040,12 +1077,27 @@ export function useSocialStore() {
           };
         });
       } else if (payload.type === 'notif:new') {
-        setNotifications((prev) =>
+        setRawNotifications((prev) =>
           prev.some((n) => n.id === payload.notification.id)
             ? prev
             : [payload.notification, ...prev]
         );
         showToast(payload.notification);
+      } else if (payload.type === 'profile:updated') {
+        const updated = payload.profile;
+        if (updated?.uid) {
+          if (updated.uid === profileRef.current.uid) {
+            setProfile(updated);
+            writeStorage(STORAGE_KEYS.PROFILE, updated);
+          } else {
+            setCommunityUsers((prev) =>
+              prev.map((u) => (u.uid === updated.uid ? updated : u))
+            );
+          }
+          setRegisteredAccounts((prev) =>
+            prev.map((acc) => (acc.uid === updated.uid ? updated : acc))
+          );
+        }
       }
     };
     return () => {
@@ -1095,7 +1147,7 @@ export function useSocialStore() {
               ? user.displayName.trim().slice(0, 60)
               : d.displayName;
           const resolvedAvatar = normalizeAssetUrl(
-            d.avatarUrl || user.photoURL || ''
+            typeof d.avatarUrl === 'string' ? d.avatarUrl : user.photoURL || ''
           );
           const isAdminUser = isAllowlistedAdminEmail(user.email);
           hydratedProfile = {
@@ -1115,6 +1167,7 @@ export function useSocialStore() {
           };
           if (
             resolvedDisplayName !== d.displayName ||
+            typeof d.avatarUrl !== 'string' ||
             resolvedAvatar !== d.avatarUrl ||
             (isAdminUser && !d.isVerified)
           ) {
@@ -1269,7 +1322,9 @@ export function useSocialStore() {
             handle: d.handle || profileRef.current.handle,
             bio: d.bio ?? '',
             avatarUrl: normalizeAssetUrl(
-              d.avatarUrl || firebaseUser.photoURL || ''
+              typeof d.avatarUrl === 'string'
+                ? d.avatarUrl
+                : firebaseUser.photoURL || ''
             ),
             location: d.location ?? '',
             interests: Array.isArray(d.interests) ? d.interests : [],
@@ -1476,7 +1531,7 @@ export function useSocialStore() {
           };
         });
         if (!snapshot.metadata.fromCache || mapped.length > 0) {
-          setNotifications(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
+          setRawNotifications(mapped.sort((a, b) => b.createdAtMs - a.createdAtMs));
         }
       },
       (err) => {
@@ -1903,7 +1958,7 @@ export function useSocialStore() {
           });
         });
         const sorted = sortVerificationRequests(list);
-        setVerificationRequests(sorted);
+        setRawVerificationRequests(sorted);
         writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, sorted);
       },
       (err) => {
@@ -2533,7 +2588,7 @@ export function useSocialStore() {
     setMessagesByChat({});
     setFetchedChatUsers({});
     attemptedChatUserFetchRef.current.clear();
-    setNotifications([]);
+    setRawNotifications([]);
     const resetProfile = createInitialMemberProfile({
       onboardingCompleted: false,
     });
@@ -2609,7 +2664,7 @@ export function useSocialStore() {
         read: false,
         createdAtMs: now,
       };
-      setNotifications((prev) => [newNotif, ...prev]);
+      setRawNotifications((prev) => [newNotif, ...prev]);
       showToast(newNotif);
       broadcastRef.current?.postMessage({
         type: 'notif:new',
@@ -2643,41 +2698,190 @@ export function useSocialStore() {
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
       requireAuthorized();
-      const next: UserProfile = {
-        ...profile,
-        ...updates,
-        handle: updates.handle
-          ? sanitizeHandle(updates.handle)
-          : profile.handle,
-        updatedAtMs: Date.now(),
-      };
+      const previousProfile = profile;
+      const next = normalizeProfileUpdateFields(profile, updates);
+
       setProfile(next);
+      writeStorage(STORAGE_KEYS.PROFILE, next);
       setRegisteredAccounts((prev) => {
         const exists = prev.some((acc) => acc.uid === next.uid);
         return exists
           ? prev.map((acc) => (acc.uid === next.uid ? next : acc))
           : [next, ...prev];
       });
+      setLocalPosts((prev) =>
+        prev.map((p) =>
+          p.authorId === next.uid
+            ? {
+                ...p,
+                authorName: next.displayName,
+                authorHandle: next.handle,
+                authorAvatar: next.avatarUrl,
+              }
+            : p
+        )
+      );
+      setRemotePosts((prev) =>
+        prev.map((p) =>
+          p.authorId === next.uid
+            ? {
+                ...p,
+                authorName: next.displayName,
+                authorHandle: next.handle,
+                authorAvatar: next.avatarUrl,
+              }
+            : p
+        )
+      );
+      setLocalStories((prev) =>
+        prev.map((s) =>
+          s.authorId === next.uid
+            ? {
+                ...s,
+                authorName: next.displayName,
+                authorHandle: next.handle,
+                authorAvatar: next.avatarUrl,
+              }
+            : s
+        )
+      );
+      setRemoteStories((prev) =>
+        prev.map((s) =>
+          s.authorId === next.uid
+            ? {
+                ...s,
+                authorName: next.displayName,
+                authorHandle: next.handle,
+                authorAvatar: next.avatarUrl,
+              }
+            : s
+        )
+      );
+      setCommentsByPost((prev) => {
+        let changed = false;
+        const nextMap: Record<string, PostComment[]> = {};
+        for (const [postId, list] of Object.entries(prev)) {
+          const updatedList = list.map((c) => {
+            if (c.authorId !== next.uid) return c;
+            changed = true;
+            return {
+              ...c,
+              authorName: next.displayName,
+              authorHandle: next.handle,
+              authorAvatar: next.avatarUrl,
+            };
+          });
+          nextMap[postId] = updatedList;
+        }
+        return changed ? nextMap : prev;
+      });
+      setRawVerificationRequests((prev) =>
+        prev.map((req) =>
+          req.uid === next.uid
+            ? {
+                ...req,
+                displayName: next.displayName,
+                handle: next.handle,
+                avatarUrl: next.avatarUrl,
+              }
+            : req
+        )
+      );
+      setRawNotifications((prev) =>
+        prev.map((notif) =>
+          notif.actorId === next.uid
+            ? enrichNotificationWithAuthor(notif, [], next)
+            : notif
+        )
+      );
+      setMessagesByChat((prev) => {
+        let changed = false;
+        const updatedChats: Record<string, ChatMessage[]> = {};
+        for (const [chatId, list] of Object.entries(prev)) {
+          const nextList = list.map((m) => {
+            if (m.senderId !== next.uid) return m;
+            changed = true;
+            return {
+              ...m,
+              senderName: next.displayName,
+              senderAvatar: next.avatarUrl,
+            };
+          });
+          updatedChats[chatId] = nextList;
+        }
+        return changed ? updatedChats : prev;
+      });
+
+      broadcastRef.current?.postMessage({
+        type: 'profile:updated',
+        profile: next,
+      });
 
       if (firebaseUser) {
         const path = `users/${firebaseUser.uid}`;
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
         try {
-          await updateDoc(doc(db, 'users', firebaseUser.uid), {
-            displayName: next.displayName,
-            handle: next.handle,
-            bio: next.bio,
-            avatarUrl: next.avatarUrl,
-            location: next.location,
-            interests: next.interests.slice(0, 8),
-            onboardingCompleted: next.onboardingCompleted,
-            updatedAt: serverTimestamp(),
-          });
+          try {
+            await updateDoc(userDocRef, {
+              displayName: next.displayName,
+              handle: next.handle,
+              bio: next.bio,
+              avatarUrl: next.avatarUrl,
+              location: next.location,
+              interests: next.interests,
+              onboardingCompleted: next.onboardingCompleted,
+              updatedAt: serverTimestamp(),
+            });
+          } catch (updateErr) {
+            const code =
+              updateErr &&
+              typeof updateErr === 'object' &&
+              'code' in updateErr
+                ? String((updateErr as { code?: unknown }).code).toLowerCase()
+                : '';
+            if (code === 'not-found' || code.endsWith('/not-found')) {
+              await setDoc(userDocRef, {
+                uid: firebaseUser.uid,
+                displayName: next.displayName,
+                handle: next.handle,
+                bio: next.bio,
+                avatarUrl: next.avatarUrl,
+                location: next.location,
+                interests: next.interests,
+                followersCount: next.followersCount,
+                followingCount: next.followingCount,
+                isVerified: Boolean(
+                  next.isVerified || isAllowlistedAdminEmail(firebaseUser.email)
+                ),
+                onboardingCompleted: next.onboardingCompleted,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+            } else {
+              throw updateErr;
+            }
+          }
+
+          void updateAuthUserProfile(next.displayName, next.avatarUrl).catch(
+            () => {}
+          );
+
+          if (isAllowlistedAdminEmail(firebaseUser.email)) {
+            void updateDoc(doc(db, 'admins', firebaseUser.uid), {
+              displayName: next.displayName,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, path);
+          if (!isTransientFirestoreError(err)) {
+            setProfile(previousProfile);
+            writeStorage(STORAGE_KEYS.PROFILE, previousProfile);
+            handleFirestoreError(err, OperationType.UPDATE, path);
+          }
         }
       }
     },
-    [firebaseUser, profile]
+    [firebaseUser, profile, requireAuthorized]
   );
 
   const updatePrivateSettings = useCallback(
@@ -4046,9 +4250,16 @@ export function useSocialStore() {
 
   const markNotificationRead = useCallback(
     async (notificationId: string) => {
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))
-      );
+      setRawNotifications((prev) => {
+        const next = prev.map((n) =>
+          n.id === notificationId ? { ...n, read: true } : n
+        );
+        if (!firebaseUser) {
+          writeStorage(STORAGE_KEYS.NOTIFICATIONS, next);
+        }
+        return next;
+      });
+      setActiveToast((prev) => (prev?.id === notificationId ? null : prev));
       if (firebaseUser) {
         updateDoc(
           doc(db, 'users', firebaseUser.uid, 'notifications', notificationId),
@@ -4169,7 +4380,7 @@ export function useSocialStore() {
       const localMatch = resolvePublicProfile(
         targetUid,
         profile,
-        communityUsers,
+        allKnownChatUsers,
         fallbackPost ? [fallbackPost, ...posts] : posts
       );
       if (
@@ -4182,8 +4393,8 @@ export function useSocialStore() {
           const snap = await readDocResilient(doc(db, 'users', targetUid));
           if (snap && snap.exists()) {
             const d = snap.data();
-            return {
-              uid: d.uid,
+            const fetchedProfile: UserProfile = {
+              uid: d.uid || snap.id,
               displayName: d.displayName,
               handle: d.handle,
               bio: d.bio || '',
@@ -4197,6 +4408,11 @@ export function useSocialStore() {
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
             };
+            setFetchedChatUsers((prev) => ({
+              ...prev,
+              [fetchedProfile.uid]: fetchedProfile,
+            }));
+            return fetchedProfile;
           }
         } catch (err) {
           if (!isTransientFirestoreError(err)) {
@@ -4206,11 +4422,18 @@ export function useSocialStore() {
       }
       return localMatch;
     },
-    [communityUsers, firebaseUser, posts, profile]
+    [allKnownChatUsers, communityUsers, firebaseUser, posts, profile]
   );
 
   const markAllNotificationsRead = useCallback(async () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setRawNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, read: true }));
+      if (!firebaseUser) {
+        writeStorage(STORAGE_KEYS.NOTIFICATIONS, next);
+      }
+      return next;
+    });
+    setActiveToast(null);
     if (firebaseUser) {
       const batch = writeBatch(db);
       notifications
@@ -4228,13 +4451,14 @@ export function useSocialStore() {
   const deleteNotification = useCallback(
     async (notificationId: string) => {
       if (!notificationId) return;
-      setNotifications((prev) => {
+      setRawNotifications((prev) => {
         const next = deleteNotificationItem(prev, notificationId);
         if (!firebaseUser) {
           writeStorage(STORAGE_KEYS.NOTIFICATIONS, next);
         }
         return next;
       });
+      setActiveToast((prev) => (prev?.id === notificationId ? null : prev));
       if (firebaseUser) {
         const path = `users/${firebaseUser.uid}/notifications/${notificationId}`;
         try {
@@ -4253,7 +4477,8 @@ export function useSocialStore() {
 
   const clearAllNotifications = useCallback(async () => {
     const existing = notifications;
-    setNotifications([]);
+    setRawNotifications([]);
+    setActiveToast(null);
     if (!firebaseUser) {
       writeStorage(STORAGE_KEYS.NOTIFICATIONS, []);
       return;

@@ -804,7 +804,7 @@ export function AdminView({
                   aria-label="Administrator account options"
                   className="min-h-[40px] px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 flex items-center gap-2 cursor-pointer transition-colors"
                 >
-                  <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="xs" />
+                  <Avatar src={currentProfile.avatarUrl} name={currentProfile.displayName} size="sm" />
                   <span className="hidden sm:inline-flex items-center gap-1 text-xs font-semibold max-w-[120px] truncate text-slate-900 dark:text-white">
                     <span className="truncate">{currentProfile.displayName}</span>
                     <VerifiedBadge size={12} />
@@ -832,7 +832,7 @@ export function AdminView({
                       </div>
                       <div className="mt-2 flex items-center gap-1.5">
                         <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[10px] font-mono font-bold text-blue-700 dark:text-blue-300 uppercase">
-                          {adminAuth.role || 'Super Admin'}
+                          {adminAuth.reason === 'ok-admin-doc' ? 'Assigned Admin' : 'Super Admin'}
                         </span>
                       </div>
                     </div>
@@ -1321,7 +1321,7 @@ export function AdminView({
                   </p>
                   <div className="flex items-center gap-2 pt-0.5">
                     <span className="px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[10px] font-mono font-bold text-blue-700 dark:text-blue-300 uppercase">
-                      {adminAuth.role || 'Super Admin'}
+                      {adminAuth.reason === 'ok-admin-doc' ? 'Assigned Admin' : 'Super Admin'}
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-mono font-semibold">
                       Verification Badge Active

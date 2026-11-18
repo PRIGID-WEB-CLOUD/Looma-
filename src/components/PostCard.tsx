@@ -31,14 +31,17 @@ import {
   extractFirstUrl,
   formatRelativeTime,
   mergeCategoryNames,
+  normalizeAssetUrl,
   parseRichUrl,
   POST_CATEGORIES,
+  resolvePostLinkPreview,
   resolvePostMediaDescriptor,
   sanitizeMediaTitle,
   validateCommentInput,
   validatePostInput,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
+import { ExpandablePostText } from './ExpandablePostText';
 import { MediaViewerModal } from './MediaViewerModal';
 import { RichText } from './RichText';
 import { VerifiedBadge } from './VerifiedBadge';
@@ -334,24 +337,11 @@ export function PostCard({
     return parsed && parsed.kind === 'audio' ? parsed : null;
   }, [captionUrl, post.audioUrl, post.linkUrl, post.mediaTitle]);
 
-  const parsedLink = useMemo(() => {
-    const raw = post.linkUrl || captionUrl || '';
-    if (!raw) return null;
-    const parsed = parseRichUrl(raw, post.mediaTitle || undefined);
-    if (!parsed) return null;
-    if (
-      parsed.kind === 'youtube' ||
-      parsed.kind === 'vimeo' ||
-      parsed.kind === 'video' ||
-      parsed.kind === 'audio'
-    ) {
-      return null;
-    }
-    return parsed;
-  }, [captionUrl, post.linkUrl, post.mediaTitle]);
+  const parsedLink = useMemo(() => resolvePostLinkPreview(post), [post]);
 
-  const resolvedImageUrl =
-    post.imageUrl || (parsedLink?.kind === 'image' ? parsedLink.url : '');
+  const resolvedImageUrl = normalizeAssetUrl(
+    post.imageUrl || (parsedLink?.kind === 'image' ? parsedLink.url : '')
+  );
 
   const localMediaDescriptor = useMemo(
     () => resolvePostMediaDescriptor(post),
@@ -537,8 +527,8 @@ export function PostCard({
         </form>
       ) : (
         post.caption && (
-          <div className="mt-3 text-[15px] leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line break-words">
-            <RichText
+          <div className="mt-3">
+            <ExpandablePostText
               text={post.caption}
               onHashtagClick={onSelectHashtag}
               onMentionClick={onMentionClick}

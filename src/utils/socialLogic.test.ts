@@ -11,7 +11,10 @@ import {
   createDirectThreadMemberIds,
   DIRECT_CHAT_SHARED_TITLE,
   enrichCommentWithVerifiedAuthor,
+  enrichNotificationWithAuthor,
   enrichPostWithVerifiedAuthor,
+  enrichStoryGroupsWithVerifiedAuthors,
+  enrichVerificationRequestWithUser,
   extractFirstUrl,
   filterUsersByQuery,
   findAccountByHandle,
@@ -22,11 +25,14 @@ import {
   isUserOnline,
   matchesDirectThreadParticipants,
   normalizeAssetUrl,
+  normalizeProfileUpdateFields,
   paginateFeed,
   parseRichUrl,
   resolveAppStage,
   resolveChatThreadForViewer,
   resolveDirectChatParticipant,
+  resolveLiveProfile,
+  resolvePostLinkPreview,
   resolvePublicProfile,
   sanitizeHandle,
   isOpaqueMediaIdentifier,
@@ -43,6 +49,9 @@ import {
   parseTextWithTagsAndMentions,
   getMentionQueryAtCursor,
   getHashtagQueryAtCursor,
+  filterActiveAnnouncementsForMember,
+  mergeAnnouncementsIntoNotifications,
+  extractAnnouncementIdFromNotificationId,
   filterCreatorsForMention,
   filterHashtags,
   validateGroupChatInput,
@@ -89,6 +98,7 @@ import type {
   CallSession,
   Post,
   PostComment,
+  StoryGroup,
   StoryItem,
   UserProfile,
 } from '../types/social';
@@ -1616,5 +1626,423 @@ test('verification badge propagation syncs live status across posts, comments, a
   );
   assert.equal(grantedSelfComment.authorVerified, true);
 });
+
+test('prefixed opaque upload filenames and attached photo mediaTitle never leak into external link previews', () => {
+  assert.equal(isOpaqueMediaIdentifier('file_00000000f47082108baed036cbd83873'), true);
+  assert.equal(isOpaqueMediaIdentifier('img_a1b2c3d4e5f67890'), true);
+  assert.equal(isOpaqueMediaIdentifier('screenshot_014b2671aabbccddeeff'), true);
+  assert.equal(
+    sanitizeUploadedFilenameTitle('file_00000000f47082108baed036cbd83873.png'),
+    ''
+  );
+  assert.equal(sanitizeMediaTitle('file_00000000f47082108baed036cbd83873'), '');
+
+  const previewWithLegacyOpaqueTitle = resolvePostLinkPreview({
+    caption: 'Check https://looma.prigidcollection.workers.dev/ for the new badge!',
+    linkUrl: 'https://looma.prigidcollection.workers.dev/',
+    imageUrl: '/api/storage/file/uploads/u1/posts/123-abc.png',
+    mediaTitle: 'file_00000000f47082108baed036cbd83873',
+  });
+  assert.equal(previewWithLegacyOpaqueTitle?.displayTitle, 'looma.prigidcollection.workers.dev');
+  assert.equal(previewWithLegacyOpaqueTitle?.hostname, 'looma.prigidcollection.workers.dev');
+
+  // Even a valid human image title must not overwrite the external link card title when an image is also attached
+  const previewWithPhotoAndLink = resolvePostLinkPreview({
+    caption: 'Visit https://looma.prigidcollection.workers.dev/',
+    linkUrl: 'https://looma.prigidcollection.workers.dev/',
+    imageUrl: '/api/storage/file/uploads/u1/posts/photo.jpg',
+    mediaTitle: 'Studio Launch Banner',
+  });
+  assert.equal(previewWithPhotoAndLink?.displayTitle, 'looma.prigidcollection.workers.dev');
+
+  // Standalone link post with explicit custom mediaTitle preserves the link title
+  const standaloneLink = resolvePostLinkPreview({
+    caption: 'Read the notes https://example.com/guide',
+    linkUrl: 'https://example.com/guide',
+    imageUrl: '',
+    mediaTitle: 'Looma Guide',
+  });
+  assert.equal(standaloneLink?.displayTitle, 'Looma Guide');
+});
+
+test('parseTextWithTagsAndMentions preserves paragraphs, emojis, hashtags, mentions, and clickable URLs', () => {
+  const input =
+    '💙 Big update!\n\nVisit https://looma.prigidcollection.workers.dev/ and (https://en.wikipedia.org/wiki/Blue_(color)).\nPing @maya.lin for #Design & #Looma!';
+  const tokens = parseTextWithTagsAndMentions(input);
+
+  assert.equal(
+    tokens.some((t) => t.type === 'url' && t.value === 'https://looma.prigidcollection.workers.dev/'),
+    true
+  );
+  assert.equal(
+    tokens.some((t) => t.type === 'url' && t.value === 'https://en.wikipedia.org/wiki/Blue_(color)'),
+    true
+  );
+  assert.equal(tokens.some((t) => t.type === 'mention' && t.value === 'maya.lin'), true);
+  assert.equal(tokens.some((t) => t.type === 'hashtag' && t.value === 'design'), true);
+  assert.equal(tokens.some((t) => t.type === 'hashtag' && t.value === 'looma'), true);
+  assert.equal(tokens.map((t) => t.raw).join(''), input);
+});
+
+test('filterAndSortFeed handles hashtag click queries cleanly', () => {
+  const p1: Post = {
+    ...makePost(1, 'Design'),
+    caption: 'New blue badge launch!\n#Design, #Looma',
+  };
+  const p2: Post = {
+    ...makePost(2, 'Travel'),
+    caption: 'Morning walk in Kyoto #travel',
+  };
+
+  const res = filterAndSortFeed({
+    posts: [p1, p2],
+    pageSize: 10,
+    visibleCount: 10,
+    filter: 'All',
+    searchQuery: '#design',
+  });
+  assert.deepEqual(
+    res.items.map((p) => p.id),
+    ['post_1']
+  );
+});
+
+test('announcements merge into Activity notifications and stay suppressed once read or dismissed', () => {
+  const announcements = [
+    {
+      id: 'ann_1',
+      title: 'Blue Badge Rollout',
+      body: 'Verified creators now see the blue badge across Looma.',
+      severity: 'info' as const,
+      audience: 'all' as const,
+      active: true,
+      authorUid: 'admin_1',
+      authorName: 'Admin',
+      createdAtMs: 5000,
+    },
+    {
+      id: 'ann_2',
+      title: 'Verified Only Note',
+      body: 'Early access test',
+      severity: 'warning' as const,
+      audience: 'verified' as const,
+      active: true,
+      createdAtMs: 6000,
+    },
+  ];
+  const regularNotifs: AppNotification[] = [
+    {
+      id: 'n_1',
+      recipientId: 'u_1',
+      actorId: 'u_2',
+      actorName: 'Maya',
+      actorAvatar: '',
+      type: 'like',
+      title: 'New like',
+      body: 'Maya liked your post',
+      targetPostId: 'p_1',
+      read: true,
+      createdAtMs: 4000,
+    },
+  ];
+
+  const mergedUnread = mergeAnnouncementsIntoNotifications(regularNotifs, announcements, {
+    recipientId: 'u_1',
+    isVerified: false,
+    isAdmin: false,
+    readAnnouncementIds: [],
+    deletedAnnouncementIds: [],
+  });
+  assert.deepEqual(
+    mergedUnread.map((n) => n.id),
+    ['ann_ann_1', 'n_1']
+  );
+  assert.equal(mergedUnread[0].read, false);
+  assert.equal(mergedUnread[0].isAnnouncement, true);
+  assert.equal(extractAnnouncementIdFromNotificationId(mergedUnread[0].id), 'ann_1');
+  assert.equal(countUnreadNotifications(mergedUnread), 1);
+
+  // Once marked read, it stays read in Activity and never pops up in banner again
+  const mergedRead = mergeAnnouncementsIntoNotifications(regularNotifs, announcements, {
+    recipientId: 'u_1',
+    isVerified: false,
+    isAdmin: false,
+    readAnnouncementIds: ['ann_1'],
+    deletedAnnouncementIds: [],
+  });
+  assert.equal(mergedRead[0].read, true);
+  assert.equal(countUnreadNotifications(mergedRead), 0);
+
+  const bannerAfterRead = filterActiveAnnouncementsForMember(announcements, {
+    isVerified: false,
+    isAdmin: false,
+    readIds: ['ann_1'],
+  });
+  assert.equal(bannerAfterRead.length, 0);
+});
+
+test('normalizeProfileUpdateFields sanitizes and enforces Firestore schema bounds on profile updates', () => {
+  const base: UserProfile = {
+    uid: 'u_me',
+    displayName: 'Alex Rivera',
+    handle: 'alex.rivera',
+    bio: 'Old bio',
+    avatarUrl: '/images/old.jpg',
+    location: 'San Francisco',
+    interests: ['Design'],
+    followersCount: 12,
+    followingCount: 8,
+    onboardingCompleted: true,
+    isVerified: true,
+    createdAtMs: 1000,
+    updatedAtMs: 1000,
+  };
+
+  const normalized = normalizeProfileUpdateFields(
+    base,
+    {
+      displayName: `  ${'Jordan Blake '.repeat(10)}  `,
+      handle: '@Jordan Blake!!',
+      bio: ` ${'b'.repeat(320)} `,
+      location: ` ${'Tokyo Studio '.repeat(12)} `,
+      avatarUrl: '  /src/assets/images/avatar_maya.jpg  ',
+      interests: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', '   ', 'x'.repeat(50)],
+    },
+    9999
+  );
+
+  assert.equal(normalized.displayName.length, 60);
+  assert.equal(normalized.handle, 'jordanblake');
+  assert.equal(normalized.bio.length, 280);
+  assert.equal(normalized.location.length, 80);
+  assert.equal(normalized.avatarUrl, '/images/avatar_maya.jpg');
+  assert.equal(normalized.interests.length, 8);
+  assert.equal(normalized.updatedAtMs, 9999);
+  assert.equal(normalized.isVerified, true);
+
+  // Blank displayName preserves existing name safely
+  const blankName = normalizeProfileUpdateFields(base, { displayName: '   ' }, 5000);
+  assert.equal(blankName.displayName, 'Alex Rivera');
+});
+
+test('profile name, handle, and avatar updates dynamically reflect across posts, comments, stories, and live profiles', () => {
+  const updatedMe: UserProfile = {
+    uid: 'u_me',
+    displayName: 'Jordan Blake',
+    handle: 'jordan.blake',
+    bio: 'Architectural photographer',
+    avatarUrl: 'https://cdn.example.com/jordan.jpg',
+    location: 'Kyoto',
+    interests: ['Architecture'],
+    followersCount: 20,
+    followingCount: 10,
+    onboardingCompleted: true,
+    isVerified: true,
+    createdAtMs: 1000,
+    updatedAtMs: 5000,
+  };
+
+  const updatedCreator: UserProfile = {
+    ...updatedMe,
+    uid: 'u_creator',
+    displayName: 'Maya Lin Studio',
+    handle: 'maya.studio',
+    avatarUrl: 'https://cdn.example.com/maya-new.jpg',
+    isVerified: true,
+  };
+
+  const legacyPost: Post = {
+    ...makePost(1, 'Design'),
+    authorId: 'u_me',
+    authorName: 'Alex Rivera',
+    authorHandle: 'alex.rivera',
+    authorAvatar: '/images/old.jpg',
+    authorVerified: false,
+  };
+  const enrichedPost = enrichPostWithVerifiedAuthor(legacyPost, [], updatedMe);
+  assert.equal(enrichedPost.authorName, 'Jordan Blake');
+  assert.equal(enrichedPost.authorHandle, 'jordan.blake');
+  assert.equal(enrichedPost.authorAvatar, 'https://cdn.example.com/jordan.jpg');
+  assert.equal(enrichedPost.authorVerified, true);
+
+  const legacyComment: PostComment = {
+    id: 'c_me',
+    postId: 'post_1',
+    authorId: 'u_me',
+    authorName: 'Alex Rivera',
+    authorHandle: 'alex.rivera',
+    authorAvatar: '/images/old.jpg',
+    authorVerified: false,
+    text: 'Testing updated name',
+    createdAtMs: 2000,
+  };
+  const enrichedComment = enrichCommentWithVerifiedAuthor(legacyComment, [], updatedMe);
+  assert.equal(enrichedComment.authorName, 'Jordan Blake');
+  assert.equal(enrichedComment.authorHandle, 'jordan.blake');
+  assert.equal(enrichedComment.authorAvatar, 'https://cdn.example.com/jordan.jpg');
+  assert.equal(enrichedComment.authorVerified, true);
+
+  const legacyStoryGroup: StoryGroup = {
+    authorId: 'u_me',
+    authorName: 'Alex Rivera',
+    authorHandle: 'alex.rivera',
+    authorAvatar: '/images/old.jpg',
+    authorVerified: false,
+    latestCreatedAtMs: 3000,
+    hasUnviewed: true,
+    items: [
+      {
+        id: 'st_1',
+        authorId: 'u_me',
+        authorName: 'Alex Rivera',
+        authorHandle: 'alex.rivera',
+        authorAvatar: '/images/old.jpg',
+        imageUrl: '/images/story.jpg',
+        caption: 'Studio light',
+        createdAtMs: 3000,
+        expiresAtMs: 90000,
+      },
+    ],
+  };
+  const [enrichedGroup] = enrichStoryGroupsWithVerifiedAuthors(
+    [legacyStoryGroup],
+    [],
+    updatedMe
+  );
+  assert.equal(enrichedGroup.authorName, 'Jordan Blake');
+  assert.equal(enrichedGroup.authorHandle, 'jordan.blake');
+  assert.equal(enrichedGroup.authorAvatar, 'https://cdn.example.com/jordan.jpg');
+  assert.equal(enrichedGroup.authorVerified, true);
+  assert.equal(enrichedGroup.items[0].authorName, 'Jordan Blake');
+  assert.equal(enrichedGroup.items[0].authorHandle, 'jordan.blake');
+
+  // resolveLiveProfile reflects live self & community updates over stale route snapshots
+  const staleSelf: UserProfile = { ...updatedMe, displayName: 'Alex Rivera', handle: 'alex.rivera' };
+  const staleOther: UserProfile = { ...updatedCreator, displayName: 'Maya Lin', handle: 'maya.lin' };
+  assert.equal(resolveLiveProfile(staleSelf, updatedMe, [updatedCreator])?.displayName, 'Jordan Blake');
+  assert.equal(resolveLiveProfile(staleOther, updatedMe, [updatedCreator])?.displayName, 'Maya Lin Studio');
+  assert.equal(resolveLiveProfile(null, updatedMe, [updatedCreator]), null);
+});
+
+test('enrichNotificationWithAuthor and enrichVerificationRequestWithUser propagate updated or cleared profile pictures', () => {
+  const me: UserProfile = {
+    uid: 'u_me',
+    displayName: 'Jordan Blake',
+    handle: 'jordan.blake',
+    bio: '',
+    avatarUrl: '/api/storage/file/uploads/u_me/avatars/new-me.png',
+    location: 'Kyoto',
+    interests: [],
+    followersCount: 1,
+    followingCount: 1,
+    isVerified: true,
+    onboardingCompleted: true,
+    createdAtMs: 1000,
+    updatedAtMs: 5000,
+  };
+  const creator: UserProfile = {
+    ...me,
+    uid: 'u_creator',
+    displayName: 'Maya Lin Studio',
+    handle: 'maya.studio',
+    avatarUrl: '/api/storage/file/uploads/u_creator/avatars/new-maya.jpg',
+  };
+
+  const staleOtherNotif = {
+    id: 'n_1',
+    recipientId: 'u_me',
+    actorId: 'u_creator',
+    actorName: 'Maya Lin',
+    actorAvatar: '/images/old-maya.jpg',
+    type: 'like' as const,
+    title: 'New like',
+    body: 'Liked your post',
+    targetPostId: 'p_1',
+    read: false,
+    createdAtMs: 2000,
+  };
+  const enrichedOther = enrichNotificationWithAuthor(staleOtherNotif, [creator], me);
+  assert.equal(enrichedOther.actorName, 'Maya Lin Studio');
+  assert.equal(
+    enrichedOther.actorAvatar,
+    '/api/storage/file/uploads/u_creator/avatars/new-maya.jpg'
+  );
+
+  // Branded Looma system notification keeps 'Looma' name while updating avatar
+  const staleSystemNotif = {
+    id: 'n_sys',
+    recipientId: 'u_me',
+    actorId: 'u_me',
+    actorName: 'Looma',
+    actorAvatar: '/images/old-me.jpg',
+    type: 'system' as const,
+    title: 'Browser Push Enabled',
+    body: 'Alerts enabled',
+    targetPostId: '',
+    read: false,
+    createdAtMs: 2100,
+  };
+  const enrichedSystem = enrichNotificationWithAuthor(staleSystemNotif, [creator], me);
+  assert.equal(enrichedSystem.actorName, 'Looma');
+  assert.equal(
+    enrichedSystem.actorAvatar,
+    '/api/storage/file/uploads/u_me/avatars/new-me.png'
+  );
+
+  // Verification requests also reflect live avatar, displayName, and handle
+  const staleReq = {
+    id: 'vr_1',
+    uid: 'u_creator',
+    displayName: 'Maya Lin',
+    handle: 'maya.lin',
+    avatarUrl: '/images/old-maya.jpg',
+    reason: 'Creator profile',
+    links: [],
+    status: 'pending' as const,
+    reviewerUid: '',
+    reviewerNote: '',
+    createdAtMs: 3000,
+    updatedAtMs: 3000,
+  };
+  const enrichedReq = enrichVerificationRequestWithUser(staleReq, [creator], me);
+  assert.equal(enrichedReq.displayName, 'Maya Lin Studio');
+  assert.equal(enrichedReq.handle, 'maya.studio');
+  assert.equal(
+    enrichedReq.avatarUrl,
+    '/api/storage/file/uploads/u_creator/avatars/new-maya.jpg'
+  );
+
+  // Explicitly cleared avatar ('') clears stale avatars across notifications, requests, posts, and group threads
+  const clearedCreator: UserProfile = { ...creator, avatarUrl: '' };
+  assert.equal(
+    enrichNotificationWithAuthor(staleOtherNotif, [clearedCreator], me).actorAvatar,
+    ''
+  );
+  assert.equal(
+    enrichVerificationRequestWithUser(staleReq, [clearedCreator], me).avatarUrl,
+    ''
+  );
+  const resolvedGroup = resolveChatThreadForViewer(
+    {
+      id: 'chat_grp',
+      isGroup: true,
+      title: 'Design Team',
+      partnerAvatar: '/images/stale-group-lead.jpg',
+      partnerHandle: '2 members',
+      memberIds: ['u_me', 'u_creator'],
+      lastMessageText: 'hi',
+      lastMessageSenderId: 'u_me',
+      createdAtMs: 1000,
+      updatedAtMs: 2000,
+    },
+    'u_me',
+    [clearedCreator],
+    me
+  );
+  assert.equal(resolvedGroup.partnerAvatar, '');
+});
+
+
+
 
 

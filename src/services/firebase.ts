@@ -211,6 +211,26 @@ export async function reloadCurrentUser(): Promise<User | null> {
   return auth.currentUser;
 }
 
+export async function updateAuthUserProfile(
+  displayName?: string,
+  photoURL?: string
+): Promise<void> {
+  if (!auth.currentUser) return;
+  const payload: { displayName?: string; photoURL?: string } = {};
+  if (typeof displayName === 'string' && displayName.trim()) {
+    payload.displayName = displayName.trim().slice(0, 60);
+  }
+  if (
+    typeof photoURL === 'string' &&
+    /^https?:\/\//i.test(photoURL.trim()) &&
+    photoURL.trim().length <= 1500
+  ) {
+    payload.photoURL = photoURL.trim();
+  }
+  if (Object.keys(payload).length === 0) return;
+  await updateProfile(auth.currentUser, payload);
+}
+
 export async function deleteCurrentAuthUser(): Promise<void> {
   if (!auth.currentUser) {
     throw new Error('No signed-in Firebase account to delete.');
@@ -221,3 +241,4 @@ export async function deleteCurrentAuthUser(): Promise<void> {
 export async function signOutAccount(): Promise<void> {
   await signOut(auth);
 }
+

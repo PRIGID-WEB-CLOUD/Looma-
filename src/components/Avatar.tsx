@@ -22,7 +22,9 @@ const DOT_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
 };
 
 export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) {
-  const [failed, setFailed] = useState(false);
+  const cleanSrc = src?.trim() || '';
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = Boolean(cleanSrc) && failedSrc === cleanSrc;
   const initials =
     name
       .split(' ')
@@ -32,7 +34,7 @@ export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) 
       .join('') || 'L';
 
   const avatarNode =
-    !src || failed ? (
+    !cleanSrc || failed ? (
       <div
         aria-hidden="true"
         className={`${SIZE_CLASSES[size]} shrink-0 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-display font-semibold flex items-center justify-center border border-slate-300/70 dark:border-slate-700`}
@@ -41,10 +43,10 @@ export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) 
       </div>
     ) : (
       <img
-        src={src}
+        src={cleanSrc}
         alt={name}
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(cleanSrc || null)}
         className={`${SIZE_CLASSES[size]} shrink-0 rounded-full object-cover bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-700`}
       />
     );

@@ -14,6 +14,7 @@ import {
   filterAndSortFeed,
   filterMediaPosts,
   mergeCategoryNames,
+  normalizeHashtag,
   POST_CATEGORIES,
 } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
@@ -142,11 +143,24 @@ export function FeedView({
   const filterOptions: { id: FeedFilter; label: string }[] = [
     { id: 'All', label: 'All' },
     { id: 'Following', label: 'Following' },
-    ...categoryList.map((cat) => ({ id: cat, label: cat })),
   ];
 
   const hasActiveFilterOrSearch =
     feedFilter !== 'All' || Boolean(searchQuery.trim());
+
+  const activeHashtag = searchQuery.trim().startsWith('#')
+    ? normalizeHashtag(searchQuery)
+    : '';
+
+  const applyHashtagFilter = (tag: string) => {
+    const clean = normalizeHashtag(tag);
+    setFeedFilter('All');
+    setSearchQuery(clean ? `#${clean}` : '');
+    onSelectHashtag?.(clean || tag);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
@@ -271,6 +285,29 @@ export function FeedView({
             </button>
           </div>
         </div>
+
+        {activeHashtag && (
+          <div
+            data-testid="active-hashtag-filter"
+            className="rounded-xl border border-blue-200 dark:border-blue-900/70 bg-blue-50/80 dark:bg-blue-950/30 px-3.5 py-2 flex items-center justify-between gap-3 text-xs"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-bold text-blue-700 dark:text-blue-300 truncate">
+                #{activeHashtag}
+              </span>
+              <span className="text-slate-600 dark:text-slate-400 tabular-nums shrink-0">
+                {filteredTotal} {filteredTotal === 1 ? 'post' : 'posts'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="text-blue-700 dark:text-blue-300 font-semibold hover:underline cursor-pointer shrink-0"
+            >
+              Clear filter
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Feed Cards */}
@@ -333,10 +370,7 @@ export function FeedView({
               onShareToChat={onShareToChat}
               onReportPost={onReportPost}
               onAuthorClick={onAuthorClick}
-              onSelectHashtag={(tag) => {
-                setSearchQuery(`#${tag}`);
-                onSelectHashtag?.(tag);
-              }}
+              onSelectHashtag={applyHashtagFilter}
               onMentionClick={onMentionClick}
               onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
             />
@@ -378,10 +412,7 @@ export function FeedView({
         onToggleBookmark={onToggleBookmark}
         onShareToStory={onShareToStory}
         onAuthorClick={onAuthorClick}
-        onSelectHashtag={(tag) => {
-          setSearchQuery(`#${tag}`);
-          onSelectHashtag?.(tag);
-        }}
+        onSelectHashtag={applyHashtagFilter}
         onMentionClick={onMentionClick}
       />
     </section>

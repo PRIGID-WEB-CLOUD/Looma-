@@ -142,7 +142,7 @@ export function ProfileSettingsView({
   );
 
   const [error, setError] = useState<string | null>(null);
-  const [savedNotice, setSavedNotice] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeletePanel, setShowDeletePanel] = useState(false);
@@ -151,10 +151,13 @@ export function ProfileSettingsView({
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const syncedUidRef = useRef<string>(profile.uid);
+  const isDirtyRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (syncedUidRef.current !== profile.uid) {
+    const uidChanged = syncedUidRef.current !== profile.uid;
+    if (uidChanged || !isDirtyRef.current) {
       syncedUidRef.current = profile.uid;
+      isDirtyRef.current = false;
       setDisplayName(profile.displayName);
       setHandle(profile.handle);
       setLocation(profile.location);
@@ -174,20 +177,27 @@ export function ProfileSettingsView({
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
-    setSavedNotice(false);
+    setSavedNotice(null);
     setAvatarUploading(true);
     try {
-      const previousUrl = avatarUrl;
+      const previousUnsavedUrl = avatarUrl;
+      const previousSavedUrl = profile.avatarUrl;
       const uploaded = await uploadMediaToCloudflareR2(file, 'avatars');
       if (uploaded.kind !== 'image') {
-        void deleteUploadedMedia(uploaded.url);
+        void deleteUploadedMedia(uploaded.url, { ignoreNotFound: true }).catch(
+          () => {}
+        );
         setError('Please select a valid image file (PNG, JPG, WebP, GIF, or AVIF).');
         return;
       }
-      if (previousUrl !== profile.avatarUrl) {
-        void deleteUploadedMedia(previousUrl);
-      }
       setAvatarUrl(uploaded.url);
+      await onUpdateProfile({ avatarUrl: uploaded.url });
+      if (previousUnsavedUrl && previousUnsavedUrl !== previousSavedUrl) {
+        void deleteUploadedMedia(previousUnsavedUrl, { ignoreNotFound: true }).catch(
+          () => {}
+        );
+      }
+      setSavedNotice('Profile photo updated');
     } catch (err) {
       setError(
         err instanceof Error
@@ -201,7 +211,8 @@ export function ProfileSettingsView({
   };
 
   const toggleInterest = (topic: string) => {
-    setSavedNotice(false);
+    isDirtyRef.current = true;
+    setSavedNotice(null);
     setInterests((prev) => {
       if (prev.includes(topic)) {
         return prev.filter((t) => t !== topic);
@@ -216,7 +227,7 @@ export function ProfileSettingsView({
     const check = validateProfileInput(displayName, handle, bio);
     if (!check.valid) {
       setError(check.error || 'Please review your profile details.');
-      setSavedNotice(false);
+      setSavedNotice(null);
       return;
     }
 
@@ -241,7 +252,8 @@ export function ProfileSettingsView({
         profileVisibility,
         messagePrivacy,
       });
-      setSavedNotice(true);
+      isDirtyRef.current = false;
+      setSavedNotice('Settings saved');
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Unable to save settings.'
@@ -297,7 +309,7 @@ export function ProfileSettingsView({
             className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-sm text-emerald-800 dark:text-emerald-300 flex items-center gap-2"
           >
             <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>Settings saved</span>
+            <span>{savedNotice}</span>
           </div>
         )}
 
@@ -350,8 +362,9 @@ export function ProfileSettingsView({
                 type="text"
                 value={displayName}
                 onChange={(e) => {
+                  isDirtyRef.current = true;
                   setDisplayName(e.target.value);
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 maxLength={60}
                 className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
@@ -370,8 +383,9 @@ export function ProfileSettingsView({
                 type="text"
                 value={handle}
                 onChange={(e) => {
+                  isDirtyRef.current = true;
                   setHandle(e.target.value);
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 maxLength={32}
                 placeholder="maya.lin"
@@ -392,8 +406,9 @@ export function ProfileSettingsView({
               type="text"
               value={location}
               onChange={(e) => {
+                isDirtyRef.current = true;
                 setLocation(e.target.value);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
               maxLength={80}
               className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
@@ -417,8 +432,9 @@ export function ProfileSettingsView({
               rows={3}
               value={bio}
               onChange={(e) => {
+                isDirtyRef.current = true;
                 setBio(e.target.value);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
               maxLength={280}
               className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 resize-none"
@@ -522,7 +538,7 @@ export function ProfileSettingsView({
               aria-pressed={theme === 'light'}
               onClick={() => {
                 onSetTheme('light');
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
               className={`min-h-[48px] px-4 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                 theme === 'light'
@@ -539,7 +555,7 @@ export function ProfileSettingsView({
               aria-pressed={theme === 'dark'}
               onClick={() => {
                 onSetTheme('dark');
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
               className={`min-h-[48px] px-4 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                 theme === 'dark'
@@ -588,7 +604,7 @@ export function ProfileSettingsView({
               checked={pushEnabled}
               onToggle={() => {
                 setPushEnabled((prev) => !prev);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
             />
             <SwitchRow
@@ -598,7 +614,7 @@ export function ProfileSettingsView({
               checked={notifyLikes}
               onToggle={() => {
                 setNotifyLikes((prev) => !prev);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
             />
             <SwitchRow
@@ -608,7 +624,7 @@ export function ProfileSettingsView({
               checked={notifyComments}
               onToggle={() => {
                 setNotifyComments((prev) => !prev);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
             />
             <SwitchRow
@@ -618,7 +634,7 @@ export function ProfileSettingsView({
               checked={notifyMessages}
               onToggle={() => {
                 setNotifyMessages((prev) => !prev);
-                setSavedNotice(false);
+                setSavedNotice(null);
               }}
             />
           </div>
@@ -648,7 +664,7 @@ export function ProfileSettingsView({
                 aria-pressed={profileVisibility === 'public'}
                 onClick={() => {
                   setProfileVisibility('public');
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
                   profileVisibility === 'public'
@@ -663,7 +679,7 @@ export function ProfileSettingsView({
                 aria-pressed={profileVisibility === 'followers'}
                 onClick={() => {
                   setProfileVisibility('followers');
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
                   profileVisibility === 'followers'
@@ -686,7 +702,7 @@ export function ProfileSettingsView({
                 aria-pressed={messagePrivacy === 'everyone'}
                 onClick={() => {
                   setMessagePrivacy('everyone');
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
                   messagePrivacy === 'everyone'
@@ -701,7 +717,7 @@ export function ProfileSettingsView({
                 aria-pressed={messagePrivacy === 'following'}
                 onClick={() => {
                   setMessagePrivacy('following');
-                  setSavedNotice(false);
+                  setSavedNotice(null);
                 }}
                 className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
                   messagePrivacy === 'following'

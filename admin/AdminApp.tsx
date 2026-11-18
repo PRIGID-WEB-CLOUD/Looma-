@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   Timestamp,
@@ -28,16 +28,23 @@ import {
   signInWithGoogle,
   signOutAccount,
   testFirestoreConnection,
+  updateAuthUserProfile,
 } from '../src/services/firebase';
 import { uploadMediaToCloudflareR2 } from '../src/services/storage';
 import { readStoredThemePreference } from '../src/app/initialization/initialization-config';
 import { ADMIN_SYNC_STORAGE_KEYS } from '../src/hooks/useSocialStore';
 import {
+  enrichCommentWithVerifiedAuthor,
+  enrichPostWithVerifiedAuthor,
+  enrichStoryGroupsWithVerifiedAuthors,
+  enrichVerificationRequestWithUser,
   extractHashtags,
   extractMentions,
   mergeSavedHashtags,
+  normalizeAssetUrl,
   normalizeHashtag,
   POPULAR_HASHTAGS,
+  sanitizeMediaTitle,
 } from '../src/utils/socialLogic';
 import type { LegalDocId } from '../src/utils/legalLogic';
 import type {
@@ -456,6 +463,7 @@ function AdminAppInner(_props: AdminAppProps) {
           setCurrentProfile({
             ...profileData,
             uid: u.uid,
+            avatarUrl: normalizeAssetUrl(String(profileData.avatarUrl || '')),
             isVerified: true,
           });
           if (!profileData.isVerified) {
@@ -615,12 +623,17 @@ function AdminAppInner(_props: AdminAppProps) {
             list.push({
               ...(raw as unknown as UserProfile),
               uid: d.id,
+              avatarUrl: normalizeAssetUrl(String(raw.avatarUrl || '')),
               isVerified: Boolean(raw.isVerified) || d.id === firebaseUser.uid,
               createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
               updatedAtMs: timestampToMs(raw.updatedAtMs ?? raw.updatedAt),
             });
           });
           setCommunityUsers(list);
+          const ownSynced = list.find((u) => u.uid === firebaseUser.uid);
+          if (ownSynced) {
+            setCurrentProfile(ownSynced);
+          }
         },
         (err) => reportSyncError(err, 'users')
       )
@@ -1080,7 +1093,7 @@ function AdminAppInner(_props: AdminAppProps) {
               uid: String(raw.uid || ''),
               displayName: String(raw.displayName || 'Looma Member'),
               handle: String(raw.handle || 'looma_member'),
-              avatarUrl: String(raw.avatarUrl || ''),
+              avatarUrl: normalizeAssetUrl(String(raw.avatarUrl || '')),
               reason: String(raw.reason || ''),
               links: Array.isArray(raw.links)
                 ? raw.links.filter((l): l is string => typeof l === 'string')
@@ -1796,7 +1809,7 @@ function AdminAppInner(_props: AdminAppProps) {
     const cleanImageUrl = input.imageUrl.trim();
     const cleanVideoUrl = (input.videoUrl || '').trim();
     const cleanLinkUrl = (input.linkUrl || '').trim();
-    const cleanMediaTitle = (input.mediaTitle || '').trim();
+    const cleanMediaTitle = sanitizeMediaTitle(input.mediaTitle);
 
     if (!cleanCaption && !cleanImageUrl && !cleanVideoUrl && !cleanLinkUrl) {
       return { ok: false, error: 'Post caption, media, or reference link is required.' };
@@ -1994,6 +2007,25 @@ function AdminAppInner(_props: AdminAppProps) {
         u.uid === targetUid ? { ...u, ...check.data, updatedAtMs: Date.now() } : u
       )
     );
+    if (targetUid === firebaseUser.uid) {
+      setCurrentProfile((prev) => {
+        const updatedSelf: UserProfile = {
+          ...prev,
+          ...check.data,
+          updatedAtMs: Date.now(),
+        };
+        if (typeof BroadcastChannel !== 'undefined') {
+          try {
+            const ch = new BroadcastChannel('looma_realtime_sync');
+            ch.postMessage({ type: 'profile:updated', profile: updatedSelf });
+            ch.close();
+          } catch {
+            // Ignore cross-tab channel errors
+          }
+        }
+        return updatedSelf;
+      });
+    }
 
     try {
       await updateDoc(doc(db, 'users', targetUid), {
@@ -2004,6 +2036,16 @@ function AdminAppInner(_props: AdminAppProps) {
         avatarUrl: check.data.avatarUrl,
         updatedAt: serverTimestamp(),
       });
+      if (targetUid === firebaseUser.uid) {
+        void updateAuthUserProfile(
+          check.data.displayName,
+          check.data.avatarUrl
+        ).catch(() => {});
+        void updateDoc(doc(db, 'admins', targetUid), {
+          displayName: check.data.displayName,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
       await recordAudit(
         'user.sanitizeProfile',
         'user',
@@ -2599,6 +2641,59 @@ function AdminAppInner(_props: AdminAppProps) {
     storyGroups,
   ]);
 
+  const enrichedPosts = useMemo(
+    () =>
+      posts.map((p) =>
+        enrichPostWithVerifiedAuthor(p, communityUsers, currentProfile)
+      ),
+    [communityUsers, currentProfile, posts]
+  );
+
+  const enrichedStoryGroups = useMemo(
+    () =>
+      enrichStoryGroupsWithVerifiedAuthors(
+        storyGroups,
+        communityUsers,
+        currentProfile
+      ),
+    [communityUsers, currentProfile, storyGroups]
+  );
+
+  const enrichedComments = useMemo(
+    () =>
+      comments.map((c) => {
+        const synced = enrichCommentWithVerifiedAuthor(
+          {
+            id: c.id,
+            postId: c.postId,
+            authorId: c.authorId,
+            authorName: c.authorName,
+            authorHandle: c.authorHandle,
+            authorAvatar: c.authorAvatar,
+            text: c.text,
+            createdAtMs: c.createdAtMs,
+          },
+          communityUsers,
+          currentProfile
+        );
+        return {
+          ...c,
+          authorName: synced.authorName,
+          authorHandle: synced.authorHandle,
+          authorAvatar: synced.authorAvatar,
+        };
+      }),
+    [comments, communityUsers, currentProfile]
+  );
+
+  const enrichedVerificationRequests = useMemo(
+    () =>
+      verificationRequests.map((req) =>
+        enrichVerificationRequestWithUser(req, communityUsers, currentProfile)
+      ),
+    [communityUsers, currentProfile, verificationRequests]
+  );
+
   return (
     <AdminView
       theme={theme}
@@ -2611,9 +2706,9 @@ function AdminAppInner(_props: AdminAppProps) {
       syncErrors={syncErrors}
       authError={authError}
       communityUsers={communityUsers}
-      posts={posts}
-      storyGroups={storyGroups}
-      comments={comments}
+      posts={enrichedPosts}
+      storyGroups={enrichedStoryGroups}
+      comments={enrichedComments}
       chats={chats}
       calls={calls}
       onlineUserIds={onlineUserIds}
@@ -2629,7 +2724,7 @@ function AdminAppInner(_props: AdminAppProps) {
       featureFlags={featureFlags}
       auditLogs={auditLogs}
       inquiries={inquiries}
-      verificationRequests={verificationRequests}
+      verificationRequests={enrichedVerificationRequests}
       onReviewVerificationRequest={handleReviewVerificationRequest}
       healthProbes={healthProbes}
       jobs={jobs}

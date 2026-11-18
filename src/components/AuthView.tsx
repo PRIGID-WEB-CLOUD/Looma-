@@ -675,13 +675,13 @@ export function AuthView({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <Avatar
-                        src={firebaseUser.photoURL || profile.avatarUrl}
-                        name={firebaseUser.displayName || profile.displayName}
+                        src={profile.avatarUrl || firebaseUser.photoURL || ''}
+                        name={profile.displayName || firebaseUser.displayName || 'Looma Member'}
                         size="md"
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                          {firebaseUser.displayName || profile.displayName}
+                          {profile.displayName || firebaseUser.displayName}
                         </p>
                         <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
                           {firebaseUser.email} · Connected via Firebase Auth

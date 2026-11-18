@@ -270,8 +270,8 @@ export function ChatInfoModal({
             }`}
           >
             <Avatar
-              src={thread.partnerAvatar}
-              name={thread.title}
+              src={matchedUser?.avatarUrl ?? thread.partnerAvatar}
+              name={matchedUser?.displayName || thread.title}
               size="xl"
               online={status.isOnline}
             />
@@ -411,8 +411,8 @@ export function ChatInfoModal({
                       className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
                     >
                       <Avatar
-                        src={member?.avatarUrl || ''}
-                        name={member?.displayName || uid}
+                        src={isMe ? profile.avatarUrl : member?.avatarUrl || ''}
+                        name={isMe ? profile.displayName : member?.displayName || uid}
                         size="sm"
                         online={online}
                       />
