@@ -4,43 +4,60 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 
-function promoteRootIndexHtml(entrySubdir: string): Plugin {
-  let outDirAbs = '';
+const commerceAdminRoot = path.resolve(
+  import.meta.dirname,
+  'commerce/artifacts/luxe-boutique-admin'
+);
+const commerceAssetsDir = path.resolve(
+  import.meta.dirname,
+  'commerce/attached_assets'
+);
+const tenantRoutingEntry = path.resolve(
+  import.meta.dirname,
+  'commerce/lib/tenant-routing/src/index.ts'
+);
+const commerceDistDir = path.resolve(import.meta.dirname, 'dist-commerce');
+const workerSellerDistDir = path.resolve(import.meta.dirname, 'dist/seller');
+
+function syncSellerDistToWorkerAssets(): Plugin {
   return {
-    name: 'promote-root-index-html',
-    configResolved(config) {
-      outDirAbs = path.resolve(config.root, config.build.outDir);
-    },
+    name: 'sync-seller-dist-to-worker-assets',
     closeBundle() {
-      const nestedHtml = path.join(outDirAbs, entrySubdir, 'index.html');
-      const rootHtml = path.join(outDirAbs, 'index.html');
-      if (fs.existsSync(nestedHtml)) {
-        fs.renameSync(nestedHtml, rootHtml);
-        fs.rmSync(path.join(outDirAbs, entrySubdir), { recursive: true, force: true });
+      const distRoot = path.resolve(import.meta.dirname, 'dist');
+      if (!fs.existsSync(distRoot) || !fs.existsSync(commerceDistDir)) {
+        return;
       }
+      fs.rmSync(workerSellerDistDir, { recursive: true, force: true });
+      fs.cpSync(commerceDistDir, workerSellerDistDir, { recursive: true });
     },
   };
 }
 
 export default defineConfig({
-  base: '/',
-  publicDir: path.resolve(import.meta.dirname, 'artifacts/luxe-boutique-admin/public'),
-  plugins: [react(), tailwindcss(), promoteRootIndexHtml('commerce')],
+  base: '/seller/',
+  publicDir: path.resolve(commerceAdminRoot, 'public'),
+  plugins: [react(), tailwindcss(), syncSellerDistToWorkerAssets()],
   resolve: {
     alias: {
-      '@': path.resolve(import.meta.dirname, 'artifacts/luxe-boutique-admin/src'),
-      '@assets': path.resolve(import.meta.dirname, 'attached_assets'),
-      '@workspace/tenant-routing': path.resolve(import.meta.dirname, 'artifacts/luxe-boutique-admin/src'),
+      '@': path.resolve(commerceAdminRoot, 'src'),
+      '@assets': commerceAssetsDir,
+      '@workspace/tenant-routing': tenantRoutingEntry,
     },
+    dedupe: ['react', 'react-dom'],
   },
-  root: path.resolve(import.meta.dirname, 'artifacts/luxe-boutique-admin'),
+  root: commerceAdminRoot,
   build: {
-    outDir: path.resolve(import.meta.dirname, 'dist-commerce'),
+    outDir: commerceDistDir,
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        commerce: path.resolve(import.meta.dirname, 'artifacts/luxe-boutique-admin/index.html'),
+        index: path.resolve(commerceAdminRoot, 'index.html'),
       },
+    },
+  },
+  server: {
+    fs: {
+      strict: false,
     },
   },
 });

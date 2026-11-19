@@ -86,9 +86,11 @@ import {
 import {
   buildCommerceUpstreamUrl,
   isBlockedPublicCommercePath,
+  isCommerceSellerApiPath,
   parseCommerceConfig,
   requiresVerifiedBuyerAuth,
   resolveTenantForwardHeaders,
+  sanitizeProxyHeaders,
 } from './utils/commerceProxyLogic.ts';
 import {
   buildFallbackLinkPreview,
@@ -128,6 +130,7 @@ export interface WorkerEnv {
   GEMINI_API_KEY?: string;
   COMMERCE_API_URL?: string;
   COMMERCE_DEFAULT_STORE_ID?: string;
+  COMMERCE_INTERNAL_SSO_SECRET?: string;
   COMMERCE_PUBLISHABLE_KEY?: string;
   COMMERCE_ADMIN_DASHBOARD_URL?: string;
 }
@@ -385,8 +388,9 @@ export function createWorkerApp() {
 
     if (allowedOrigin) {
       c.header('Access-Control-Allow-Origin', allowedOrigin);
+      c.header('Access-Control-Allow-Credentials', 'true');
       c.header('Vary', 'Origin');
-      c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       c.header(
         'Access-Control-Allow-Headers',
         'Authorization, Content-Type, X-Content-Type, X-Filename, X-Folder, X-Call-Session-Token, X-Idempotency-Key, X-Store-Id, X-Publishable-Key, X-Api-Key'
@@ -1644,7 +1648,163 @@ export function createWorkerApp() {
     }
   });
 
-  // --- Marketplace & Ecommerce Reverse Proxy Endpoints ---
+  // --- Marketplace & Ecommerce Reverse Proxy + Merchant SSO Endpoints ---
+  type FirestoreDocFields = Record<string, { stringValue?: string; booleanValue?: boolean }>;
+
+  async function readFirestoreDoc(
+    env: WorkerEnv,
+    collectionPath: string,
+    docId: string,
+    bearerToken: string
+  ): Promise<{ ok: true; fields: FirestoreDocFields } | { ok: false; status: number }> {
+    const fb = getFirebaseSettings(env);
+    if (!fb.projectId) return { ok: false, status: 500 };
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      fb.projectId
+    )}/databases/${encodeURIComponent(fb.databaseId)}/documents/${collectionPath}/${encodeURIComponent(
+      docId
+    )}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status };
+    }
+    const json = (await res.json().catch(() => ({}))) as { fields?: FirestoreDocFields };
+    return { ok: true, fields: json.fields || {} };
+  }
+
+  async function commitBusinessStoreLink(
+    env: WorkerEnv,
+    bpId: string,
+    storeId: string,
+    storeSlug: string,
+    bearerToken: string
+  ): Promise<boolean> {
+    const fb = getFirebaseSettings(env);
+    if (!fb.projectId) return false;
+    const commitUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      fb.projectId
+    )}/databases/${encodeURIComponent(fb.databaseId)}/documents:commit`;
+    const docName = `projects/${fb.projectId}/databases/${fb.databaseId}/documents/businessProfiles/${bpId}`;
+    const res = await fetch(commitUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearerToken}`,
+      },
+      body: JSON.stringify({
+        writes: [
+          {
+            update: {
+              name: docName,
+              fields: {
+                commerceStoreId: { stringValue: storeId },
+                commerceStoreSlug: { stringValue: storeSlug },
+              },
+            },
+            updateMask: {
+              fieldPaths: ['commerceStoreId', 'commerceStoreSlug'],
+            },
+            updateTransforms: [
+              {
+                fieldPath: 'updatedAt',
+                setToServerValue: 'REQUEST_TIME',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    return res.ok;
+  }
+
+  async function verifyBusinessMembershipServer(
+    env: WorkerEnv,
+    bpId: string,
+    uid: string,
+    bearerToken: string
+  ): Promise<
+    | {
+        ok: true;
+        role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER';
+        bp: {
+          slug: string;
+          displayName: string;
+          currency: string;
+          ownerUid: string;
+          commerceStoreId: string;
+          commerceStoreSlug: string;
+        };
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const bpDoc = await readFirestoreDoc(env, 'businessProfiles', bpId, bearerToken);
+    if (!bpDoc.ok) {
+      return {
+        ok: false,
+        status: bpDoc.status === 404 ? 404 : 403,
+        error:
+          bpDoc.status === 404
+            ? 'Business Profile not found.'
+            : 'Forbidden: unable to read Business Profile.',
+      };
+    }
+
+    const bpFields = bpDoc.fields;
+    const bpStatus = bpFields.status?.stringValue || 'ACTIVE';
+    if (bpStatus !== 'ACTIVE') {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Business Profile is not active.',
+      };
+    }
+
+    const ownerUid = bpFields.ownerUid?.stringValue || '';
+    const membershipDoc = await readFirestoreDoc(
+      env,
+      'businessMemberships',
+      `${bpId}_${uid}`,
+      bearerToken
+    );
+
+    let role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER' | null = null;
+    if (membershipDoc.ok) {
+      const mStatus = (membershipDoc.fields.status?.stringValue || '').toUpperCase();
+      const mRole = (membershipDoc.fields.role?.stringValue || '').toUpperCase();
+      if (
+        mStatus === 'ACTIVE' &&
+        (mRole === 'OWNER' || mRole === 'ADMIN' || mRole === 'EDITOR' || mRole === 'VIEWER')
+      ) {
+        role = mRole;
+      }
+    } else if (ownerUid && ownerUid === uid) {
+      role = 'OWNER';
+    }
+
+    if (!role) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Forbidden: you do not have an active role on this Business Profile.',
+      };
+    }
+
+    return {
+      ok: true,
+      role,
+      bp: {
+        slug: bpFields.slug?.stringValue || bpId,
+        displayName: bpFields.displayName?.stringValue || 'Looma Business',
+        currency: bpFields.currency?.stringValue || 'USD',
+        ownerUid,
+        commerceStoreId: bpFields.commerceStoreId?.stringValue || '',
+        commerceStoreSlug: bpFields.commerceStoreSlug?.stringValue || '',
+      },
+    };
+  }
+
   app.get('/api/commerce/status', (c) => {
     const cfg = parseCommerceConfig(c.env);
     return c.json({
@@ -1653,13 +1813,302 @@ export function createWorkerApp() {
       defaultStoreId: cfg.defaultStoreId || null,
       hasPublishableKey: Boolean(cfg.publishableKey),
       adminDashboardUrl: cfg.adminDashboardUrl || null,
+      ssoConfigured: Boolean(cfg.apiUrl && cfg.internalSsoSecret),
     });
+  });
+
+  app.post('/api/business-profiles/:bpId/provision-store', requireVerifiedAuth, async (c) => {
+    const authUser = c.get('authUser');
+    const authToken = c.get('authToken');
+    const bpId = (c.req.param('bpId') || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(bpId)) {
+      return c.json({ error: 'Invalid Business Profile ID.' }, 400);
+    }
+
+    const cfg = parseCommerceConfig(c.env);
+    if (!cfg.apiUrl || !cfg.internalSsoSecret) {
+      return c.json(
+        {
+          code: 'COMMERCE_SSO_UNCONFIGURED',
+          error: 'Commerce provisioning is unavailable until COMMERCE_API_URL and COMMERCE_INTERNAL_SSO_SECRET are configured.',
+        },
+        503
+      );
+    }
+
+    const verifiedMembership = await verifyBusinessMembershipServer(
+      c.env,
+      bpId,
+      authUser.uid,
+      authToken
+    );
+    if (!verifiedMembership.ok) {
+      return c.json({ error: verifiedMembership.error }, verifiedMembership.status as 403);
+    }
+
+    if (verifiedMembership.role !== 'OWNER' && verifiedMembership.role !== 'ADMIN') {
+      return c.json(
+        { error: 'Only Business Profile owners or admins can provision a Commerce store.' },
+        403
+      );
+    }
+
+    if (verifiedMembership.bp.commerceStoreId) {
+      return c.json({
+        ok: true,
+        storeId: verifiedMembership.bp.commerceStoreId,
+        storeSlug: verifiedMembership.bp.commerceStoreSlug,
+        alreadyProvisioned: true,
+      });
+    }
+
+    try {
+      const upstream = await fetch(`${cfg.apiUrl}/api/internal/stores/provision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Looma-Internal-Secret': cfg.internalSsoSecret,
+        },
+        body: JSON.stringify({
+          businessProfileId: bpId,
+          ownerFirebaseUid: verifiedMembership.bp.ownerUid || authUser.uid,
+          ownerEmail: authUser.email || '',
+          ownerName: verifiedMembership.bp.displayName || authUser.email || 'Merchant',
+          slug: verifiedMembership.bp.slug,
+          name: verifiedMembership.bp.displayName,
+          currency: verifiedMembership.bp.currency || 'USD',
+        }),
+      });
+      const data = (await upstream.json().catch(() => ({}))) as {
+        storeId?: string;
+        storeSlug?: string;
+        alreadyProvisioned?: boolean;
+        error?: string;
+      };
+      if (!upstream.ok || !data.storeId) {
+        return c.json(
+          { error: data.error || 'Commerce API failed to provision merchant store.' },
+          (upstream.status || 502) as 502
+        );
+      }
+
+      const linked = await commitBusinessStoreLink(
+        c.env,
+        bpId,
+        data.storeId,
+        data.storeSlug || verifiedMembership.bp.slug,
+        authToken
+      );
+      if (!linked) {
+        console.warn('[worker/provision-store] Failed to link commerceStoreId back to Firestore:', bpId);
+      }
+
+      return c.json(
+        {
+          ok: true,
+          storeId: data.storeId,
+          storeSlug: data.storeSlug || verifiedMembership.bp.slug,
+          alreadyProvisioned: Boolean(data.alreadyProvisioned),
+        },
+        201
+      );
+    } catch (err) {
+      console.error('[worker/provision-store] Upstream error:', err);
+      return c.json({ error: 'Unable to reach Commerce store provisioning service.' }, 502);
+    }
+  });
+
+  app.post('/api/commerce/sso/authorize', requireVerifiedAuth, async (c) => {
+    const authUser = c.get('authUser');
+    const authToken = c.get('authToken');
+    const rate = rateLimiter.check(`sso_auth:${authUser.uid}`, 30, 60_000);
+    if (!rate.allowed) {
+      return c.json({ error: 'Too many SSO authorization attempts. Please wait a moment.' }, 429);
+    }
+
+    const body = (await c.req.json().catch(() => ({}))) as { businessProfileId?: unknown };
+    const bpId = typeof body.businessProfileId === 'string' ? body.businessProfileId.trim() : '';
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(bpId)) {
+      return c.json({ error: 'Valid businessProfileId is required.' }, 400);
+    }
+
+    const cfg = parseCommerceConfig(c.env);
+    if (!cfg.apiUrl || !cfg.internalSsoSecret) {
+      return c.json(
+        {
+          code: 'COMMERCE_SSO_UNCONFIGURED',
+          error: 'Commerce SSO requires COMMERCE_API_URL and COMMERCE_INTERNAL_SSO_SECRET.',
+        },
+        503
+      );
+    }
+
+    const verifiedMembership = await verifyBusinessMembershipServer(
+      c.env,
+      bpId,
+      authUser.uid,
+      authToken
+    );
+    if (!verifiedMembership.ok) {
+      return c.json({ error: verifiedMembership.error }, verifiedMembership.status as 403);
+    }
+
+    let storeId = verifiedMembership.bp.commerceStoreId;
+    let storeSlug = verifiedMembership.bp.commerceStoreSlug;
+
+    if (!storeId) {
+      if (verifiedMembership.role !== 'OWNER' && verifiedMembership.role !== 'ADMIN') {
+        return c.json(
+          { error: 'Store has not been provisioned yet. Ask the Business Profile owner to initialize it.' },
+          403
+        );
+      }
+
+      const provRes = await fetch(`${cfg.apiUrl}/api/internal/stores/provision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Looma-Internal-Secret': cfg.internalSsoSecret,
+        },
+        body: JSON.stringify({
+          businessProfileId: bpId,
+          ownerFirebaseUid: verifiedMembership.bp.ownerUid || authUser.uid,
+          ownerEmail: authUser.email || '',
+          ownerName: verifiedMembership.bp.displayName,
+          slug: verifiedMembership.bp.slug,
+          name: verifiedMembership.bp.displayName,
+          currency: verifiedMembership.bp.currency || 'USD',
+        }),
+      });
+      const provData = (await provRes.json().catch(() => ({}))) as {
+        storeId?: string;
+        storeSlug?: string;
+        error?: string;
+      };
+      if (!provRes.ok || !provData.storeId) {
+        return c.json(
+          { error: provData.error || 'Failed to provision Commerce store before SSO launch.' },
+          502
+        );
+      }
+      storeId = provData.storeId;
+      storeSlug = provData.storeSlug || verifiedMembership.bp.slug;
+      await commitBusinessStoreLink(c.env, bpId, storeId, storeSlug, authToken);
+    }
+
+    try {
+      const issueRes = await fetch(`${cfg.apiUrl}/api/internal/sso/issue-code`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Looma-Internal-Secret': cfg.internalSsoSecret,
+        },
+        body: JSON.stringify({
+          businessProfileId: bpId,
+          firebaseUid: authUser.uid,
+          email: authUser.email || '',
+          displayName: (authUser.email || '').split('@')[0] || verifiedMembership.bp.displayName,
+          role: verifiedMembership.role,
+        }),
+      });
+
+      const issueData = (await issueRes.json().catch(() => ({}))) as {
+        code?: string;
+        storeId?: string;
+        storeSlug?: string;
+        error?: string;
+      };
+      if (!issueRes.ok || !issueData.code) {
+        return c.json(
+          { error: issueData.error || 'Commerce API denied SSO authorization code.' },
+          (issueRes.status || 502) as 502
+        );
+      }
+
+      return c.json({
+        ok: true,
+        storeId: issueData.storeId || storeId,
+        storeSlug: issueData.storeSlug || storeSlug,
+        redirectUrl: `/seller/sso?code=${encodeURIComponent(issueData.code)}`,
+      });
+    } catch (err) {
+      console.error('[worker/commerce/sso/authorize] Upstream error:', err);
+      return c.json({ error: 'Unable to reach Commerce SSO authorization endpoint.' }, 502);
+    }
+  });
+
+  app.post('/api/commerce/sso/revoke', requireVerifiedAuth, async (c) => {
+    const authUser = c.get('authUser');
+    const authToken = c.get('authToken');
+    const body = (await c.req.json().catch(() => ({}))) as {
+      businessProfileId?: unknown;
+      firebaseUid?: unknown;
+      email?: unknown;
+      nextRole?: unknown;
+      removeMember?: unknown;
+    };
+
+    const bpId = typeof body.businessProfileId === 'string' ? body.businessProfileId.trim() : '';
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(bpId)) {
+      return c.json({ error: 'Valid businessProfileId is required.' }, 400);
+    }
+
+    const verifiedMembership = await verifyBusinessMembershipServer(
+      c.env,
+      bpId,
+      authUser.uid,
+      authToken
+    );
+    if (!verifiedMembership.ok) {
+      return c.json({ error: verifiedMembership.error }, verifiedMembership.status as 403);
+    }
+
+    if (verifiedMembership.role !== 'OWNER' && verifiedMembership.role !== 'ADMIN') {
+      return c.json(
+        { error: 'Only Business Profile owners or admins can revoke merchant sessions.' },
+        403
+      );
+    }
+
+    const cfg = parseCommerceConfig(c.env);
+    if (!cfg.apiUrl || !cfg.internalSsoSecret) {
+      return c.json({ ok: true, revoked: 0, skipped: true });
+    }
+
+    try {
+      const upstream = await fetch(`${cfg.apiUrl}/api/internal/sessions/revoke`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Looma-Internal-Secret': cfg.internalSsoSecret,
+        },
+        body: JSON.stringify({
+          businessProfileId: bpId,
+          ...(typeof body.firebaseUid === 'string' && body.firebaseUid
+            ? { firebaseUid: body.firebaseUid.trim() }
+            : {}),
+          ...(typeof body.email === 'string' && body.email
+            ? { email: body.email.trim().toLowerCase() }
+            : {}),
+          ...(typeof body.nextRole === 'string' &&
+          ['OWNER', 'ADMIN', 'EDITOR', 'VIEWER'].includes(body.nextRole.toUpperCase())
+            ? { nextRole: body.nextRole.toUpperCase() }
+            : {}),
+          ...(typeof body.removeMember === 'boolean' ? { removeMember: body.removeMember } : {}),
+        }),
+      });
+      const data = await upstream.json().catch(() => ({ ok: upstream.ok }));
+      return c.json(data, upstream.status as 200);
+    } catch (err) {
+      console.error('[worker/commerce/sso/revoke] Upstream error:', err);
+      return c.json({ error: 'Unable to reach Commerce session revocation service.' }, 502);
+    }
   });
 
   const forwardCommerceRequest = async (
     c: Context<{ Bindings: WorkerEnv; Variables: AppVariables }>,
-    mountPrefix: '/api/marketplace' | '/api/commerce' | '/api/commerce/admin',
-    options?: { attachAdminIdentity?: boolean }
+    mountPrefix: '/api/marketplace' | '/api/commerce' | '/api/commerce/admin' | '/api',
+    options?: { attachAdminIdentity?: boolean; stripStoreOverride?: boolean }
   ): Promise<Response> => {
     const cfg = parseCommerceConfig(c.env);
     if (!cfg.apiUrl) {
@@ -1673,29 +2122,39 @@ export function createWorkerApp() {
       );
     }
 
-    const upstreamUrl = buildCommerceUpstreamUrl(cfg.apiUrl, mountPrefix, c.req.url);
+    const upstreamUrl = buildCommerceUpstreamUrl(cfg.apiUrl, mountPrefix, c.req.url, {
+      stripStoreQuery: options?.stripStoreOverride,
+    });
+    const cleanReqHeaders = sanitizeProxyHeaders(c.req.raw.headers, {
+      stripStoreOverride: options?.stripStoreOverride,
+    });
+
     const forwardHeaders = new Headers();
     const tenantHeaders = resolveTenantForwardHeaders({
-      reqHeaders: c.req.raw.headers,
+      reqHeaders: cleanReqHeaders,
       requestUrl: c.req.url,
-      defaultStoreId: cfg.defaultStoreId,
+      defaultStoreId: options?.stripStoreOverride ? '' : cfg.defaultStoreId,
       defaultPublishableKey: cfg.publishableKey,
+      omitStoreHeaders: options?.stripStoreOverride,
     });
     for (const [key, value] of Object.entries(tenantHeaders)) {
       forwardHeaders.set(key, value);
     }
 
-    const contentType = c.req.header('content-type');
-    if (contentType) {
-      forwardHeaders.set('Content-Type', contentType);
-    }
-    const acceptHeader = c.req.header('accept');
-    if (acceptHeader) {
-      forwardHeaders.set('Accept', acceptHeader);
-    }
-    const idempotencyKey = c.req.header('x-idempotency-key');
-    if (idempotencyKey) {
-      forwardHeaders.set('X-Idempotency-Key', idempotencyKey);
+    const forwardHeaderAllowlist = [
+      'content-type',
+      'accept',
+      'cookie',
+      'x-idempotency-key',
+      'stripe-signature',
+      'x-paystack-signature',
+      'verif-hash',
+    ];
+    for (const headerName of forwardHeaderAllowlist) {
+      const val = cleanReqHeaders.get(headerName);
+      if (val) {
+        forwardHeaders.set(headerName, val);
+      }
     }
 
     const authToken = c.get('authToken');
@@ -1703,16 +2162,16 @@ export function createWorkerApp() {
     if (authToken) {
       forwardHeaders.set('Authorization', `Bearer ${authToken}`);
     } else {
-      const incomingAuth = c.req.header('authorization');
+      const incomingAuth = cleanReqHeaders.get('authorization');
       if (incomingAuth) {
         forwardHeaders.set('Authorization', incomingAuth);
       }
     }
 
     if (options?.attachAdminIdentity && authUser) {
-      forwardHeaders.set('X-Looma-Admin-Uid', authUser.uid);
+      forwardHeaders.set('X-Looma-Verified-Uid', authUser.uid);
       if (authUser.email) {
-        forwardHeaders.set('X-Looma-Admin-Email', authUser.email);
+        forwardHeaders.set('X-Looma-Verified-Email', authUser.email);
       }
     }
 
@@ -1732,6 +2191,21 @@ export function createWorkerApp() {
       if (upstreamType) {
         responseHeaders.set('Content-Type', upstreamType);
       }
+      const upstreamCookies =
+        typeof (upstreamRes.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie === 'function'
+          ? (upstreamRes.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
+          : [];
+      if (upstreamCookies.length > 0) {
+        for (const cookieVal of upstreamCookies) {
+          responseHeaders.append('Set-Cookie', cookieVal);
+        }
+      } else {
+        const singleSetCookie = upstreamRes.headers.get('set-cookie');
+        if (singleSetCookie) {
+          responseHeaders.append('Set-Cookie', singleSetCookie);
+        }
+      }
+
       responseHeaders.set('X-Content-Type-Options', 'nosniff');
       responseHeaders.set('Cache-Control', 'no-store');
 
@@ -1768,13 +2242,13 @@ export function createWorkerApp() {
     return forwardCommerceRequest(c, '/api/marketplace');
   });
 
-  app.all('/api/commerce/admin/*', requireVerifiedAuth, async (c) => {
-    const isAdmin = await verifyAdminRequest(c);
-    if (!isAdmin) {
-      return c.json({ error: 'Forbidden: administrator access required.' }, 403);
+  app.all('/api/commerce/admin/*', async (c) => {
+    const rate = rateLimiter.check(`commerce_admin:${getRateLimitClientKey(c)}`, 180, 60_000);
+    if (!rate.allowed) {
+      return c.json({ error: 'Commerce admin rate limit exceeded.' }, 429);
     }
     return forwardCommerceRequest(c, '/api/commerce/admin', {
-      attachAdminIdentity: true,
+      stripStoreOverride: true,
     });
   });
 
@@ -1784,7 +2258,7 @@ export function createWorkerApp() {
       return c.json(
         {
           error:
-            'Forbidden: administrative commerce endpoints must be accessed via /api/commerce/admin/*.',
+            'Forbidden: administrative commerce endpoints must be accessed via the authenticated Merchant Portal.',
         },
         403
       );
@@ -1926,6 +2400,20 @@ export function createWorkerApp() {
     }
   });
 
+  // Forward Commerce Seller Portal (/seller/) API traffic directly to Commerce API upstream
+  app.all('/api/*', async (c, next) => {
+    if (isCommerceSellerApiPath(c.req.path)) {
+      const rate = rateLimiter.check(`seller_api:${getRateLimitClientKey(c)}`, 240, 60_000);
+      if (!rate.allowed) {
+        return c.json({ error: 'Seller API rate limit exceeded.' }, 429);
+      }
+      return forwardCommerceRequest(c, '/api', {
+        stripStoreOverride: true,
+      });
+    }
+    await next();
+  });
+
   // Always return clean JSON 404 for unknown /api/* paths
   app.all('/api/*', (c) => {
     const ipKey = getRateLimitClientKey(c);
@@ -1964,8 +2452,8 @@ export function createWorkerApp() {
       if (pathname === '/seller') {
         return c.redirect(`/seller/${url.search}`, 301);
       }
-      if (pathname.startsWith('/seller')) {
-        return fetchAssetHtml('/index.html');
+      if (pathname === '/seller/') {
+        return fetchAssetHtml('/seller/index.html');
       }
       if (pathname === '/landingpage' || pathname === '/landing') {
         return c.redirect(`/landingpage/${url.search}`, 301);
@@ -1980,6 +2468,9 @@ export function createWorkerApp() {
       if (res.status === 404) {
         if (pathname.startsWith('/admin')) {
           return fetchAssetHtml('/admin/index.html');
+        }
+        if (pathname.startsWith('/seller')) {
+          return fetchAssetHtml('/seller/index.html');
         }
         if (pathname.startsWith('/landingpage') || pathname.startsWith('/landing')) {
           return fetchAssetHtml('/landingpage/index.html');

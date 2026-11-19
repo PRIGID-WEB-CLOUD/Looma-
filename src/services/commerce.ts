@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   query,
   serverTimestamp,
@@ -24,10 +25,11 @@ import type {
   PaymentStatus,
   ProductCondition,
   ProductStatus,
+  ProductVariant,
   StorePublishStatus,
   UpstreamAdminStats,
 } from '../types/marketplace';
-import type { UserProfile } from '../types/social';
+import type { BusinessProfile } from '../types/business';
 
 function timestampToMs(val: unknown, fallback: number = Date.now()): number {
   if (val instanceof Timestamp) return val.toMillis();
@@ -155,6 +157,192 @@ export async function fetchUpstreamMarketplaceCatalog(storeId?: string): Promise
   }
 }
 
+export interface PublicProductDetailResult {
+  product: MarketplaceProduct;
+  variants: ProductVariant[];
+  store: MarketplaceStore;
+  businessProfile: Pick<BusinessProfile, 'id' | 'slug' | 'displayName' | 'logoUrl' | 'ownerUid' | 'verified' | 'category'> | null;
+  source: 'commerce' | 'firestore';
+}
+
+function mapRawVariant(raw: Record<string, unknown>): ProductVariant {
+  const price = typeof raw.price === 'number' ? raw.price : null;
+  const priceCents =
+    typeof raw.priceCents === 'number'
+      ? raw.priceCents
+      : price != null
+        ? Math.round(price * 100)
+        : null;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : '',
+    size: typeof raw.size === 'string' ? raw.size : '',
+    color: typeof raw.color === 'string' ? raw.color : '',
+    stock: typeof raw.stock === 'number' ? raw.stock : 0,
+    price,
+    priceCents,
+    sku: typeof raw.sku === 'string' ? raw.sku : '',
+  };
+}
+
+export async function fetchPublicProductDetail(
+  productId: string
+): Promise<PublicProductDetailResult | null> {
+  const cleanId = productId.trim();
+  if (!cleanId) return null;
+
+  // 1. Query Commerce authoritative endpoint first when available
+  try {
+    const res = await fetch(`/api/marketplace/products/${encodeURIComponent(cleanId)}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      const data = (await res.json().catch(() => null)) as {
+        product?: Record<string, unknown>;
+        variants?: Array<Record<string, unknown>>;
+        store?: Record<string, unknown>;
+      } | null;
+
+      if (data?.product && data?.store) {
+        const mappedVariants = Array.isArray(data.variants)
+          ? data.variants.map(mapRawVariant).filter((v) => Boolean(v.id))
+          : [];
+        const rawProd = data.product;
+        const rawStore = data.store;
+        const bpId =
+          typeof rawStore.businessProfileId === 'string'
+            ? rawStore.businessProfileId
+            : typeof rawProd.businessProfileId === 'string'
+              ? rawProd.businessProfileId
+              : undefined;
+
+        const product = mapProductDoc(cleanId, {
+          ...rawProd,
+          storeId: rawStore.id || rawProd.storeId,
+          storeName: rawStore.name || rawProd.storeName,
+          storeSlug: rawStore.slug || rawProd.storeSlug,
+          businessProfileId: bpId,
+          status: 'ACTIVE',
+        });
+        product.variants = mappedVariants;
+        product.trackQuantity = Boolean(rawProd.trackQuantity);
+
+        const store = mapStoreDoc(String(rawStore.id || product.storeId), {
+          ...rawStore,
+          publishStatus: 'PUBLISHED',
+          businessProfileId: bpId,
+        });
+
+        let businessProfile: PublicProductDetailResult['businessProfile'] = null;
+        if (bpId) {
+          try {
+            const bpSnap = await getDoc(doc(db, 'businessProfiles', bpId));
+            if (bpSnap.exists() && bpSnap.data()?.status === 'ACTIVE') {
+              const bpData = bpSnap.data();
+              businessProfile = {
+                id: bpSnap.id,
+                slug: String(bpData.slug || store.slug),
+                displayName: String(bpData.displayName || store.name),
+                logoUrl: String(bpData.logoUrl || store.logoUrl || ''),
+                ownerUid: String(bpData.ownerUid || ''),
+                verified: Boolean(bpData.verified),
+                category: String(bpData.category || store.category || 'General'),
+              };
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        return {
+          product,
+          variants: mappedVariants,
+          store,
+          businessProfile,
+          source: 'commerce',
+        };
+      }
+    }
+  } catch {
+    // Fallback to Firestore below
+  }
+
+  // 2. Fallback to Firestore marketplaceProducts + marketplaceStores
+  try {
+    const prodSnap = await getDoc(doc(db, 'marketplaceProducts', cleanId));
+    if (!prodSnap.exists()) return null;
+    const prodData = prodSnap.data() as Record<string, unknown>;
+    if (prodData.status !== 'ACTIVE') return null;
+
+    const product = mapProductDoc(prodSnap.id, prodData);
+    let store: MarketplaceStore = {
+      id: product.storeId,
+      slug: product.storeSlug,
+      name: product.storeName,
+      tagline: '',
+      ownerUid: product.ownerUid,
+      ownerHandle: '',
+      logoUrl: '',
+      bannerUrl: '',
+      category: product.category,
+      currency: product.currency,
+      publishStatus: 'PUBLISHED',
+      businessProfileId: product.businessProfileId,
+      verified: false,
+      featured: false,
+      createdAtMs: product.createdAtMs,
+      updatedAtMs: product.updatedAtMs,
+    };
+
+    if (product.storeId) {
+      try {
+        const storeSnap = await getDoc(doc(db, 'marketplaceStores', product.storeId));
+        if (storeSnap.exists()) {
+          const storeData = storeSnap.data() as Record<string, unknown>;
+          if (storeData.publishStatus !== 'PUBLISHED') {
+            return null;
+          }
+          store = mapStoreDoc(storeSnap.id, storeData);
+        }
+      } catch {
+        // Non-fatal if store lookup is blocked
+      }
+    }
+
+    let businessProfile: PublicProductDetailResult['businessProfile'] = null;
+    const bpId = store.businessProfileId || product.businessProfileId;
+    if (bpId) {
+      try {
+        const bpSnap = await getDoc(doc(db, 'businessProfiles', bpId));
+        if (bpSnap.exists() && bpSnap.data()?.status === 'ACTIVE') {
+          const bpData = bpSnap.data();
+          businessProfile = {
+            id: bpSnap.id,
+            slug: String(bpData.slug || store.slug),
+            displayName: String(bpData.displayName || store.name),
+            logoUrl: String(bpData.logoUrl || store.logoUrl || ''),
+            ownerUid: String(bpData.ownerUid || store.ownerUid || ''),
+            verified: Boolean(bpData.verified),
+            category: String(bpData.category || store.category || 'General'),
+          };
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    return {
+      product,
+      variants: product.variants || [],
+      store,
+      businessProfile,
+      source: 'firestore',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function submitUpstreamProxyCheckout(input: {
   storeId: string;
   items: CartItem[];
@@ -164,28 +352,40 @@ export async function submitUpstreamProxyCheckout(input: {
   shippingCity: string;
   note: string;
   paymentMethod: PaymentMethod;
-}): Promise<{ ok: boolean; checkoutUrl?: string; orderId?: string; error?: string }> {
+  customerEmail?: string;
+  currency?: string;
+}): Promise<{ ok: boolean; checkoutUrl?: string; orderId?: string; reference?: string; error?: string }> {
   try {
     const headers = await buildAuthHeaders({
       'X-Store-Id': input.storeId,
     });
-    const res = await fetch('/api/commerce/checkout', {
+    const currentOrigin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'https://looma.app';
+    const cleanEmail =
+      (input.customerEmail || auth.currentUser?.email || '').trim() || 'buyer@looma.app';
+
+    const res = await fetch('/api/commerce/payments/initialize', {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        storeId: input.storeId,
-        paymentMethod: input.paymentMethod,
-        customer: {
-          name: input.shippingName,
-          phone: input.shippingPhone,
-          address: input.shippingAddress,
-          city: input.shippingCity,
+        customerName: input.shippingName.trim() || 'Looma Buyer',
+        customerEmail: cleanEmail,
+        currency: (input.currency || input.items[0]?.currency || 'USD').toUpperCase(),
+        shippingAddress: {
+          name: input.shippingName.trim(),
+          phone: input.shippingPhone.trim(),
+          address: input.shippingAddress.trim(),
+          city: input.shippingCity.trim(),
         },
+        callbackUrl: `${currentOrigin}/marketplace?checkout=verify`,
+        cancelUrl: `${currentOrigin}/marketplace`,
         note: input.note,
         items: input.items.map((item) => ({
           productId: item.productId,
-          qty: item.quantity,
-          priceCents: item.priceCents,
+          ...(item.variantId ? { variantId: item.variantId } : {}),
+          quantity: item.quantity,
         })),
       }),
     });
@@ -196,23 +396,26 @@ export async function submitUpstreamProxyCheckout(input: {
         error:
           typeof payload.error === 'string'
             ? payload.error
-            : `Checkout proxy error (HTTP ${res.status})`,
+            : `Checkout error (HTTP ${res.status})`,
       };
     }
     return {
       ok: true,
       checkoutUrl:
-        typeof payload.checkoutUrl === 'string'
-          ? payload.checkoutUrl
-          : typeof payload.url === 'string'
-            ? payload.url
-            : undefined,
+        typeof payload.authorizationUrl === 'string'
+          ? payload.authorizationUrl
+          : typeof payload.checkoutUrl === 'string'
+            ? payload.checkoutUrl
+            : typeof payload.url === 'string'
+              ? payload.url
+              : undefined,
       orderId: typeof payload.orderId === 'string' ? payload.orderId : undefined,
+      reference: typeof payload.reference === 'string' ? payload.reference : undefined,
     };
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Checkout proxy request failed.',
+      error: err instanceof Error ? err.message : 'Checkout request failed.',
     };
   }
 }
@@ -235,6 +438,8 @@ function mapStoreDoc(id: string, data: Record<string, unknown>): MarketplaceStor
         : 'DRAFT',
     externalStoreId:
       typeof data.externalStoreId === 'string' ? data.externalStoreId : undefined,
+    businessProfileId:
+      typeof data.businessProfileId === 'string' ? data.businessProfileId : undefined,
     verified: Boolean(data.verified),
     featured: Boolean(data.featured),
     createdAtMs: timestampToMs(data.createdAt),
@@ -253,13 +458,21 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
     data.condition === 'Used - Fair'
       ? data.condition
       : undefined;
+  const rawVariants = Array.isArray(data.variants)
+    ? data.variants
+        .filter((v): v is Record<string, unknown> => Boolean(v && typeof v === 'object'))
+        .map(mapRawVariant)
+        .filter((v) => Boolean(v.id))
+    : undefined;
   return {
     id,
     storeId: typeof data.storeId === 'string' ? data.storeId : '',
     storeName: typeof data.storeName === 'string' ? data.storeName : 'Storefront',
     storeSlug: typeof data.storeSlug === 'string' ? data.storeSlug : 'store',
     ownerUid: typeof data.ownerUid === 'string' ? data.ownerUid : '',
-    title: typeof data.title === 'string' ? data.title : 'Product',
+    businessProfileId:
+      typeof data.businessProfileId === 'string' ? data.businessProfileId : undefined,
+    title: typeof data.title === 'string' ? data.title : typeof data.name === 'string' ? data.name : 'Product',
     description: typeof data.description === 'string' ? data.description : '',
     category: typeof data.category === 'string' ? data.category : 'General',
     priceCents: typeof data.priceCents === 'number' ? data.priceCents : 0,
@@ -273,12 +486,14 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
     location: typeof data.location === 'string' && data.location.trim() ? data.location.trim() : undefined,
     condition: rawCondition,
     stock: typeof data.stock === 'number' ? data.stock : 0,
+    trackQuantity: typeof data.trackQuantity === 'boolean' ? data.trackQuantity : undefined,
     status:
       data.status === 'ACTIVE' || data.status === 'ARCHIVED'
         ? data.status
         : 'DRAFT',
     featured: Boolean(data.featured),
     tag: typeof data.tag === 'string' ? data.tag : undefined,
+    variants: rawVariants && rawVariants.length > 0 ? rawVariants : undefined,
     createdAtMs: timestampToMs(data.createdAt),
     updatedAtMs: timestampToMs(data.updatedAt),
   };
@@ -539,61 +754,6 @@ export async function saveMarketplaceStoreRecord(input: {
   }
 }
 
-export async function ensurePersonalMarketplaceStore(params: {
-  profile: UserProfile;
-  category: string;
-  currency: string;
-  existingStores: MarketplaceStore[];
-  persistToFirestore: boolean;
-}): Promise<MarketplaceStore> {
-  const { profile, category, currency, existingStores, persistToFirestore } = params;
-  const owned = existingStores.find(
-    (s) => s.ownerUid === profile.uid && s.publishStatus !== 'SUSPENDED'
-  );
-  if (owned) return owned;
-
-  const storeId = `store_member_${profile.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48)}`;
-  const slug = slugifyStoreHandle(`${profile.handle || profile.displayName}-${profile.uid.slice(0, 6)}`);
-  const now = Date.now();
-  const nextStore: MarketplaceStore = {
-    id: storeId,
-    slug,
-    name: (profile.displayName || 'Marketplace Seller').trim().slice(0, 80),
-    tagline: (profile.bio || 'Independent seller on Looma Marketplace.').trim().slice(0, 180),
-    ownerUid: profile.uid,
-    ownerHandle: (profile.handle || 'creator').replace(/^@+/, '').slice(0, 32) || 'creator',
-    logoUrl: (profile.avatarUrl || '').slice(0, 250000),
-    bannerUrl: '',
-    category: (category || 'General').slice(0, 40),
-    currency: (currency || 'USD').trim().toUpperCase().slice(0, 8),
-    publishStatus: 'PUBLISHED',
-    verified: false,
-    featured: false,
-    createdAtMs: now,
-    updatedAtMs: now,
-  };
-
-  if (persistToFirestore) {
-    await saveMarketplaceStoreRecord({
-      id: nextStore.id,
-      slug: nextStore.slug,
-      name: nextStore.name,
-      tagline: nextStore.tagline,
-      ownerUid: nextStore.ownerUid,
-      ownerHandle: nextStore.ownerHandle,
-      logoUrl: nextStore.logoUrl,
-      bannerUrl: nextStore.bannerUrl,
-      category: nextStore.category,
-      currency: nextStore.currency,
-      publishStatus: 'PUBLISHED',
-      verified: false,
-      featured: false,
-      isCreate: true,
-    });
-  }
-
-  return nextStore;
-}
 
 export async function saveMarketplaceProductRecord(input: {
   id?: string;
@@ -813,7 +973,7 @@ export async function seedStarterMarketplaceShowroom(adminUser: {
     category: 'Timepieces',
     currency: 'USD',
     publishStatus: 'PUBLISHED',
-    externalStoreId: 'store-001',
+    externalStoreId: storeId,
     verified: true,
     featured: true,
     isCreate: true,

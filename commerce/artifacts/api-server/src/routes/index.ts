@@ -26,12 +26,14 @@ import webhooksRouter from "./webhooks";
 import chatRouter from "./chat";
 import geolocationRouter from "./geolocation";
 import marketplaceRouter from "./marketplace";
+import ssoRouter from "./sso";
 
 import paymentsRouter from "./payments";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(ssoRouter);
 router.use(marketplaceRouter);
 router.use(geolocationRouter);
 router.use(webhooksRouter);

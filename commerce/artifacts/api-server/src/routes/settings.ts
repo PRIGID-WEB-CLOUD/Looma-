@@ -8,6 +8,8 @@ import { db, apiKeysTable, appSettingsTable, providerPluginsTable, storesTable }
 import { encryptCredential, decryptCredential, isEncryptedCredential } from "../services/credentialVault";
 import { testCloudinaryConnection } from "../services/cloudinary";
 import { type TenantRequest } from "../middleware/tenantContext";
+import { enqueueStoreOutboxSnapshot } from "../services/inventoryService";
+import { processPendingOutbox } from "../services/firestoreSyncWorker";
 
 const router = Router();
 router.use("/settings", requireAdmin);
@@ -114,6 +116,11 @@ router.put("/settings/tenant-domain", async (req: TenantRequest, res: Response) 
     }
 
     await db.update(storesTable).set(updatePayload).where(eq(storesTable.id, storeId));
+    await enqueueStoreOutboxSnapshot(
+      storeId,
+      isPublished === true ? "STORE_PUBLISHED" : "STORE_UPDATED"
+    ).catch(() => {});
+    processPendingOutbox({ storeId }).catch(() => {});
     return res.json({ ok: true, slug: updatePayload.slug, customDomain: updatePayload.customDomain, isPublished: updatePayload.isPublished });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || "Failed to save domain details." });
@@ -138,6 +145,9 @@ router.post("/admin/stores/:id/suspend", requirePlatformAdmin, async (req: Tenan
       isPublished: false,
     }).where(eq(storesTable.id, id as string));
 
+    await enqueueStoreOutboxSnapshot(id as string, "STORE_SUSPENDED").catch(() => {});
+    processPendingOutbox({ storeId: id as string }).catch(() => {});
+
     return res.json({ ok: true });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Failed to suspend store." });
@@ -152,6 +162,9 @@ router.post("/admin/stores/:id/unsuspend", requirePlatformAdmin, async (req: Ten
       publishStatus: "UNPUBLISHED",
       isPublished: false,
     }).where(eq(storesTable.id, id as string));
+
+    await enqueueStoreOutboxSnapshot(id as string, "STORE_UNSUSPENDED").catch(() => {});
+    processPendingOutbox({ storeId: id as string }).catch(() => {});
 
     return res.json({ ok: true });
   } catch (err: any) {

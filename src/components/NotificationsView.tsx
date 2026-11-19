@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
-import { Bell, CheckCheck, Megaphone, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Bell, Building2, CheckCheck, Megaphone, Trash2, User } from 'lucide-react';
 import type { UserProfile } from '../types/social';
+import type { BusinessNotification, BusinessProfile } from '../types/business';
 import {
   formatRelativeTime,
   type ActivityNotificationItem,
@@ -12,6 +13,10 @@ import { VerifiedBadge } from './VerifiedBadge';
 interface NotificationsViewProps {
   profile: UserProfile;
   notifications: ActivityNotificationItem[];
+  activeBusinessProfile?: BusinessProfile | null;
+  businessNotifications?: BusinessNotification[];
+  onMarkBusinessNotificationRead?: (id: string) => Promise<void> | void;
+  onMarkAllBusinessNotificationsRead?: () => Promise<void> | void;
   verifiedAuthorIds?: string[];
   pushPermission: PushPermissionState;
   onEnablePush: () => Promise<PushPermissionState>;
@@ -24,6 +29,10 @@ interface NotificationsViewProps {
 export function NotificationsView({
   profile,
   notifications,
+  activeBusinessProfile = null,
+  businessNotifications = [],
+  onMarkBusinessNotificationRead,
+  onMarkAllBusinessNotificationsRead,
   verifiedAuthorIds = [],
   pushPermission,
   onEnablePush,
@@ -32,11 +41,16 @@ export function NotificationsView({
   onDeleteNotification,
   onClearAllNotifications,
 }: NotificationsViewProps) {
+  const [scope, setScope] = useState<'personal' | 'business'>('personal');
+  const activeScope = activeBusinessProfile ? scope : 'personal';
+
   const verifiedSet = useMemo(() => {
     const ids = new Set(verifiedAuthorIds);
     if (profile.isVerified) ids.add(profile.uid);
     return ids;
   }, [verifiedAuthorIds, profile.isVerified, profile.uid]);
+
+  const unreadBusinessCount = businessNotifications.filter((n) => !n.read).length;
 
   return (
     <section
@@ -59,6 +73,38 @@ export function NotificationsView({
           </div>
         </div>
 
+        {activeBusinessProfile && (
+          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 w-fit">
+            <button
+              type="button"
+              onClick={() => setScope('personal')}
+              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                activeScope === 'personal'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              <User className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Personal (@{profile.handle})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScope('business')}
+              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                activeScope === 'business'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>
+                {activeBusinessProfile.displayName}
+                {unreadBusinessCount > 0 ? ` (${unreadBusinessCount})` : ''}
+              </span>
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {pushPermission !== 'granted' && pushPermission !== 'unsupported' && (
             <button
@@ -71,13 +117,19 @@ export function NotificationsView({
           )}
           <button
             type="button"
-            onClick={onMarkAllRead}
+            onClick={() => {
+              if (activeScope === 'business') {
+                void onMarkAllBusinessNotificationsRead?.();
+              } else {
+                onMarkAllRead();
+              }
+            }}
             className="min-h-[38px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
           >
             <CheckCheck className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Mark all read</span>
           </button>
-          {notifications.length > 0 && onClearAllNotifications && (
+          {activeScope === 'personal' && notifications.length > 0 && onClearAllNotifications && (
             <button
               type="button"
               onClick={() => onClearAllNotifications()}
@@ -91,24 +143,16 @@ export function NotificationsView({
       </div>
 
       {/* Notification Stream */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
-        {notifications.length === 0 ? (
-          <div className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
-            No notifications yet. Activity from @{profile.handle} will show up here in real time.
-          </div>
-        ) : (
-          notifications.map((notif) => {
-            const severityBadgeClass =
-              notif.announcementSeverity === 'maintenance'
-                ? 'bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
-                : notif.announcementSeverity === 'warning'
-                  ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
-                  : 'bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300';
-
-            return (
+      {activeScope === 'business' && activeBusinessProfile ? (
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+          {businessNotifications.length === 0 ? (
+            <div className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+              No activity yet for {activeBusinessProfile.displayName}. New followers, orders, and business post interactions appear here.
+            </div>
+          ) : (
+            businessNotifications.map((notif) => (
               <div
                 key={notif.id}
-                data-testid={`notification-item-${notif.id}`}
                 className={`p-4 flex items-start gap-3 transition-colors ${
                   notif.read
                     ? 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
@@ -117,39 +161,15 @@ export function NotificationsView({
               >
                 <button
                   type="button"
-                  onClick={() => onMarkRead(notif.id)}
+                  onClick={() => void onMarkBusinessNotificationRead?.(notif.id)}
                   className="flex-1 min-w-0 flex items-start gap-3.5 text-left cursor-pointer"
                 >
-                  {notif.isAnnouncement ? (
-                    <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                      <Megaphone className="w-4 h-4" aria-hidden="true" />
-                    </div>
-                  ) : (
-                    <Avatar
-                      src={notif.actorAvatar}
-                      name={notif.actorName}
-                      size="md"
-                    />
-                  )}
+                  <Avatar src={notif.actorAvatar} name={notif.actorName} size="md" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0 max-w-full flex-wrap">
-                        {notif.isAnnouncement && (
-                          <span
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider shrink-0 ${severityBadgeClass}`}
-                          >
-                            Announcement
-                          </span>
-                        )}
-                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
-                          <span className="truncate">{notif.title}</span>
-                          {!notif.isAnnouncement &&
-                            notif.actorId &&
-                            verifiedSet.has(notif.actorId) && (
-                              <VerifiedBadge size={13} />
-                            )}
-                        </p>
-                      </div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                        {notif.title}
+                      </p>
                       <span className="text-xs text-slate-400 shrink-0 tabular-nums">
                         {formatRelativeTime(notif.createdAtMs)}
                       </span>
@@ -164,20 +184,99 @@ export function NotificationsView({
                     </span>
                   )}
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => onDeleteNotification(notif.id)}
-                  aria-label={`Delete activity: ${notif.title}`}
-                  className="min-h-[36px] min-w-[36px] rounded-xl flex items-center justify-center text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" aria-hidden="true" />
-                </button>
               </div>
-            );
-          })
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+          {notifications.length === 0 ? (
+            <div className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+              No notifications yet. Activity from @{profile.handle} will show up here in real time.
+            </div>
+          ) : (
+            notifications.map((notif) => {
+              const severityBadgeClass =
+                notif.announcementSeverity === 'maintenance'
+                  ? 'bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
+                  : notif.announcementSeverity === 'warning'
+                    ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
+                    : 'bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300';
+
+              return (
+                <div
+                  key={notif.id}
+                  data-testid={`notification-item-${notif.id}`}
+                  className={`p-4 flex items-start gap-3 transition-colors ${
+                    notif.read
+                      ? 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      : 'bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-50 dark:hover:bg-blue-950/30'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onMarkRead(notif.id)}
+                    className="flex-1 min-w-0 flex items-start gap-3.5 text-left cursor-pointer"
+                  >
+                    {notif.isAnnouncement ? (
+                      <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                        <Megaphone className="w-4 h-4" aria-hidden="true" />
+                      </div>
+                    ) : (
+                      <Avatar
+                        src={notif.actorAvatar}
+                        name={notif.actorName}
+                        size="md"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 max-w-full flex-wrap">
+                          {notif.isAnnouncement && (
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider shrink-0 ${severityBadgeClass}`}
+                            >
+                              Announcement
+                            </span>
+                          )}
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                            <span className="truncate">{notif.title}</span>
+                            {!notif.isAnnouncement &&
+                              notif.actorId &&
+                              verifiedSet.has(notif.actorId) && (
+                                <VerifiedBadge size={13} />
+                              )}
+                          </p>
+                        </div>
+                        <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+                          {formatRelativeTime(notif.createdAtMs)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
+                        {notif.body}
+                      </p>
+                    </div>
+                    {!notif.read && (
+                      <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 shrink-0">
+                        Unread
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onDeleteNotification(notif.id)}
+                    aria-label={`Delete activity: ${notif.title}`}
+                    className="min-h-[36px] min-w-[36px] rounded-xl flex items-center justify-center text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
     </section>
   );
 }

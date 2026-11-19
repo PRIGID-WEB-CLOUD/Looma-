@@ -20,6 +20,8 @@ export type TabId =
   | 'profile'
   | 'settings'
   | 'public-profile'
+  | 'business-profile'
+  | 'product-detail'
   | 'auth';
 
 export type ConnectionsTab = 'followers' | 'following' | 'friends';
@@ -72,6 +74,10 @@ export interface PostComment {
 export interface Post {
   id: string;
   authorId: string;
+  authorType?: 'personal' | 'business';
+  businessProfileId?: string;
+  actorUid?: string;
+  attachedProductIds?: string[];
   authorName: string;
   authorHandle: string;
   authorAvatar: string;

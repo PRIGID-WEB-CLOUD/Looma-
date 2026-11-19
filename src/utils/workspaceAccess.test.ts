@@ -129,24 +129,6 @@ test('admin and landing routes resolve directly to their dedicated surfaces with
     });
     assert.equal(auth.surface, 'landing', `expected ${path} to resolve to landing surface for auth`);
   }
-
-  for (const path of ['/seller', '/seller/', '/seller/dashboard', '/seller/products/new']) {
-    const unauth = resolveRouteAccess({
-      pathname: path,
-      isAuthorized: false,
-      onboardingCompleted: false,
-      authReady: true,
-    });
-    assert.equal(unauth.surface, 'seller', `expected ${path} to resolve to seller surface for unauth`);
-
-    const auth = resolveRouteAccess({
-      pathname: path,
-      isAuthorized: true,
-      onboardingCompleted: true,
-      authReady: true,
-    });
-    assert.equal(auth.surface, 'seller', `expected ${path} to resolve to seller surface for auth`);
-  }
 });
 
 test('authenticated user who has not completed onboarding is gated to onboarding for protected routes', () => {
@@ -164,6 +146,65 @@ test('canonical paths and redirect notices format accurately', () => {
   assert.equal(getCanonicalPathForSurface('auth', { authMode: 'signup' }), '/auth?mode=signup');
   assert.equal(getCanonicalPathForSurface('workspace', { tab: 'settings' }), '/settings');
   assert.equal(getCanonicalPathForSurface('legal', { legalDocId: 'privacy' }), '/privacy');
+  assert.equal(getCanonicalPathForSurface('marketplace'), '/marketplace');
+  assert.equal(
+    getCanonicalPathForSurface('marketplace', { productId: 'prod_123' }),
+    '/marketplace/product/prod_123'
+  );
+  assert.equal(
+    getCanonicalPathForSurface('business-profile', { businessSlug: 'luxe-atelier' }),
+    '/business/luxe-atelier'
+  );
   assert.ok(buildProtectedRedirectNotice('Feed posts').includes('Feed posts are restricted'));
   assert.ok(buildProtectedRedirectNotice('Member profile').includes('Member profile is restricted'));
 });
+
+test('public marketplace, product detail, and business profile routes stay accessible without login', () => {
+  const mp = resolveRouteAccess({
+    pathname: '/marketplace',
+    isAuthorized: false,
+    onboardingCompleted: false,
+    authReady: true,
+  });
+  assert.equal(mp.surface, 'marketplace');
+  assert.equal(mp.productId, null);
+
+  const pdp = resolveRouteAccess({
+    pathname: '/marketplace/product/prod_abc',
+    isAuthorized: false,
+    onboardingCompleted: false,
+    authReady: true,
+  });
+  assert.equal(pdp.surface, 'marketplace');
+  assert.equal(pdp.productId, 'prod_abc');
+
+  const bp = resolveRouteAccess({
+    pathname: '/business/luxe-atelier',
+    isAuthorized: false,
+    onboardingCompleted: false,
+    authReady: true,
+  });
+  assert.equal(bp.surface, 'business-profile');
+  assert.equal(bp.businessSlug, 'luxe-atelier');
+
+  const authMp = resolveRouteAccess({
+    pathname: '/marketplace/product/prod_abc',
+    isAuthorized: true,
+    onboardingCompleted: true,
+    authReady: true,
+  });
+  assert.equal(authMp.surface, 'workspace');
+  assert.equal(authMp.tab, 'product-detail');
+  assert.equal(authMp.productId, 'prod_abc');
+
+  const authBp = resolveRouteAccess({
+    pathname: '/business/luxe-atelier',
+    isAuthorized: true,
+    onboardingCompleted: true,
+    authReady: true,
+  });
+  assert.equal(authBp.surface, 'workspace');
+  assert.equal(authBp.tab, 'business-profile');
+  assert.equal(authBp.businessSlug, 'luxe-atelier');
+});
+

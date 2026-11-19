@@ -10,6 +10,16 @@ export type OrderStatus =
 export type PaymentMethod = 'card' | 'cod' | 'wallet';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
 
+export interface ProductVariant {
+  id: string;
+  size: string;
+  color: string;
+  stock: number;
+  price: number | null;
+  priceCents: number | null;
+  sku: string;
+}
+
 export interface MarketplaceStore {
   id: string;
   slug: string;
@@ -23,6 +33,7 @@ export interface MarketplaceStore {
   currency: string;
   publishStatus: StorePublishStatus;
   externalStoreId?: string;
+  businessProfileId?: string;
   verified: boolean;
   featured: boolean;
   createdAtMs: number;
@@ -35,6 +46,7 @@ export interface MarketplaceProduct {
   storeName: string;
   storeSlug: string;
   ownerUid: string;
+  businessProfileId?: string;
   title: string;
   description: string;
   category: string;
@@ -46,15 +58,19 @@ export interface MarketplaceProduct {
   location?: string;
   condition?: ProductCondition;
   stock: number;
+  trackQuantity?: boolean;
   status: ProductStatus;
   featured: boolean;
   tag?: string;
+  variants?: ProductVariant[];
   createdAtMs: number;
   updatedAtMs: number;
 }
 
 export interface CartItem {
   productId: string;
+  variantId?: string;
+  variantLabel?: string;
   storeId: string;
   storeName: string;
   title: string;

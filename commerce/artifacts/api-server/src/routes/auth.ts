@@ -61,16 +61,34 @@ async function isRateLimited(key: string, limit: number, windowMs: number) {
   return false;
 }
 
-async function setSession(res: Response, userId: string, storeId: string) {
+async function setSession(
+  res: Response,
+  userId: string,
+  storeId: string,
+  options?: { businessProfileId?: string | null; isAdminSession?: boolean }
+) {
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const isAdminSession = Boolean(options?.isAdminSession);
+  const absTtlMs = isAdminSession ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + absTtlMs);
+  const idleExpiresAt = isAdminSession ? new Date(Date.now() + 4 * 60 * 60 * 1000) : null;
+
   await db.delete(sessionsTable).where(and(eq(sessionsTable.userId, userId), eq(sessionsTable.storeId, storeId)));
-  await db.insert(sessionsTable).values({ token: digest(token), userId, expiresAt, storeId });
+  await db.insert(sessionsTable).values({
+    token: digest(token),
+    userId,
+    storeId,
+    businessProfileId: options?.businessProfileId ?? null,
+    expiresAt,
+    idleExpiresAt,
+    revokedAt: null,
+  });
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/",
+    maxAge: absTtlMs,
   });
   return token;
 }
@@ -89,7 +107,12 @@ async function clearSession(req: TenantRequest, res: Response) {
     filters = and(filters, eq(sessionsTable.storeId, storeId));
     await db.delete(sessionsTable).where(filters);
   }
-  res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  res.clearCookie(SESSION_COOKIE, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  });
 }
 
 const registerSchema = z.object({ name: z.string().trim().min(1).max(120), email: emailSchema, password: PASSWORD_SCHEMA });
@@ -167,8 +190,8 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
       status: "Active",
     });
 
-    const token = await setSession(res, userId, storeId);
-    res.cookie("prigid_store_slug", slug, { sameSite: "lax", maxAge: 86400 * 1000 });
+    await setSession(res, userId, storeId, { isAdminSession: true });
+    res.cookie("prigid_store_slug", slug, { sameSite: "lax", path: "/", maxAge: 86400 * 1000 });
 
     await db.insert(appSettingsTable).values([
       { id: randomUUID(), storeId, key: "store_name", value: storeName, updatedAt: new Date() },
@@ -182,7 +205,7 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
     const canonicalUrl = buildTenantUrl({ slug, path: "/seller" }, hostHeader);
 
     const { passwordHash: _, ...safe } = user;
-    return res.status(201).json({ ...safe, storeId, slug, canonicalUrl, token });
+    return res.status(201).json({ ...safe, storeId, slug, canonicalUrl });
   } catch (err: any) {
     console.error("[Seller Register Error]", err);
     return res.status(500).json({ error: err.message || "Failed to register seller account." });
@@ -205,22 +228,28 @@ router.post("/auth/seller/login", validate(sellerLoginSchema), async (req: any, 
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
+    if (!user.storeId) {
+      return res.status(403).json({ error: "Seller account is not bound to a store tenant." });
+    }
 
-    const token = await setSession(res, user.id, user.storeId || "store-001");
-    const [store] = user.storeId
-      ? await db.select().from(storesTable).where(eq(storesTable.id, user.storeId)).limit(1)
-      : [];
+    const [store] = await db.select().from(storesTable).where(eq(storesTable.id, user.storeId)).limit(1);
+    if (!store) {
+      return res.status(403).json({ error: "Assigned merchant store could not be verified." });
+    }
 
-    if (store?.slug) {
-      res.cookie("prigid_store_slug", store.slug, { sameSite: "lax", maxAge: 86400 * 1000 });
+    await setSession(res, user.id, user.storeId, {
+      businessProfileId: store.businessProfileId ?? null,
+      isAdminSession: true,
+    });
+
+    if (store.slug) {
+      res.cookie("prigid_store_slug", store.slug, { sameSite: "lax", path: "/", maxAge: 86400 * 1000 });
     }
     const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
-    const canonicalUrl = store
-      ? buildTenantUrl({ slug: store.slug, customDomain: store.customDomain, path: "/seller" }, hostHeader)
-      : undefined;
+    const canonicalUrl = buildTenantUrl({ slug: store.slug, customDomain: store.customDomain, path: "/seller" }, hostHeader);
 
     const { passwordHash: _, ...safe } = user;
-    return res.json({ ...safe, token, storeId: user.storeId, slug: store?.slug, canonicalUrl });
+    return res.json({ ...safe, storeId: user.storeId, slug: store.slug, canonicalUrl });
   } catch (err: any) {
     console.error("[Seller Login Error]", err);
     return res.status(500).json({ error: err.message || "Failed to log in." });
@@ -290,6 +319,7 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
     const newUser = {
       id: userId,
       storeId,
+      firebaseUid: uid,
       name: name || email.split("@")[0] || "Valued Customer",
       email,
       role: "CUSTOMER" as const,
@@ -303,11 +333,14 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
       const storeName = getBranding(storeId).store_name;
       sendEmail({ to: newUser.email, ...buildWelcomeEmail({ name: newUser.name, email: newUser.email, storeUrl, storeId, storeName }), storeId }).catch(() => {});
     }).catch(() => {});
+  } else if (!user.firebaseUid) {
+    await db.update(usersTable).set({ firebaseUid: uid }).where(eq(usersTable.id, user.id)).catch(() => {});
   }
   
-  const token = await setSession(res, user.id, storeId);
+  const isAdminUser = ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes((user.role || "").toUpperCase());
+  await setSession(res, user.id, storeId, { isAdminSession: isAdminUser });
   const { passwordHash: _, ...safe } = user;
-  return res.json({ ...safe, token });
+  return res.json(safe);
 });
 
 router.post("/auth/logout", async (req: TenantRequest, res: Response) => { await clearSession(req, res); return res.json({ ok: true }); });
@@ -336,9 +369,9 @@ router.get("/auth/admin/exists", async (req: TenantRequest, res: Response) => {
 
 router.post("/auth/admin/quick-login", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
-  // SECURITY: Quick login is strictly disabled in production builds
-  if (process.env.NODE_ENV === "production") {
-    return res.status(404).json({ error: "Endpoint not available in production." });
+  // SECURITY: Quick login is strictly disabled unless explicitly running in local dev with opt-in flag
+  if (process.env.NODE_ENV !== "development" || process.env.ALLOW_DEV_QUICK_LOGIN !== "true") {
+    return res.status(404).json({ error: "Quick login is disabled." });
   }
 
   const { email } = req.body || {};
@@ -365,9 +398,9 @@ router.post("/auth/admin/quick-login", async (req: TenantRequest, res: Response)
     return res.status(403).json({ error: "No admin privileges found for this account in this store." });
   }
 
-  const token = await setSession(res, admin.id, storeId);
+  await setSession(res, admin.id, storeId, { isAdminSession: true });
   const { passwordHash: _, ...safe } = admin;
-  return res.json({ ...safe, token });
+  return res.json(safe);
 });
 
 const bootstrapSchema = z.object({ name: z.string().trim().min(1).max(120), email: emailSchema });
@@ -464,9 +497,9 @@ router.post("/auth/admin/verify-otp", validate(otpVerifySchema), async (req: Ten
   await db.update(adminOtpCodesTable).set({ used: true }).where(eq(adminOtpCodesTable.id, stored.id));
   const [admin] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
   if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) return res.status(404).json({ error: "Admin not found." });
-  const token = await setSession(res, admin.id, storeId);
+  await setSession(res, admin.id, storeId, { isAdminSession: true });
   const { passwordHash: _, ...safe } = admin;
-  return res.json({ ...safe, token });
+  return res.json(safe);
 });
 
 const forgotSchema = z.object({ email: emailSchema });

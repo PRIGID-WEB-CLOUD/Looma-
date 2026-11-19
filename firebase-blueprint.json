@@ -148,6 +148,26 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "authorType": {
+          "type": "string",
+          "enum": ["personal", "business"]
+        },
+        "businessProfileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "attachedProductIds": {
+          "type": "array",
+          "description": "Optional attached marketplace/commerce product IDs (max 8)"
+        },
         "authorName": {
           "type": "string",
           "minLength": 1,
@@ -1150,6 +1170,124 @@
         "paymentMethod", "paymentStatus", "status", "shippingName", "shippingPhone",
         "shippingAddress", "shippingCity", "note", "createdAt", "updatedAt"
       ]
+    },
+    "BusinessProfile": {
+      "title": "BusinessProfile",
+      "description": "Merchant or brand identity created and owned by a Looma personal account.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "bio": { "type": "string", "maxLength": 280 },
+        "logoUrl": { "type": "string", "maxLength": 250000 },
+        "bannerUrl": { "type": "string", "maxLength": 250000 },
+        "websiteUrl": { "type": "string", "maxLength": 500 },
+        "location": { "type": "string", "maxLength": 80 },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "commerceStoreId": { "type": "string", "maxLength": 128 },
+        "commerceStoreSlug": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"] },
+        "verified": { "type": "boolean" },
+        "followersCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "slug", "displayName", "category", "bio", "logoUrl", "bannerUrl",
+        "currency", "ownerUid", "status", "verified", "followersCount", "createdAt", "updatedAt"
+      ]
+    },
+    "BusinessHandle": {
+      "title": "BusinessHandle",
+      "description": "Atomic slug reservation mapping a unique business slug to a BusinessProfile ID.",
+      "type": "object",
+      "properties": {
+        "slug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["slug", "businessProfileId", "ownerUid", "createdAt"]
+    },
+    "BusinessMembership": {
+      "title": "BusinessMembership",
+      "description": "Role-based membership linking a Firebase user to a BusinessProfile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["OWNER", "ADMIN", "EDITOR", "VIEWER"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "INVITED", "REVOKED"] },
+        "invitedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "inviteId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "maxLength": 60 },
+        "handle": { "type": "string", "maxLength": 32 },
+        "avatarUrl": { "type": "string", "maxLength": 250000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "businessProfileId", "uid", "role", "status",
+        "invitedByUid", "createdAt", "updatedAt"
+      ]
+    },
+    "BusinessInvite": {
+      "title": "BusinessInvite",
+      "description": "Pending team invitation for a BusinessProfile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "role": { "type": "string", "enum": ["ADMIN", "EDITOR", "VIEWER"] },
+        "tokenHash": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "REVOKED", "EXPIRED"] },
+        "invitedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAtMs": { "type": "number" }
+      },
+      "required": [
+        "id", "businessProfileId", "businessName", "email", "role",
+        "tokenHash", "status", "invitedByUid", "createdAt", "expiresAtMs"
+      ]
+    },
+    "BusinessFollower": {
+      "title": "BusinessFollower",
+      "description": "Follower relationship between a personal user and a BusinessProfile.",
+      "type": "object",
+      "properties": {
+        "followerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerUid", "businessProfileId", "createdAt"]
+    },
+    "BusinessNotification": {
+      "title": "BusinessNotification",
+      "description": "Scoped notifications belonging to a BusinessProfile (orders, payments, followers, team).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "actorAvatar": { "type": "string", "maxLength": 250000 },
+        "type": { "type": "string", "enum": ["order", "payment", "follow", "comment", "like", "mention", "team", "system"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "businessProfileId", "actorId", "actorName", "actorAvatar",
+        "type", "title", "body", "targetId", "read", "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -1276,6 +1414,30 @@
     "/marketplaceOrders/{orderId}": {
       "schema": { "$ref": "#/entities/MarketplaceOrder" },
       "description": "Buyer order records containing shipping PII strictly scoped to buyer, store owner, and admins."
+    },
+    "/businessProfiles/{bpId}": {
+      "schema": { "$ref": "#/entities/BusinessProfile" },
+      "description": "Publicly discoverable Business Profile identities owned and managed by Looma users."
+    },
+    "/businessHandles/{slug}": {
+      "schema": { "$ref": "#/entities/BusinessHandle" },
+      "description": "Unique slug index resolving /business/:slug to a BusinessProfile ID."
+    },
+    "/businessMemberships/{membershipId}": {
+      "schema": { "$ref": "#/entities/BusinessMembership" },
+      "description": "Role-based memberships linking personal Firebase UIDs to Business Profiles."
+    },
+    "/businessInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/BusinessInvite" },
+      "description": "Pending team invitations for a BusinessProfile."
+    },
+    "/businessProfiles/{bpId}/followers/{followerUid}": {
+      "schema": { "$ref": "#/entities/BusinessFollower" },
+      "description": "Personal users following a BusinessProfile."
+    },
+    "/businessProfiles/{bpId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/BusinessNotification" },
+      "description": "Activity notifications scoped to a BusinessProfile."
     }
   }
 }

@@ -57,9 +57,6 @@ export default function AdminRegisterPage() {
         return;
       }
 
-      if (data.token) {
-        localStorage.setItem("luxe_admin_token", data.token);
-      }
       if (data.slug) {
         document.cookie = `prigid_store_slug=${encodeURIComponent(data.slug)}; path=/; max-age=86400; SameSite=Lax`;
       }

@@ -12,14 +12,18 @@ import {
   ordersTable,
   orderItemsTable,
   productsTable,
+  productVariantsTable,
   couponsTable,
   storeCartItemsTable,
 } from "@workspace/db";
 import { requireAdmin, getSessionUser } from "../middleware/requireAdmin";
+import { verifyFirebaseIdToken } from "../services/firebaseAuth";
 import { paymentService, type PaymentProviderType } from "../services/payments";
 import { encryptCredential } from "../services/credentialVault";
 import { sendEmail, buildOrderConfirmationEmail, getStoreUrl, loadBrandingCache } from "../services/mailer";
 import { sendWhatsAppNotification, buildWhatsAppOrderConfirmationMessage } from "../services/whatsappService";
+import { enqueueOutboxEvent, processPendingOutbox } from "../services/firestoreSyncWorker";
+import { enqueueProductOutboxSnapshot } from "../services/inventoryService";
 import { eventBus } from "../lib/eventBus";
 import { type TenantRequest } from "../middleware/tenantContext";
 
@@ -305,14 +309,6 @@ router.post("/refund", requireAdmin, async (req: TenantRequest, res: Response) =
       reason: parsed.data.reason,
     });
 
-    if (tx.orderId) {
-      await db.update(ordersTable).set({
-        paymentStatus: "REFUNDED",
-        status: "CANCELLED",
-        updatedAt: new Date(),
-      }).where(and(eq(ordersTable.id, tx.orderId), eq(ordersTable.storeId, storeId)));
-    }
-
     return res.json({ success: true, refund: result });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Failed to process refund." });
@@ -459,10 +455,32 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
   }
 
   const storeId = req.storeId!;
+  let buyerFirebaseUid: string | null = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const rawBearer = authHeader.slice(7).trim();
+    if (rawBearer) {
+      try {
+        const verified = await verifyFirebaseIdToken(rawBearer);
+        buyerFirebaseUid = verified.uid;
+      } catch (authErr: any) {
+        return res.status(401).json({ error: authErr?.message || "Invalid buyer authentication token." });
+      }
+    }
+  }
+
+  const [storeRecord] = await db.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
+  if (!storeRecord || storeRecord.status === "suspended" || storeRecord.publishStatus === "SUSPENDED") {
+    return res.status(403).json({ error: "Store is currently unavailable for checkout." });
+  }
+
   const sessionUser = await getSessionUser(req, storeId);
   const rawCookie = req.cookies?.["luxe_cart"] as string | undefined;
-  
+
   const candidateSessionIds: string[] = [];
+  if (buyerFirebaseUid) {
+    candidateSessionIds.push(`firebase:${buyerFirebaseUid}`);
+  }
   if (sessionUser?.id) {
     candidateSessionIds.push(`user:${sessionUser.id}`);
   }
@@ -484,14 +502,33 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
   }
 
   let subtotal = 0;
-  const items: Array<{ name: string; quantity: number; price: number; productId: string }> = [];
+  const items: Array<{ name: string; quantity: number; price: number; productId: string; variantId?: string; sku?: string }> = [];
 
   for (const item of cartItems) {
     const [p] = await db.select().from(productsTable).where(and(eq(productsTable.id, item.productId), eq(productsTable.storeId, storeId))).limit(1);
-    if (p && p.status === "ACTIVE") {
-      subtotal += p.price * item.quantity;
-      items.push({ name: p.name, quantity: item.quantity, price: p.price, productId: p.id });
+    if (!p || p.status !== "ACTIVE") continue;
+
+    const variantId = typeof (item.product as any)?.variantId === "string" ? String((item.product as any).variantId) : undefined;
+    let unitPrice = Number(p.price || 0);
+    let sku = "";
+    if (variantId) {
+      const [variant] = await db.select().from(productVariantsTable)
+        .where(and(eq(productVariantsTable.id, variantId), eq(productVariantsTable.productId, p.id), eq(productVariantsTable.storeId, storeId)))
+        .limit(1);
+      if (!variant) {
+        return res.status(409).json({ error: `${p.name} selected variant is no longer available.` });
+      }
+      if (p.trackQuantity && variant.stock < item.quantity) {
+        return res.status(409).json({ error: `${p.name} (${variant.size || variant.color || "variant"}) has insufficient stock (${variant.stock} left).` });
+      }
+      if (variant.price != null) unitPrice = Number(variant.price);
+      sku = variant.sku || "";
+    } else if (p.trackQuantity && p.stock < item.quantity) {
+      return res.status(409).json({ error: `${p.name} has insufficient stock (${p.stock} left).` });
     }
+
+    subtotal += unitPrice * item.quantity;
+    items.push({ name: p.name, quantity: item.quantity, price: unitPrice, productId: p.id, variantId, sku });
   }
 
   // Fallback to items passed directly in request body if cart table is empty
@@ -499,11 +536,32 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
     for (const rawItem of req.body.items) {
       const prodId = rawItem.productId || rawItem.id;
       const qty = Math.max(1, Number(rawItem.quantity || rawItem.qty || 1));
+      const variantId = typeof rawItem.variantId === "string" && rawItem.variantId.trim() ? rawItem.variantId.trim() : undefined;
       const [p] = await db.select().from(productsTable).where(and(eq(productsTable.id, prodId), eq(productsTable.storeId, storeId))).limit(1);
-      if (p && p.status === "ACTIVE") {
-        subtotal += p.price * qty;
-        items.push({ name: p.name, quantity: qty, price: p.price, productId: p.id });
+      if (!p || p.status !== "ACTIVE") {
+        return res.status(409).json({ error: `One or more items are no longer available.` });
       }
+
+      let unitPrice = Number(p.price || 0);
+      let sku = "";
+      if (variantId) {
+        const [variant] = await db.select().from(productVariantsTable)
+          .where(and(eq(productVariantsTable.id, variantId), eq(productVariantsTable.productId, p.id), eq(productVariantsTable.storeId, storeId)))
+          .limit(1);
+        if (!variant) {
+          return res.status(409).json({ error: `${p.name} selected variant is no longer available.` });
+        }
+        if (p.trackQuantity && variant.stock < qty) {
+          return res.status(409).json({ error: `${p.name} (${variant.size || variant.color || "variant"}) has insufficient stock (${variant.stock} left).` });
+        }
+        if (variant.price != null) unitPrice = Number(variant.price);
+        sku = variant.sku || "";
+      } else if (p.trackQuantity && p.stock < qty) {
+        return res.status(409).json({ error: `${p.name} has insufficient stock (${p.stock} left).` });
+      }
+
+      subtotal += unitPrice * qty;
+      items.push({ name: p.name, quantity: qty, price: unitPrice, productId: p.id, variantId, sku });
     }
   }
 
@@ -525,10 +583,14 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
   const amount = Math.max(0, subtotal - discount) * 100;
   const reference = `LUXE_${Date.now()}_${randomBytes(6).toString("hex").toUpperCase()}`;
   const primarySessionId = candidateSessionIds[0] || (rawCookie ? `anon:${rawCookie}` : "session-guest");
+  const reservationExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
   const metadata = {
     sessionId: primarySessionId,
     storeId,
+    businessProfileId: storeRecord.businessProfileId || null,
+    buyerFirebaseUid,
+    reservationExpiresAt,
     customerId: sessionUser?.id,
     customerName: parsed.data.customerName,
     customerEmail: parsed.data.customerEmail,
@@ -544,7 +606,7 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
       provider: parsed.data.provider,
       reference,
       amount,
-      currency: (parsed.data.currency || "USD").toUpperCase(),
+      currency: (parsed.data.currency || storeRecord.currency || "USD").toUpperCase(),
       customerEmail: parsed.data.customerEmail,
       customerName: parsed.data.customerName,
       items,
@@ -601,6 +663,7 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         if (existingOrder) return existingOrder;
       }
 
+      const [storeRecord] = await tx.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
       const meta = (transaction.metadata || {}) as any;
       const metaItems = Array.isArray(meta.items) ? meta.items : [];
 
@@ -609,16 +672,40 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
       for (const item of metaItems) {
         const [product] = await tx.select().from(productsTable)
           .where(and(eq(productsTable.id, item.productId), eq(productsTable.status, "ACTIVE"), eq(productsTable.storeId, storeId))).limit(1);
-        if (!product) throw new Error(`Product ${item.productId} is no longer available.`);
+        if (!product) throw Object.assign(new Error(`Product ${item.productId} is no longer available.`), { statusCode: 409 });
+
+        if (item.variantId) {
+          const variantStockCond = or(eq(productsTable.trackQuantity, false), gte(productVariantsTable.stock, item.quantity));
+          const [reservedVariant] = await tx.update(productVariantsTable)
+            .set({ stock: product.trackQuantity ? sql`${productVariantsTable.stock} - ${item.quantity}` : sql`${productVariantsTable.stock}` })
+            .where(and(
+              eq(productVariantsTable.id, item.variantId),
+              eq(productVariantsTable.productId, product.id),
+              eq(productVariantsTable.storeId, storeId),
+              product.trackQuantity ? gte(productVariantsTable.stock, item.quantity) : sql`true`
+            ))
+            .returning();
+          if (!reservedVariant && product.trackQuantity) {
+            throw Object.assign(new Error(`${product.name} selected variant has insufficient stock.`), { statusCode: 409 });
+          }
+          void variantStockCond;
+        }
 
         const stockCondition = or(eq(productsTable.trackQuantity, false), gte(productsTable.stock, item.quantity));
         const [reserved] = await tx.update(productsTable)
-          .set({ stock: product.trackQuantity ? sql`${productsTable.stock} - ${item.quantity}` : sql`${productsTable.stock}` })
+          .set({ stock: product.trackQuantity ? sql`GREATEST(0, ${productsTable.stock} - ${item.quantity})` : sql`${productsTable.stock}` })
           .where(and(eq(productsTable.id, product.id), eq(productsTable.storeId, storeId), stockCondition)).returning();
 
-        if (!reserved) throw new Error(`${product.name} has insufficient stock.`);
+        if (!reserved) throw Object.assign(new Error(`${product.name} has insufficient stock.`), { statusCode: 409 });
         subtotal += item.price * item.quantity;
-        authoritativeItems.push({ productId: product.id, name: product.name, qty: item.quantity, price: item.price });
+        authoritativeItems.push({
+          productId: product.id,
+          variantId: item.variantId || undefined,
+          sku: item.sku || "",
+          name: product.name,
+          qty: item.quantity,
+          price: item.price,
+        });
       }
 
       let discount = 0;
@@ -635,9 +722,16 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         }
       }
 
+      const businessProfileId = meta.businessProfileId || storeRecord?.businessProfileId || null;
+      const buyerFirebaseUid = typeof meta.buyerFirebaseUid === "string" ? meta.buyerFirebaseUid : null;
+      const reservationExpiresAt = meta.reservationExpiresAt ? new Date(meta.reservationExpiresAt) : null;
+
       const [created] = await tx.insert(ordersTable).values({
         id: randomUUID(),
         storeId,
+        businessProfileId,
+        buyerFirebaseUid,
+        reservationExpiresAt,
         customerName: meta.customerName || "Customer",
         customerId: meta.customerId,
         customerEmail: meta.customerEmail || transaction.email,
@@ -676,8 +770,30 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         await tx.delete(storeCartItemsTable).where(and(eq(storeCartItemsTable.sessionId, transaction.sessionId), eq(storeCartItemsTable.storeId, storeId)));
       }
 
+      for (const item of authoritativeItems) {
+        await enqueueProductOutboxSnapshot(item.productId, storeId, "PRODUCT_STOCK_UPDATED", tx as any);
+      }
+
+      await enqueueOutboxEvent({
+        aggregateType: "ORDER",
+        aggregateId: created.id,
+        storeId,
+        eventType: "ORDER_CREATED",
+        payload: {
+          id: created.id,
+          businessProfileId,
+          buyerFirebaseUid,
+          customerName: created.customerName,
+          total: created.total,
+          status: created.status,
+          paymentStatus: created.paymentStatus,
+        },
+      }, tx as any);
+
       return created;
     });
+
+    processPendingOutbox({ storeId }).catch(() => {});
 
     eventBus.publish({
       type: "new_order",

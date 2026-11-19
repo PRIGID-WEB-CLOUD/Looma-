@@ -52,6 +52,7 @@ import { VerifiedBadge } from './VerifiedBadge';
 interface PostCardProps {
   post: Post;
   currentUserId?: string;
+  canManagePost?: boolean;
   isLiked: boolean;
   isBookmarked: boolean;
   comments: PostComment[];
@@ -82,6 +83,7 @@ interface PostCardProps {
 export function PostCard({
   post,
   currentUserId = '',
+  canManagePost,
   isLiked,
   isBookmarked,
   comments,
@@ -152,7 +154,10 @@ export function PostCard({
     }
   }, [playbackSpeed]);
 
-  const isOwnPost = canSharePostToStory(post.authorId, currentUserId);
+  const isOwnPost =
+    typeof canManagePost === 'boolean'
+      ? canManagePost
+      : canSharePostToStory(post.authorId, currentUserId);
 
   const handleSubmitComment = async (e: FormEvent) => {
     e.preventDefault();
@@ -408,9 +413,16 @@ export function PostCard({
             <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1.5">
               <span>{post.authorName}</span>
               {post.authorVerified && <VerifiedBadge size={14} />}
+              {post.authorType === 'business' && (
+                <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-bold uppercase tracking-wider">
+                  Business
+                </span>
+              )}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-              <span>@{post.authorHandle}</span>
+              <span>
+                {post.authorType === 'business' ? `/business/${post.authorHandle}` : `@${post.authorHandle}`}
+              </span>
               <span className="mx-1" aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAtMs)}</span>
               <span className="mx-1" aria-hidden="true">·</span>

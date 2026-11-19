@@ -24,6 +24,8 @@ import {
   buildWhatsAppOrderConfirmationMessage,
   buildWhatsAppOrderStatusUpdateMessage,
 } from "../services/whatsappService";
+import { enqueueOutboxEvent, processPendingOutbox } from "../services/firestoreSyncWorker";
+import { enqueueProductOutboxSnapshot, restoreOrderInventoryTx } from "../services/inventoryService";
 import { type TenantRequest } from "../middleware/tenantContext";
 
 const router = Router();
@@ -327,6 +329,8 @@ router.post("/products", requireAdmin, validate(productSchema), async (req: Tena
   }
   const [p] = await db.insert(productsTable).values(insertData as typeof productsTable.$inferInsert).returning();
   checkAndEmitLowStock(storeId).catch(() => {});
+  await enqueueProductOutboxSnapshot(p.id, storeId, "PRODUCT_UPSERTED").catch(() => {});
+  processPendingOutbox({ storeId }).catch(() => {});
   return res.status(201).json(await enrichProduct(p, storeId));
 });
 
@@ -367,6 +371,8 @@ router.put("/products/:id", requireAdmin, async (req: TenantRequest, res: Respon
     .returning();
   if (!rows[0]) return res.status(404).json({ error: "Product not found" });
   checkAndEmitLowStock(storeId).catch(() => {});
+  await enqueueProductOutboxSnapshot(productId, storeId, "PRODUCT_UPSERTED").catch(() => {});
+  processPendingOutbox({ storeId }).catch(() => {});
   return res.json(await enrichProduct(rows[0], storeId));
 });
 
@@ -375,6 +381,8 @@ router.delete("/products/:id", requireAdmin, async (req: TenantRequest, res: Res
   const storeId = req.storeId!;
   await db.delete(productsTable).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId)));
   checkAndEmitLowStock(storeId).catch(() => {});
+  await enqueueProductOutboxSnapshot(productId, storeId, "PRODUCT_DELETED").catch(() => {});
+  processPendingOutbox({ storeId }).catch(() => {});
   return res.json({ ok: true });
 });
 
@@ -389,6 +397,8 @@ router.post("/products/:id/sync", requireAdmin, async (req: TenantRequest, res: 
   const patch: Record<string, unknown> = {};
   for (const k of allowed) if (k in updates) patch[k] = (updates as Record<string, unknown>)[k];
   const [updated] = await db.update(productsTable).set(patch).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId))).returning();
+  await enqueueProductOutboxSnapshot(productId, storeId, "PRODUCT_UPSERTED").catch(() => {});
+  processPendingOutbox({ storeId }).catch(() => {});
   return res.json({ ok: true, product: updated, syncedAt: new Date().toISOString() });
 });
 
@@ -403,6 +413,8 @@ async function syncVariantStockToProduct(productId: string, storeId: string) {
       await db.update(productsTable).set({ stock: totalStock }).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId)));
     }
     await checkAndEmitLowStock(storeId);
+    await enqueueProductOutboxSnapshot(productId, storeId, "PRODUCT_UPSERTED").catch(() => {});
+    processPendingOutbox({ storeId }).catch(() => {});
   } catch (err) {
     console.error("Failed to sync variant stock:", err);
   }
@@ -798,9 +810,15 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     if (expectedAmount !== transaction.amount) {
       throw Object.assign(new Error("The catalog total changed after payment; payment requires manual review."), { statusCode: 409 });
     }
+    const [storeRecord] = await tx.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
+    const businessProfileId = (metadata as any).businessProfileId || storeRecord?.businessProfileId || null;
+    const buyerFirebaseUid = typeof (metadata as any).buyerFirebaseUid === "string" ? (metadata as any).buyerFirebaseUid : null;
+
     const [created] = await tx.insert(ordersTable).values({
       id: randomUUID(),
       storeId,
+      businessProfileId,
+      buyerFirebaseUid,
       customerName: metadata.customerName,
       customerId: metadata.customerId,
       customerEmail: metadata.customerEmail,
@@ -830,8 +848,30 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     await tx.update(paymentTransactionsTable).set({
       status: "paid", orderId: created.id, verifiedAt: new Date(), updatedAt: new Date(),
     }).where(and(eq(paymentTransactionsTable.id, transaction.id), eq(paymentTransactionsTable.storeId, storeId)));
+
+    for (const item of authoritativeItems) {
+      await enqueueProductOutboxSnapshot(item.productId, storeId, "PRODUCT_STOCK_UPDATED", tx as any);
+    }
+    await enqueueOutboxEvent({
+      aggregateType: "ORDER",
+      aggregateId: created.id,
+      storeId,
+      eventType: "ORDER_CREATED",
+      payload: {
+        id: created.id,
+        businessProfileId,
+        buyerFirebaseUid,
+        customerName: created.customerName,
+        total: created.total,
+        status: created.status,
+        paymentStatus: created.paymentStatus,
+      },
+    }, tx as any);
+
     return created;
   });
+
+  processPendingOutbox({ storeId: order.storeId }).catch(() => {});
 
   eventBus.publish({ type: "new_order", storeId: order.storeId, payload: {
     id: order.id, storeId: order.storeId, customerName: order.customerName, customerEmail: order.customerEmail,
@@ -905,12 +945,60 @@ router.put("/orders/:id", requireAdmin, async (req: TenantRequest, res) => {
   if (parsed.data.paymentStatus) updates.paymentStatus = parsed.data.paymentStatus;
   if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No valid fields to update." });
 
-  const rows = await db.update(ordersTable).set(updates).where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId))).returning();
-  if (!rows[0]) return res.status(404).json({ error: "Order not found" });
-  eventBus.publish({ type: "order_updated", storeId, payload: { id: rows[0].id, storeId, status: rows[0].status } });
+  const updatedOrder = await db.transaction(async (tx) => {
+    const [existingOrder] = await tx.select().from(ordersTable)
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId)))
+      .limit(1);
+    if (!existingOrder) return null;
+
+    const wasRestored =
+      existingOrder.status === "CANCELLED" ||
+      existingOrder.status === "REFUNDED" ||
+      existingOrder.paymentStatus === "REFUNDED" ||
+      existingOrder.paymentStatus === "FAILED";
+
+    const [row] = await tx.update(ordersTable).set(updates)
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId)))
+      .returning();
+    if (!row) return null;
+
+    const nowRestored =
+      row.status === "CANCELLED" ||
+      row.status === "REFUNDED" ||
+      row.paymentStatus === "REFUNDED" ||
+      row.paymentStatus === "FAILED";
+
+    if (!wasRestored && nowRestored) {
+      const touchedProducts = await restoreOrderInventoryTx(tx as any, row.id, storeId);
+      for (const prodId of touchedProducts) {
+        await enqueueProductOutboxSnapshot(prodId, storeId, "PRODUCT_UPSERTED", tx as any);
+      }
+    }
+
+    await enqueueOutboxEvent({
+      aggregateType: "ORDER",
+      aggregateId: row.id,
+      storeId,
+      eventType: "ORDER_UPDATED",
+      payload: {
+        id: row.id,
+        businessProfileId: row.businessProfileId,
+        buyerFirebaseUid: row.buyerFirebaseUid,
+        customerName: row.customerName,
+        total: row.total,
+        status: row.status,
+        paymentStatus: row.paymentStatus,
+      },
+    }, tx as any);
+
+    return row;
+  });
+
+  if (!updatedOrder) return res.status(404).json({ error: "Order not found" });
+  processPendingOutbox({ storeId }).catch(() => {});
+  eventBus.publish({ type: "order_updated", storeId, payload: { id: updatedOrder.id, storeId, status: updatedOrder.status } });
 
   if (parsed.data.status) {
-    const updatedOrder = rows[0];
     Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl, brand]) => {
       const storeName = brand?.store_name;
       const emailData = buildOrderStatusUpdateEmail({
@@ -934,7 +1022,7 @@ router.put("/orders/:id", requireAdmin, async (req: TenantRequest, res) => {
     }).catch(() => {});
   }
 
-  return res.json(rows[0]);
+  return res.json(updatedOrder);
 });
 
 router.put("/orders", requireAdmin, async (req: TenantRequest, res) => {
@@ -948,12 +1036,60 @@ router.put("/orders", requireAdmin, async (req: TenantRequest, res) => {
   if (parsed.data.paymentStatus) updates.paymentStatus = parsed.data.paymentStatus;
   if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No valid fields to update." });
 
-  const rows = await db.update(ordersTable).set(updates).where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId))).returning();
-  if (!rows[0]) return res.status(404).json({ error: "Order not found" });
-  eventBus.publish({ type: "order_updated", storeId, payload: { id: rows[0].id, storeId, status: rows[0].status } });
+  const updatedOrder = await db.transaction(async (tx) => {
+    const [existingOrder] = await tx.select().from(ordersTable)
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId)))
+      .limit(1);
+    if (!existingOrder) return null;
+
+    const wasRestored =
+      existingOrder.status === "CANCELLED" ||
+      existingOrder.status === "REFUNDED" ||
+      existingOrder.paymentStatus === "REFUNDED" ||
+      existingOrder.paymentStatus === "FAILED";
+
+    const [row] = await tx.update(ordersTable).set(updates)
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.storeId, storeId)))
+      .returning();
+    if (!row) return null;
+
+    const nowRestored =
+      row.status === "CANCELLED" ||
+      row.status === "REFUNDED" ||
+      row.paymentStatus === "REFUNDED" ||
+      row.paymentStatus === "FAILED";
+
+    if (!wasRestored && nowRestored) {
+      const touchedProducts = await restoreOrderInventoryTx(tx as any, row.id, storeId);
+      for (const prodId of touchedProducts) {
+        await enqueueProductOutboxSnapshot(prodId, storeId, "PRODUCT_UPSERTED", tx as any);
+      }
+    }
+
+    await enqueueOutboxEvent({
+      aggregateType: "ORDER",
+      aggregateId: row.id,
+      storeId,
+      eventType: "ORDER_UPDATED",
+      payload: {
+        id: row.id,
+        businessProfileId: row.businessProfileId,
+        buyerFirebaseUid: row.buyerFirebaseUid,
+        customerName: row.customerName,
+        total: row.total,
+        status: row.status,
+        paymentStatus: row.paymentStatus,
+      },
+    }, tx as any);
+
+    return row;
+  });
+
+  if (!updatedOrder) return res.status(404).json({ error: "Order not found" });
+  processPendingOutbox({ storeId }).catch(() => {});
+  eventBus.publish({ type: "order_updated", storeId, payload: { id: updatedOrder.id, storeId, status: updatedOrder.status } });
 
   if (parsed.data.status) {
-    const updatedOrder = rows[0];
     Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl, brand]) => {
       const storeName = brand?.store_name;
       const emailData = buildOrderStatusUpdateEmail({
@@ -977,7 +1113,7 @@ router.put("/orders", requireAdmin, async (req: TenantRequest, res) => {
     }).catch(() => {});
   }
 
-  return res.json(rows[0]);
+  return res.json(updatedOrder);
 });
 
 // ── Categories ────────────────────────────────────────────────────────────────

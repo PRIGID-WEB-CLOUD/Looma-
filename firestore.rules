@@ -108,14 +108,23 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'authorId', 'authorName', 'authorHandle', 'authorAvatar', 'authorVerified',
+          'id', 'authorId', 'authorType', 'businessProfileId', 'actorUid', 'attachedProductIds',
+          'authorName', 'authorHandle', 'authorAvatar', 'authorVerified',
           'caption', 'imageUrl', 'videoUrl', 'audioUrl', 'linkUrl', 'mediaTitle',
           'category', 'likesCount', 'commentsCount', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidId(data.authorId)
-        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
-        && isValidHandle(data.authorHandle)
+        && (!('authorType' in data) || data.authorType in ['personal', 'business'])
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
+        && (!('actorUid' in data) || isValidId(data.actorUid))
+        && (!('attachedProductIds' in data) || (
+          data.attachedProductIds is list
+          && data.attachedProductIds.size() <= 8
+          && (data.attachedProductIds.size() == 0 || isValidId(data.attachedProductIds[0]))
+        ))
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && (isValidHandle(data.authorHandle) || isValidMarketplaceSlug(data.authorHandle))
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
         && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.caption is string && data.caption.size() <= 1200
@@ -689,6 +698,143 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    // --- Business Profile Validation & Membership Helpers ---
+    function isBusinessMember(bpId) {
+      return isVerifiedUser()
+        && isValidId(bpId)
+        && exists(/databases/$(database)/documents/businessMemberships/$(bpId + '_' + request.auth.uid))
+        && get(/databases/$(database)/documents/businessMemberships/$(bpId + '_' + request.auth.uid)).data.status == 'ACTIVE';
+    }
+
+    function businessMemberRole(bpId) {
+      return get(/databases/$(database)/documents/businessMemberships/$(bpId + '_' + request.auth.uid)).data.role;
+    }
+
+    function isBusinessOwnerOrAdmin(bpId) {
+      return isBusinessMember(bpId) && businessMemberRole(bpId) in ['OWNER', 'ADMIN'];
+    }
+
+    function isBusinessOwner(bpId) {
+      return isBusinessMember(bpId) && businessMemberRole(bpId) == 'OWNER';
+    }
+
+    function canPublishBusinessPost(bpId) {
+      return isBusinessMember(bpId) && businessMemberRole(bpId) in ['OWNER', 'ADMIN', 'EDITOR'];
+    }
+
+    function isValidBusinessProfile(data) {
+      return data.keys().hasAll([
+          'id', 'slug', 'displayName', 'category', 'bio', 'logoUrl', 'bannerUrl',
+          'currency', 'ownerUid', 'status', 'verified', 'followersCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'slug', 'displayName', 'category', 'bio', 'logoUrl', 'bannerUrl',
+          'websiteUrl', 'location', 'currency', 'ownerUid', 'commerceStoreId',
+          'commerceStoreSlug', 'status', 'verified', 'followersCount', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidMarketplaceSlug(data.slug)
+        && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 80
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
+        && data.bio is string && data.bio.size() <= 280
+        && data.logoUrl is string && data.logoUrl.size() <= 250000
+        && data.bannerUrl is string && data.bannerUrl.size() <= 250000
+        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 500))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 80))
+        && data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 8
+        && isValidId(data.ownerUid)
+        && (!('commerceStoreId' in data) || (data.commerceStoreId is string && data.commerceStoreId.size() <= 128))
+        && (!('commerceStoreSlug' in data) || (data.commerceStoreSlug is string && data.commerceStoreSlug.size() <= 64))
+        && data.status in ['ACTIVE', 'SUSPENDED']
+        && data.verified is bool
+        && data.followersCount is int && data.followersCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBusinessHandle(data) {
+      return data.keys().hasAll(['slug', 'businessProfileId', 'ownerUid', 'createdAt'])
+        && data.keys().hasOnly(['slug', 'businessProfileId', 'ownerUid', 'createdAt'])
+        && isValidMarketplaceSlug(data.slug)
+        && isValidId(data.businessProfileId)
+        && isValidId(data.ownerUid)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidBusinessMembership(data) {
+      return data.keys().hasAll([
+          'id', 'businessProfileId', 'uid', 'role', 'status',
+          'invitedByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'businessProfileId', 'uid', 'role', 'status',
+          'invitedByUid', 'inviteId', 'displayName', 'handle', 'avatarUrl', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.businessProfileId)
+        && isValidId(data.uid)
+        && data.role in ['OWNER', 'ADMIN', 'EDITOR', 'VIEWER']
+        && data.status in ['ACTIVE', 'INVITED', 'REVOKED']
+        && isValidId(data.invitedByUid)
+        && (!('inviteId' in data) || isValidId(data.inviteId))
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 60))
+        && (!('handle' in data) || (data.handle is string && data.handle.size() <= 32))
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 250000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBusinessInvite(data) {
+      return data.keys().hasAll([
+          'id', 'businessProfileId', 'businessName', 'email', 'role',
+          'tokenHash', 'status', 'invitedByUid', 'createdAt', 'expiresAtMs'
+        ])
+        && data.keys().hasOnly([
+          'id', 'businessProfileId', 'businessName', 'email', 'role',
+          'tokenHash', 'status', 'invitedByUid', 'createdAt', 'expiresAtMs'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.businessProfileId)
+        && data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.role in ['ADMIN', 'EDITOR', 'VIEWER']
+        && data.tokenHash is string && data.tokenHash.size() >= 1 && data.tokenHash.size() <= 128
+        && data.status in ['PENDING', 'ACCEPTED', 'REVOKED', 'EXPIRED']
+        && isValidId(data.invitedByUid)
+        && data.createdAt is timestamp
+        && data.expiresAtMs is int && data.expiresAtMs > 0;
+    }
+
+    function isValidBusinessFollower(data, bpId, followerUid) {
+      return data.keys().hasAll(['followerUid', 'businessProfileId', 'createdAt'])
+        && data.keys().hasOnly(['followerUid', 'businessProfileId', 'createdAt'])
+        && isValidId(data.followerUid) && data.followerUid == followerUid
+        && isValidId(data.businessProfileId) && data.businessProfileId == bpId
+        && data.createdAt is timestamp;
+    }
+
+    function isValidBusinessNotification(data, bpId) {
+      return data.keys().hasAll([
+          'id', 'businessProfileId', 'actorId', 'actorName', 'actorAvatar',
+          'type', 'title', 'body', 'targetId', 'read', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'businessProfileId', 'actorId', 'actorName', 'actorAvatar',
+          'type', 'title', 'body', 'targetId', 'read', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.businessProfileId) && data.businessProfileId == bpId
+        && isValidId(data.actorId)
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
+        && data.actorAvatar is string && data.actorAvatar.size() <= 250000
+        && data.type in ['order', 'payment', 'follow', 'comment', 'like', 'mention', 'team', 'system']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 240
+        && data.targetId is string && data.targetId.size() <= 128
+        && data.read is bool
+        && data.createdAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isVerifiedUser() && isValidId(userId);
@@ -833,29 +979,65 @@ service cloud.firestore {
         && isValidId(postId)
         && isValidPost(incoming())
         && incoming().id == postId
-        && incoming().authorId == request.auth.uid
         && incoming().likesCount == 0
         && incoming().commentsCount == 0
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && (
-          !('authorVerified' in incoming())
-          || incoming().authorVerified == false
-          || isAdmin()
-          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+          (
+            (!('authorType' in incoming()) || incoming().authorType == 'personal')
+            && incoming().authorId == request.auth.uid
+            && (!('actorUid' in incoming()) || incoming().actorUid == request.auth.uid)
+            && !('businessProfileId' in incoming())
+            && (
+              !('authorVerified' in incoming())
+              || incoming().authorVerified == false
+              || isAdmin()
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+            )
+          )
+          || (
+            incoming().authorType == 'business'
+            && 'businessProfileId' in incoming()
+            && incoming().authorId == incoming().businessProfileId
+            && incoming().actorUid == request.auth.uid
+            && canPublishBusinessPost(incoming().businessProfileId)
+            && get(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.status == 'ACTIVE'
+            && (
+              !('authorVerified' in incoming())
+              || incoming().authorVerified == false
+              || isAdmin()
+              || get(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.verified == true
+            )
+          )
         );
       allow update: if isVerifiedUser()
         && isValidId(postId)
         && isValidPost(incoming())
         && incoming().id == existing().id
         && incoming().authorId == existing().authorId
+        && (!('authorType' in existing()) || incoming().authorType == existing().authorType)
+        && (!('businessProfileId' in existing()) || incoming().businessProfileId == existing().businessProfileId)
+        && (!('actorUid' in existing()) || incoming().actorUid == existing().actorUid)
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Author or Admin edits post content
+          // Action 1: Author, Business Profile editor+, or Admin edits post content
           (
-            (existing().authorId == request.auth.uid || isAdmin())
-            && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'imageUrl', 'videoUrl', 'audioUrl', 'linkUrl', 'mediaTitle', 'category', 'updatedAt'])
+            (
+              existing().authorId == request.auth.uid
+              || (
+                'authorType' in existing()
+                && existing().authorType == 'business'
+                && 'businessProfileId' in existing()
+                && canPublishBusinessPost(existing().businessProfileId)
+              )
+              || isAdmin()
+            )
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'caption', 'imageUrl', 'videoUrl', 'audioUrl', 'linkUrl',
+              'mediaTitle', 'category', 'attachedProductIds', 'updatedAt'
+            ])
           )
           // Action 2: Like counter increment with atomic like subdoc creation
           || (
@@ -884,7 +1066,16 @@ service cloud.firestore {
         );
       allow delete: if isVerifiedUser()
         && isValidId(postId)
-        && (existing().authorId == request.auth.uid || isAdmin());
+        && (
+          existing().authorId == request.auth.uid
+          || (
+            'authorType' in existing()
+            && existing().authorType == 'business'
+            && 'businessProfileId' in existing()
+            && canPublishBusinessPost(existing().businessProfileId)
+          )
+          || isAdmin()
+        );
 
       match /likes/{userId} {
         allow get: if isVerifiedUser() && isValidId(postId) && isValidId(userId);
@@ -1376,11 +1567,13 @@ service cloud.firestore {
 
     // --- Marketplace & E-Commerce Collections ---
     match /marketplaceStores/{storeId} {
-      allow get: if isVerifiedUser()
-        && isValidId(storeId)
-        && (existing().publishStatus == 'PUBLISHED' || existing().ownerUid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser()
-        && (resource.data.publishStatus == 'PUBLISHED' || resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow get: if isValidId(storeId)
+        && (
+          existing().publishStatus == 'PUBLISHED'
+          || (isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin()))
+        );
+      allow list: if resource.data.publishStatus == 'PUBLISHED'
+        || (isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin()));
       allow create: if isVerifiedUser()
         && isValidId(storeId)
         && isValidMarketplaceStore(incoming())
@@ -1421,11 +1614,13 @@ service cloud.firestore {
     }
 
     match /marketplaceProducts/{productId} {
-      allow get: if isVerifiedUser()
-        && isValidId(productId)
-        && (existing().status == 'ACTIVE' || existing().ownerUid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser()
-        && (resource.data.status == 'ACTIVE' || resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow get: if isValidId(productId)
+        && (
+          existing().status == 'ACTIVE'
+          || (isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin()))
+        );
+      allow list: if resource.data.status == 'ACTIVE'
+        || (isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin()));
       allow create: if isVerifiedUser()
         && isValidId(productId)
         && isValidMarketplaceProduct(incoming())
@@ -1520,6 +1715,228 @@ service cloud.firestore {
           )
         );
       allow delete: if false;
+    }
+
+    // --- Business Profile Ecosystem Collections ---
+    match /businessProfiles/{bpId} {
+      allow get: if isValidId(bpId)
+        && (
+          existing().status == 'ACTIVE'
+          || (isVerifiedUser() && (isBusinessMember(bpId) || isAdmin()))
+        );
+      allow list: if resource.data.status == 'ACTIVE'
+        || (isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin()));
+      allow create: if isVerifiedUser()
+        && isValidId(bpId)
+        && isValidBusinessProfile(incoming())
+        && incoming().id == bpId
+        && incoming().ownerUid == request.auth.uid
+        && incoming().status == 'ACTIVE'
+        && incoming().verified == false
+        && incoming().followersCount == 0
+        && !('commerceStoreId' in incoming())
+        && !('commerceStoreSlug' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(bpId)
+        && isValidBusinessProfile(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isBusinessOwnerOrAdmin(bpId)
+            && existing().status == 'ACTIVE'
+            && incoming().status == existing().status
+            && incoming().verified == existing().verified
+            && incoming().followersCount == existing().followersCount
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'slug', 'displayName', 'category', 'bio', 'logoUrl', 'bannerUrl',
+              'websiteUrl', 'location', 'currency', 'commerceStoreId', 'commerceStoreSlug', 'updatedAt'
+            ])
+          )
+          || (
+            incoming().followersCount == existing().followersCount + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt'])
+            && existsAfter(/databases/$(database)/documents/businessProfiles/$(bpId)/followers/$(request.auth.uid))
+          )
+          || (
+            incoming().followersCount == existing().followersCount - 1
+            && incoming().followersCount >= 0
+            && incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt'])
+            && !existsAfter(/databases/$(database)/documents/businessProfiles/$(bpId)/followers/$(request.auth.uid))
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(bpId) && (isBusinessOwner(bpId) || isAdmin());
+
+      match /followers/{followerUid} {
+        allow get: if isVerifiedUser() && isValidId(bpId) && isValidId(followerUid);
+        allow list: if isVerifiedUser() && resource.data.businessProfileId == bpId;
+        allow create: if isVerifiedUser()
+          && isOwner(followerUid)
+          && isValidId(bpId)
+          && isValidId(followerUid)
+          && isValidBusinessFollower(incoming(), bpId, followerUid)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isVerifiedUser() && isOwner(followerUid) && isValidId(bpId) && isValidId(followerUid);
+      }
+
+      match /notifications/{notificationId} {
+        allow get: if isVerifiedUser() && isValidId(bpId) && isValidId(notificationId) && (isBusinessMember(bpId) || isAdmin());
+        allow list: if isVerifiedUser() && (isBusinessMember(bpId) || isAdmin());
+        allow create: if isVerifiedUser()
+          && isValidId(bpId)
+          && isValidId(notificationId)
+          && isValidBusinessNotification(incoming(), bpId)
+          && incoming().id == notificationId
+          && incoming().actorId == request.auth.uid
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(bpId)
+          && isValidId(notificationId)
+          && isValidBusinessNotification(incoming(), bpId)
+          && (isBusinessMember(bpId) || isAdmin())
+          && incoming().id == existing().id
+          && incoming().businessProfileId == existing().businessProfileId
+          && incoming().actorId == existing().actorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+        allow delete: if isVerifiedUser() && isValidId(bpId) && isValidId(notificationId) && (isBusinessOwnerOrAdmin(bpId) || isAdmin());
+      }
+    }
+
+    match /businessHandles/{slug} {
+      allow get: if isValidMarketplaceSlug(slug);
+      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidMarketplaceSlug(slug)
+        && isValidBusinessHandle(incoming())
+        && incoming().slug == slug
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId))
+        && getAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.ownerUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if isVerifiedUser()
+        && isValidMarketplaceSlug(slug)
+        && (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /businessMemberships/{membershipId} {
+      allow get: if isVerifiedUser()
+        && isValidId(membershipId)
+        && (existing().uid == request.auth.uid || isBusinessOwnerOrAdmin(existing().businessProfileId) || isAdmin());
+      allow list: if isVerifiedUser()
+        && (resource.data.uid == request.auth.uid || isBusinessOwnerOrAdmin(resource.data.businessProfileId) || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(membershipId)
+        && isValidBusinessMembership(incoming())
+        && incoming().id == membershipId
+        && membershipId == incoming().businessProfileId + '_' + incoming().uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            incoming().uid == request.auth.uid
+            && incoming().role == 'OWNER'
+            && incoming().status == 'ACTIVE'
+            && incoming().invitedByUid == request.auth.uid
+            && existsAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId))
+            && getAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.ownerUid == request.auth.uid
+          )
+          || (
+            isBusinessOwnerOrAdmin(incoming().businessProfileId)
+            && incoming().role != 'OWNER'
+            && incoming().invitedByUid == request.auth.uid
+          )
+          || (
+            'inviteId' in incoming()
+            && request.auth.token.email is string
+            && incoming().uid == request.auth.uid
+            && incoming().role != 'OWNER'
+            && incoming().status == 'ACTIVE'
+            && exists(/databases/$(database)/documents/businessInvites/$(incoming().inviteId))
+            && get(/databases/$(database)/documents/businessInvites/$(incoming().inviteId)).data.businessProfileId == incoming().businessProfileId
+            && get(/databases/$(database)/documents/businessInvites/$(incoming().inviteId)).data.email == request.auth.token.email.lower()
+            && get(/databases/$(database)/documents/businessInvites/$(incoming().inviteId)).data.role == incoming().role
+            && get(/databases/$(database)/documents/businessInvites/$(incoming().inviteId)).data.status == 'PENDING'
+          )
+        );
+      allow update: if isVerifiedUser()
+        && isValidId(membershipId)
+        && isValidBusinessMembership(incoming())
+        && incoming().id == existing().id
+        && incoming().businessProfileId == existing().businessProfileId
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isBusinessOwnerOrAdmin(existing().businessProfileId)
+            && existing().role != 'OWNER'
+            && incoming().role != 'OWNER'
+          )
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(membershipId)
+        && (
+          isAdmin()
+          || (
+            existing().role != 'OWNER'
+            && (existing().uid == request.auth.uid || isBusinessOwnerOrAdmin(existing().businessProfileId))
+          )
+        );
+    }
+
+    match /businessInvites/{inviteId} {
+      allow get: if isVerifiedUser()
+        && isValidId(inviteId)
+        && (
+          isBusinessOwnerOrAdmin(existing().businessProfileId)
+          || (request.auth.token.email is string && existing().email == request.auth.token.email.lower())
+          || isAdmin()
+        );
+      allow list: if isVerifiedUser()
+        && (
+          isBusinessOwnerOrAdmin(resource.data.businessProfileId)
+          || (request.auth.token.email is string && resource.data.email == request.auth.token.email.lower())
+          || isAdmin()
+        );
+      allow create: if isVerifiedUser()
+        && isValidId(inviteId)
+        && isValidBusinessInvite(incoming())
+        && incoming().id == inviteId
+        && incoming().invitedByUid == request.auth.uid
+        && incoming().status == 'PENDING'
+        && isBusinessOwnerOrAdmin(incoming().businessProfileId)
+        && incoming().createdAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(inviteId)
+        && isValidBusinessInvite(incoming())
+        && incoming().id == existing().id
+        && incoming().businessProfileId == existing().businessProfileId
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && (
+          isBusinessOwnerOrAdmin(existing().businessProfileId)
+          || (
+            request.auth.token.email is string
+            && existing().email == request.auth.token.email.lower()
+            && existing().status == 'PENDING'
+            && incoming().status == 'ACCEPTED'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+          )
+          || isAdmin()
+        );
+      allow delete: if isVerifiedUser()
+        && isValidId(inviteId)
+        && (isBusinessOwnerOrAdmin(existing().businessProfileId) || isAdmin());
     }
   }
 }

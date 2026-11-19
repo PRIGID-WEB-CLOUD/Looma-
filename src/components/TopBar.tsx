@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { TabId } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 
@@ -6,6 +7,7 @@ interface TopBarProps {
   onSelectTab: (tab: TabId) => void;
   unreadNotifications: number;
   onLogoClick?: () => void;
+  rightSlot?: ReactNode;
 }
 
 export function TopBar({
@@ -13,6 +15,7 @@ export function TopBar({
   onSelectTab,
   unreadNotifications,
   onLogoClick,
+  rightSlot,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -27,7 +30,8 @@ export function TopBar({
 
   const isNavActive = (itemId: TabId): boolean => {
     if (activeTab === itemId) return true;
-    if (itemId === 'feed' && activeTab === 'public-profile') return true;
+    if (itemId === 'feed' && (activeTab === 'public-profile' || activeTab === 'business-profile')) return true;
+    if (itemId === 'marketplace' && activeTab === 'product-detail') return true;
     if (itemId === 'profile' && (activeTab === 'connections' || activeTab === 'settings')) {
       return true;
     }
@@ -82,7 +86,9 @@ export function TopBar({
           })}
         </nav>
 
-        <div className="hidden md:block w-24 shrink-0" aria-hidden="true" />
+        <div className="flex items-center justify-end min-w-0">
+          {rightSlot ? rightSlot : <div className="hidden md:block w-24 shrink-0" aria-hidden="true" />}
+        </div>
       </div>
     </header>
   );

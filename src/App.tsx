@@ -2,9 +2,11 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
+  Building2,
   LogOut,
   MessageSquare,
   Moon,
+  Plus,
   Settings,
   ShieldAlert,
   ShoppingBag,
@@ -13,6 +15,15 @@ import {
   X,
 } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
+import {
+  ActiveIdentityProvider,
+  useActiveIdentity,
+} from './contexts/ActiveIdentityContext';
+import type { BusinessProfile } from './types/business';
+import {
+  markAllBusinessNotificationsRead,
+  markBusinessNotificationRead,
+} from './services/businessProfiles';
 import type {
   ChatThread,
   ConnectionsTab,
@@ -48,9 +59,15 @@ import {
   getTabRoutePath,
   resolveRouteAccess,
 } from './utils/workspaceAccess';
+import {
+  launchCommerceDashboardSso,
+  provisionCommerceStoreForBusiness,
+} from './services/businessProfiles';
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
+import { BusinessProfileModal } from './components/BusinessProfileModal';
+import { BusinessSwitcherMenu } from './components/BusinessSwitcherMenu';
 import { CreatePostModal } from './components/CreatePostModal';
 import { FeedView } from './components/FeedView';
 import { IncomingCallModal } from './components/IncomingCallModal';
@@ -104,9 +121,18 @@ const MarketplaceView = lazy(() =>
     default: m.MarketplaceView,
   }))
 );
+const ProductDetailPage = lazy(() =>
+  import('./components/ProductDetailPage').then((m) => ({
+    default: m.ProductDetailPage,
+  }))
+);
+const BusinessProfilePage = lazy(() =>
+  import('./components/BusinessProfilePage').then((m) => ({
+    default: m.BusinessProfilePage,
+  }))
+);
 const AdminApp = lazy(() => import('../admin/AdminApp'));
 const LandingPageApp = lazy(() => import('../landingpage/LandingPageApp'));
-const LoomaCommerceDashboard = lazy(() => import('./components/LoomaCommerceDashboard'));
 import { isAllowlistedAdminEmail } from '../admin/adminLogic';
 
 function RouteLoadingFallback() {
@@ -118,8 +144,29 @@ function RouteLoadingFallback() {
 }
 
 export default function App() {
-  const { snapshot: initSnapshot } = useInitialization();
   const store = useSocialStore();
+  return (
+    <ActiveIdentityProvider
+      profile={store.profile}
+      firebaseUser={store.firebaseUser}
+      isLocalAutostart={store.isLocalAutostart}
+    >
+      <AppContent store={store} />
+    </ActiveIdentityProvider>
+  );
+}
+
+function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
+  const { snapshot: initSnapshot } = useInitialization();
+  const {
+    activeIdentity,
+    memberships,
+    businesses,
+    activeBusinessProfile,
+    businessNotifications,
+    unreadBusinessNotifications,
+    switchToBusiness,
+  } = useActiveIdentity();
   const searchParams =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search)
@@ -169,6 +216,12 @@ export default function App() {
     'feed' | 'connections' | 'profile' | 'messages' | 'marketplace'
   >('feed');
   const [composerOpen, setComposerOpen] = useState(false);
+  const [composerInitialBusinessId, setComposerInitialBusinessId] = useState<string | null>(null);
+  const [businessModalOpen, setBusinessModalOpen] = useState(false);
+  const [businessModalMode, setBusinessModalMode] = useState<'create' | 'edit'>('create');
+  const [editingBusinessProfile, setEditingBusinessProfile] = useState<BusinessProfile | null>(null);
+  const [selectedBusinessSlug, setSelectedBusinessSlug] = useState<string | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [addStoryOpen, setAddStoryOpen] = useState(false);
   const [brandModalOpen, setBrandModalOpen] = useState(false);
   const [activeStoryAuthorId, setActiveStoryAuthorId] = useState<string | null>(
@@ -407,12 +460,53 @@ export default function App() {
     store.isAuthorized,
   ]);
 
-  // Keep workspace activeTab aligned when navigating via URL (/feed, /messages, /settings, etc.)
+  // Keep workspace activeTab aligned when navigating via URL (/feed, /messages, /business/:slug, etc.)
   useEffect(() => {
+    if (routeAccess.businessSlug) {
+      setSelectedBusinessSlug(routeAccess.businessSlug);
+    }
+    if (routeAccess.productId !== undefined) {
+      setSelectedProductId(routeAccess.productId || null);
+    }
     if (routeAccess.surface === 'workspace' && routeAccess.tab) {
       setActiveTab(routeAccess.tab);
     }
-  }, [routeAccess.surface, routeAccess.tab]);
+  }, [routeAccess.businessSlug, routeAccess.productId, routeAccess.surface, routeAccess.tab]);
+
+  const openBusinessProfileRoute = (slug: string) => {
+    const clean = slug.trim().toLowerCase();
+    if (!clean) return;
+    setSelectedBusinessSlug(clean);
+    setActiveTab('business-profile');
+    navigateToPath(`/business/${clean}`);
+  };
+
+  const openProductDetailRoute = (productId: string) => {
+    const clean = productId.trim();
+    if (!clean) return;
+    setSelectedProductId(clean);
+    setActiveTab('product-detail');
+    navigateToPath(`/marketplace/product/${clean}`);
+  };
+
+  const launchBusinessMerchantPortal = async (businessProfileId: string) => {
+    await provisionCommerceStoreForBusiness(businessProfileId).catch(() => {});
+    await launchCommerceDashboardSso(businessProfileId);
+  };
+
+  const publishableBusinesses = useMemo(
+    () =>
+      businesses.filter((biz) => {
+        const m = memberships.find((item) => item.businessProfileId === biz.id);
+        return m && (m.role === 'OWNER' || m.role === 'ADMIN' || m.role === 'EDITOR');
+      }),
+    [businesses, memberships]
+  );
+
+  const canManageBusinessIds = useMemo(
+    () => publishableBusinesses.map((b) => b.id),
+    [publishableBusinesses]
+  );
 
   const openLegalDocument = (docId: LegalDocId) => {
     if (typeof window !== 'undefined') {
@@ -678,23 +772,6 @@ export default function App() {
     );
   }
 
-  if (routeAccess.surface === 'seller') {
-    return (
-      <div className="looma-stage-enter">
-        <Suspense fallback={<RouteLoadingFallback />}>
-          <LoomaCommerceDashboard
-            profile={store.profile}
-            accountEmail={store.firebaseUser?.email || null}
-            isFirebaseBacked={Boolean(store.firebaseUser) && !store.isLocalAutostart}
-            onReturnToMarketplace={() => {
-              navigateToPath('/marketplace');
-            }}
-          />
-        </Suspense>
-      </div>
-    );
-  }
-
   if (appStage === 'loading') {
     return (
       <>
@@ -704,6 +781,113 @@ export default function App() {
         />
         <OfflineIndicator />
       </>
+    );
+  }
+
+  if (!store.isAuthorized && (routeAccess.surface === 'marketplace' || routeAccess.surface === 'business-profile')) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 looma-stage-enter">
+        <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+          <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-4">
+            <button
+              type="button"
+              onClick={() => navigateToPath('/marketplace')}
+              className="flex items-center cursor-pointer"
+            >
+              <LoomaLogo />
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigateToPath('/marketplace')}
+                className="min-h-[38px] px-3 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Marketplace
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateToPath('/auth')}
+                className="min-h-[38px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Sign In
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="max-w-6xl mx-auto px-4 md:px-6 py-6">
+          <Suspense fallback={<RouteLoadingFallback />}>
+            {routeAccess.surface === 'business-profile' && routeAccess.businessSlug ? (
+              <BusinessProfilePage
+                slug={routeAccess.businessSlug}
+                currentProfile={store.profile}
+                isAuthorized={false}
+                memberships={[]}
+                posts={store.posts}
+                commentsByPost={store.commentsByPost}
+                likedPostIds={[]}
+                bookmarkedPostIds={[]}
+                shareThreads={[]}
+                categories={store.categories}
+                onBack={() => navigateToPath('/marketplace')}
+                onRequireAuth={() => navigateToPath('/auth')}
+                onEditBusiness={() => navigateToPath('/auth')}
+                onCreateBusinessPost={() => navigateToPath('/auth')}
+                onMessageOwner={() => navigateToPath('/auth')}
+                onOpenProduct={openProductDetailRoute}
+                onToggleLike={() => navigateToPath('/auth')}
+                onToggleBookmark={() => navigateToPath('/auth')}
+                onAddComment={async () => {
+                  navigateToPath('/auth');
+                }}
+                onUpdatePost={async () => {}}
+                onDeletePost={async () => {}}
+                onDeleteComment={async () => {}}
+                onShareToStory={() => {}}
+                onShareToChat={async () => {}}
+                onMentionClick={() => navigateToPath('/auth')}
+                onSelectHashtag={() => navigateToPath('/auth')}
+              />
+            ) : routeAccess.productId ? (
+              <ProductDetailPage
+                productId={routeAccess.productId}
+                currentProfile={store.profile}
+                accountEmail={null}
+                isAuthorized={false}
+                isFirebaseBacked={true}
+                onBack={() => navigateToPath('/marketplace')}
+                onRequireAuth={() => navigateToPath('/auth')}
+                onOpenBusinessProfile={openBusinessProfileRoute}
+                onMessageSeller={() => navigateToPath('/auth')}
+              />
+            ) : (
+              <MarketplaceView
+                profile={store.profile}
+                knownUsers={[store.profile, ...store.allKnownChatUsers]}
+                followedUserIds={[]}
+                threads={[]}
+                accountEmail={null}
+                isAuthorized={false}
+                isFirebaseBacked={true}
+                initialStoreSlug={
+                  searchParams?.get('store') || searchParams?.get('storeId') || null
+                }
+                marketplaceEnabled={store.featureFlags.marketplaceEnabled ?? true}
+                businesses={[]}
+                onMessageSeller={() => navigateToPath('/auth')}
+                onToggleFollowSeller={() => navigateToPath('/auth')}
+                onOpenInbox={() => navigateToPath('/auth')}
+                onOpenChatThread={() => navigateToPath('/auth')}
+                onOpenSellerProfile={() => navigateToPath('/auth')}
+                onOpenBusinessProfile={openBusinessProfileRoute}
+                onOpenProductDetail={openProductDetailRoute}
+                onCreateBusinessProfile={() => navigateToPath('/auth')}
+                onRequireAuth={() => navigateToPath('/auth')}
+              />
+            )}
+          </Suspense>
+        </main>
+        <OfflineIndicator />
+      </div>
     );
   }
 
@@ -941,8 +1125,20 @@ export default function App() {
       <TopBar
         activeTab={activeTab}
         onSelectTab={selectWorkspaceTab}
-        unreadNotifications={unreadCount}
+        unreadNotifications={unreadCount + unreadBusinessNotifications}
         onLogoClick={() => setBrandModalOpen(true)}
+        rightSlot={
+          <BusinessSwitcherMenu
+            compact
+            profile={store.profile}
+            onCreateBusiness={() => {
+              setBusinessModalMode('create');
+              setEditingBusinessProfile(null);
+              setBusinessModalOpen(true);
+            }}
+            onOpenBusinessProfile={openBusinessProfileRoute}
+          />
+        }
       />
 
       <PushToast
@@ -1106,6 +1302,61 @@ export default function App() {
             </div>
           </div>
 
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Business Profiles
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setBusinessModalMode('create');
+                  setEditingBusinessProfile(null);
+                  setBusinessModalOpen(true);
+                }}
+                className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+              >
+                <Plus className="w-3 h-3" aria-hidden="true" />
+                <span>New</span>
+              </button>
+            </div>
+            {businesses.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setBusinessModalMode('create');
+                  setEditingBusinessProfile(null);
+                  setBusinessModalOpen(true);
+                }}
+                className="w-full min-h-[38px] px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Create Business Profile</span>
+              </button>
+            ) : (
+              <div className="space-y-1">
+                {businesses.map((biz) => (
+                  <button
+                    key={biz.id}
+                    type="button"
+                    onClick={() => openBusinessProfileRoute(biz.slug)}
+                    className={`w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 text-left text-xs transition-colors cursor-pointer ${
+                      activeTab === 'business-profile' && selectedBusinessSlug === biz.slug
+                        ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    <Avatar src={biz.logoUrl} name={biz.displayName} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{biz.displayName}</p>
+                      <p className="text-[11px] text-slate-400 truncate">/business/{biz.slug}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1.5">
             <button
               type="button"
@@ -1214,6 +1465,7 @@ export default function App() {
             <FeedView
               profile={store.profile}
               posts={store.posts}
+              canManageBusinessIds={canManageBusinessIds}
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -1223,7 +1475,12 @@ export default function App() {
               categories={store.categories}
               searchQuery={feedSearchQuery}
               onSearchQueryChange={setFeedSearchQuery}
-              onOpenComposer={() => setComposerOpen(true)}
+              onOpenComposer={() => {
+                setComposerInitialBusinessId(
+                  activeIdentity.type === 'business' ? activeIdentity.businessProfileId : null
+                );
+                setComposerOpen(true);
+              }}
               onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
               onOpenAddStory={() => setAddStoryOpen(true)}
               onToggleLike={store.toggleLike}
@@ -1234,9 +1491,13 @@ export default function App() {
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
               onShareToChat={handleSharePostToChat}
-              onAuthorClick={(post) =>
-                handleOpenPublicProfile(post.authorId, post)
-              }
+              onAuthorClick={(post) => {
+                if (post.authorType === 'business' && post.authorHandle) {
+                  openBusinessProfileRoute(post.authorHandle);
+                  return;
+                }
+                handleOpenPublicProfile(post.authorId, post);
+              }}
               onMentionClick={handleOpenMention}
               onSelectHashtag={handleHashtagClick}
               storiesEnabled={store.featureFlags.storiesEnabled}
@@ -1253,6 +1514,58 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'business-profile' && selectedBusinessSlug && (
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <BusinessProfilePage
+                slug={selectedBusinessSlug}
+                currentProfile={store.profile}
+                isAuthorized={store.isAuthorized}
+                memberships={memberships}
+                posts={store.posts}
+                commentsByPost={store.commentsByPost}
+                likedPostIds={store.likedPostIds}
+                bookmarkedPostIds={store.bookmarkedPostIds}
+                shareThreads={store.threads}
+                categories={store.categories}
+                onBack={() => selectWorkspaceTab('feed')}
+                onRequireAuth={() => navigateToPath('/auth')}
+                onEditBusiness={(bp) => {
+                  setBusinessModalMode('edit');
+                  setEditingBusinessProfile(bp);
+                  setBusinessModalOpen(true);
+                }}
+                onCreateBusinessPost={(bp) => {
+                  setComposerInitialBusinessId(bp.id);
+                  setComposerOpen(true);
+                }}
+                onMessageOwner={async (ownerUid, businessName) => {
+                  if (!ownerUid || ownerUid === store.profile.uid) return;
+                  const target =
+                    store.allKnownChatUsers.find((u) => u.uid === ownerUid) ||
+                    (await store.fetchPublicUserProfile(ownerUid));
+                  if (target) {
+                    const thread = await store.startDirectThread(target);
+                    setActiveChatId(thread.id);
+                    selectWorkspaceTab('messages');
+                  } else {
+                    setProtectedRedirectNotice(`Chat unavailable for ${businessName}.`);
+                  }
+                }}
+                onOpenProduct={openProductDetailRoute}
+                onToggleLike={store.toggleLike}
+                onToggleBookmark={store.toggleBookmark}
+                onAddComment={store.addComment}
+                onUpdatePost={store.updatePost}
+                onDeletePost={store.deletePost}
+                onDeleteComment={store.deleteComment}
+                onShareToStory={store.sharePostToStory}
+                onShareToChat={handleSharePostToChat}
+                onMentionClick={handleOpenMention}
+                onSelectHashtag={handleHashtagClick}
+              />
+            </Suspense>
+          )}
+
           {activeTab === 'marketplace' && (
             <Suspense fallback={<RouteLoadingFallback />}>
               <MarketplaceView
@@ -1261,6 +1574,7 @@ export default function App() {
                 followedUserIds={store.followedUserIds}
                 threads={store.threads}
                 accountEmail={store.firebaseUser?.email || null}
+                isAuthorized={store.isAuthorized}
                 isFirebaseBacked={
                   Boolean(store.firebaseUser) && !store.isLocalAutostart
                 }
@@ -1268,6 +1582,7 @@ export default function App() {
                   searchParams?.get('store') || searchParams?.get('storeId') || null
                 }
                 marketplaceEnabled={store.featureFlags.marketplaceEnabled ?? true}
+                businesses={publishableBusinesses}
                 onMessageSeller={async (sellerUid, initialMessage, listingContext) => {
                   if (!sellerUid || sellerUid === store.profile.uid) return;
                   const cached = store.allKnownChatUsers.find(
@@ -1302,6 +1617,53 @@ export default function App() {
                 onOpenSellerProfile={(sellerUid) =>
                   handleOpenPublicProfile(sellerUid, undefined, 'marketplace')
                 }
+                onOpenBusinessProfile={openBusinessProfileRoute}
+                onOpenProductDetail={openProductDetailRoute}
+                onCreateBusinessProfile={() => {
+                  setBusinessModalMode('create');
+                  setEditingBusinessProfile(null);
+                  setBusinessModalOpen(true);
+                }}
+                onLaunchBusinessSeller={launchBusinessMerchantPortal}
+                onRequireAuth={() => navigateToPath('/auth')}
+              />
+            </Suspense>
+          )}
+
+          {activeTab === 'product-detail' && selectedProductId && (
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <ProductDetailPage
+                productId={selectedProductId}
+                currentProfile={store.profile}
+                accountEmail={store.firebaseUser?.email || null}
+                isAuthorized={store.isAuthorized}
+                isFirebaseBacked={
+                  Boolean(store.firebaseUser) && !store.isLocalAutostart
+                }
+                onBack={() => selectWorkspaceTab('marketplace')}
+                onRequireAuth={() => navigateToPath('/auth')}
+                onOpenBusinessProfile={openBusinessProfileRoute}
+                onMessageSeller={async (sellerUid, initialMessage, listingContext) => {
+                  if (!sellerUid || sellerUid === store.profile.uid) return;
+                  const cached = store.allKnownChatUsers.find(
+                    (u) => u.uid === sellerUid
+                  );
+                  const targetUser =
+                    cached || (await store.fetchPublicUserProfile(sellerUid));
+                  if (!targetUser) {
+                    handleOpenPublicProfile(sellerUid, undefined, 'marketplace');
+                    return;
+                  }
+                  const thread = await store.startDirectThread(targetUser);
+                  if (initialMessage && initialMessage.trim()) {
+                    const formatted = listingContext
+                      ? `${initialMessage.trim()}\n[${listingContext.title} · ${listingContext.priceFormatted}]`
+                      : initialMessage.trim();
+                    await store.sendChatMessage(thread, formatted);
+                  }
+                  setActiveChatId(thread.id);
+                  selectWorkspaceTab('messages');
+                }}
               />
             </Suspense>
           )}
@@ -1452,6 +1814,21 @@ export default function App() {
             <NotificationsView
               profile={store.profile}
               notifications={activityNotifications}
+              activeBusinessProfile={activeBusinessProfile}
+              businessNotifications={businessNotifications}
+              onMarkBusinessNotificationRead={async (notifId) => {
+                if (activeBusinessProfile) {
+                  await markBusinessNotificationRead(activeBusinessProfile.id, notifId);
+                }
+              }}
+              onMarkAllBusinessNotificationsRead={async () => {
+                if (activeBusinessProfile) {
+                  const unreadIds = businessNotifications
+                    .filter((n) => !n.read)
+                    .map((n) => n.id);
+                  await markAllBusinessNotificationsRead(activeBusinessProfile.id, unreadIds);
+                }
+              }}
               verifiedAuthorIds={Array.from(verifiedUidSet)}
               pushPermission={store.pushPermission}
               onEnablePush={store.enablePushNotifications}
@@ -1746,15 +2123,39 @@ export default function App() {
       <CreatePostModal
         open={composerOpen}
         profile={store.profile}
+        publishableBusinesses={publishableBusinesses}
+        initialBusinessProfileId={composerInitialBusinessId}
         communityUsers={store.communityUsers}
         savedHashtags={store.savedHashtags}
         categories={store.categories}
         voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
         onSaveHashtag={store.saveHashtag}
-        onClose={() => setComposerOpen(false)}
+        onClose={() => {
+          setComposerOpen(false);
+          setComposerInitialBusinessId(null);
+        }}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);
-          selectWorkspaceTab('feed');
+          if (extra?.businessAuthor?.slug) {
+            openBusinessProfileRoute(extra.businessAuthor.slug);
+          } else {
+            selectWorkspaceTab('feed');
+          }
+        }}
+      />
+
+      <BusinessProfileModal
+        open={businessModalOpen}
+        mode={businessModalMode}
+        initialProfile={editingBusinessProfile}
+        personalProfile={store.profile}
+        onClose={() => {
+          setBusinessModalOpen(false);
+          setEditingBusinessProfile(null);
+        }}
+        onSaved={(savedProfile) => {
+          switchToBusiness(savedProfile.id);
+          openBusinessProfileRoute(savedProfile.slug);
         }}
       />
 

@@ -430,7 +430,6 @@ export function AdminView({
     if (typeof window === 'undefined') return 'overview';
     const params = new URLSearchParams(window.location.search || '');
     if (
-      params.get('crossAuth') === 'true' ||
       params.get('tab') === 'commerce' ||
       params.get('section') === 'commerce'
     ) {

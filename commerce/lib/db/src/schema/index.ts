@@ -10,6 +10,8 @@ export const storesTable = pgTable("stores", {
   slug:                  text("slug").notNull().unique(),
   name:                  text("name").notNull().default("Flagship Boutique"),
   ownerId:               text("owner_id"), // Will be updated after usersTable is defined
+  businessProfileId:     text("business_profile_id").unique(),
+  ownerFirebaseUid:      text("owner_firebase_uid"),
   customDomain:          text("custom_domain").unique(),
   planTier:              text("plan_tier").notNull().default("starter"), // starter | growth | enterprise
   status:                text("status").notNull().default("active"), // active | suspended | past_due
@@ -31,6 +33,7 @@ export type Store = typeof storesTable.$inferSelect;
 export const usersTable = pgTable("users", {
   id:                  text("id").primaryKey(),
   storeId:             text("store_id").references(() => storesTable.id, { onDelete: "cascade" }),
+  firebaseUid:         text("firebase_uid"),
   name:                text("name").notNull(),
   email:               text("email").notNull(),
   role:                text("role").notNull().default("CUSTOMER"),
@@ -74,11 +77,14 @@ export const authRateLimitsTable = pgTable("auth_rate_limits", {
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 export const sessionsTable = pgTable("sessions", {
-  token:     text("token").primaryKey(),
-  storeId:   text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
-  userId:    text("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  token:             text("token").primaryKey(),
+  storeId:           text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
+  userId:            text("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  businessProfileId: text("business_profile_id"),
+  expiresAt:         timestamp("expires_at").notNull(),
+  idleExpiresAt:     timestamp("idle_expires_at"),
+  revokedAt:         timestamp("revoked_at"),
+  createdAt:         timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   index("sessions_store_id_idx").on(table.storeId),
   index("sessions_user_id_idx").on(table.userId),
@@ -140,21 +146,24 @@ export type OrderItem = {
 };
 
 export const ordersTable = pgTable("orders", {
-  id:            text("id").primaryKey(),
-  storeId:       text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
-  customerId:    text("customer_id").references(() => usersTable.id, { onDelete: "set null" }),
-  customerEmail: text("customer_email").notNull(),
-  customerName:  text("customer_name").notNull(),
-  status:        text("status").notNull().default("PENDING"),
-  paymentStatus: text("payment_status").notNull().default("PENDING"),
-  paymentProvider: text("payment_provider"),
-  paymentReference: text("payment_reference"),
-  paidAt:        timestamp("paid_at"),
-  total:         numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
-  items:         jsonb("items").notNull().$type<OrderItem[]>().default([]),
-  shippingAddress: jsonb("shipping_address").$type<AddressSnapshot>(),
-  billingAddress:  jsonb("billing_address").$type<AddressSnapshot>(),
-  createdAt:     timestamp("created_at").notNull().defaultNow(),
+  id:                   text("id").primaryKey(),
+  storeId:              text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
+  businessProfileId:    text("business_profile_id"),
+  customerId:           text("customer_id").references(() => usersTable.id, { onDelete: "set null" }),
+  buyerFirebaseUid:     text("buyer_firebase_uid"),
+  customerEmail:        text("customer_email").notNull(),
+  customerName:         text("customer_name").notNull(),
+  status:               text("status").notNull().default("PENDING"),
+  paymentStatus:        text("payment_status").notNull().default("PENDING"),
+  paymentProvider:      text("payment_provider"),
+  paymentReference:     text("payment_reference"),
+  paidAt:               timestamp("paid_at"),
+  reservationExpiresAt: timestamp("reservation_expires_at"),
+  total:                numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  items:                jsonb("items").notNull().$type<OrderItem[]>().default([]),
+  shippingAddress:      jsonb("shipping_address").$type<AddressSnapshot>(),
+  billingAddress:       jsonb("billing_address").$type<AddressSnapshot>(),
+  createdAt:            timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   check("orders_status_check", sql`${table.status} in ('PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED')`),
   check("orders_payment_status_check", sql`${table.paymentStatus} in ('PENDING', 'PAID', 'FAILED', 'REFUNDED')`),
@@ -848,5 +857,47 @@ export const externalProviderBindingsTable = pgTable("external_provider_bindings
 
 export const externalProviderBindings = externalProviderBindingsTable;
 export type ExternalProviderBinding = typeof externalProviderBindingsTable.$inferSelect;
+
+// ── Looma SSO One-Time Authorization Codes ────────────────────────────────────
+
+export const commerceSsoCodesTable = pgTable("commerce_sso_codes", {
+  codeHash:          text("code_hash").primaryKey(),
+  businessProfileId: text("business_profile_id").notNull(),
+  storeId:           text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
+  firebaseUid:       text("firebase_uid").notNull(),
+  email:             text("email").notNull(),
+  displayName:       text("display_name").notNull().default("Merchant"),
+  role:              text("role").notNull(), // OWNER | ADMIN | EDITOR | VIEWER
+  expiresAt:         timestamp("expires_at").notNull(),
+  consumedAt:        timestamp("consumed_at"),
+  createdAt:         timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("commerce_sso_codes_store_idx").on(table.storeId),
+  index("commerce_sso_codes_expires_idx").on(table.expiresAt),
+]);
+
+export type CommerceSsoCode = typeof commerceSsoCodesTable.$inferSelect;
+
+// ── Looma Outbox Synchronization Queue ────────────────────────────────────────
+
+export const commerceSyncOutboxTable = pgTable("commerce_sync_outbox", {
+  id:            text("id").primaryKey(),
+  aggregateType: text("aggregate_type").notNull(), // STORE | PRODUCT | ORDER
+  aggregateId:   text("aggregate_id").notNull(),
+  storeId:       text("store_id").notNull().references(() => storesTable.id, { onDelete: "cascade" }),
+  eventType:     text("event_type").notNull(), // STORE_PUBLISHED | PRODUCT_UPSERTED | PRODUCT_DELETED | ORDER_CREATED | ORDER_UPDATED
+  payload:       jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  attempts:      integer("attempts").notNull().default(0),
+  nextRetryAt:   timestamp("next_retry_at"),
+  processedAt:   timestamp("processed_at"),
+  lastError:     text("last_error"),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("commerce_sync_outbox_pending_idx").on(table.processedAt, table.nextRetryAt),
+  index("commerce_sync_outbox_store_idx").on(table.storeId),
+]);
+
+export type CommerceSyncOutboxEvent = typeof commerceSyncOutboxTable.$inferSelect;
+
 
 

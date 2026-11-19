@@ -21,7 +21,7 @@ export function getFirebaseProjectId(): string {
       } catch {}
     }
   }
-  return "gen-lang-client-0152852248";
+  throw new Error("FIREBASE_PROJECT_ID is not configured and firebase-applet-config.json was not found.");
 }
 
 async function getGooglePublicKeys(): Promise<Record<string, string>> {
@@ -71,6 +71,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFi
     exp?: number;
     auth_time?: number;
     email?: string;
+    email_verified?: boolean;
     name?: string;
     picture?: string;
     [key: string]: any;
@@ -126,7 +127,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFi
     throw new Error("Firebase ID token signature verification failed.");
   }
 
-  if (!payload.email) {
+  if (!payload.email || payload.email_verified !== true) {
     throw new Error("Firebase ID token does not contain a verified email address.");
   }
 

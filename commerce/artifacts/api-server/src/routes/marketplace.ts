@@ -1,17 +1,228 @@
 import { Router, type Request, type Response } from "express";
-import { db, storesTable, productsTable, categoriesTable, reviewsTable, appSettingsTable, ordersTable } from "@workspace/db";
-import { buildTenantUrl, validateTenantSlug, sanitizeTenantSlug } from "@workspace/tenant-routing";
+import { and, eq } from "drizzle-orm";
+import { db, storesTable, productsTable, productVariantsTable, categoriesTable, reviewsTable, appSettingsTable, ordersTable } from "@workspace/db";
+import { sanitizeTenantSlug } from "@workspace/tenant-routing";
 
 const router = Router();
+
+function isStorePubliclyVisible(store: any): boolean {
+  return (
+    (store?.publishStatus === "PUBLISHED" || store?.isPublished === true) &&
+    store?.status !== "suspended" &&
+    store?.publishStatus !== "SUSPENDED"
+  );
+}
+
+router.get("/marketplace/products", async (req: Request, res: Response) => {
+  try {
+    const storeFilter = typeof req.query.store === "string" ? req.query.store.trim().toLowerCase() : "";
+    const categoryFilter = typeof req.query.category === "string" ? req.query.category.trim().toLowerCase() : "";
+    const searchFilter = typeof req.query.q === "string" ? req.query.q.trim().toLowerCase() : "";
+
+    const [stores, products, variants, categories, allSettings] = await Promise.all([
+      db.select().from(storesTable).catch(() => []),
+      db.select().from(productsTable).where(eq(productsTable.status, "ACTIVE")).catch(() => []),
+      db.select().from(productVariantsTable).catch(() => []),
+      db.select().from(categoriesTable).catch(() => []),
+      db.select().from(appSettingsTable).catch(() => []),
+    ]);
+
+    const publishedStoresById = new Map<string, any>();
+    for (const store of stores) {
+      if (isStorePubliclyVisible(store)) {
+        publishedStoresById.set(store.id, store);
+      }
+    }
+
+    const categoryMap = new Map<string, string>();
+    for (const cat of categories) {
+      if (cat.id && cat.name) categoryMap.set(cat.id, cat.name);
+    }
+
+    const variantsByProduct = new Map<string, any[]>();
+    for (const variant of variants) {
+      const list = variantsByProduct.get(variant.productId) || [];
+      list.push(variant);
+      variantsByProduct.set(variant.productId, list);
+    }
+
+    const storeLogoMap = new Map<string, string>();
+    const storeTaglineMap = new Map<string, string>();
+    for (const row of allSettings) {
+      if (row.key === "brand_logo_url" && row.value) storeLogoMap.set(row.storeId, row.value);
+      if ((row.key === "brand_tagline" || row.key === "tagline") && row.value && !storeTaglineMap.has(row.storeId)) {
+        storeTaglineMap.set(row.storeId, row.value);
+      }
+    }
+
+    const catalog = products
+      .filter((p: any) => publishedStoresById.has(p.storeId))
+      .map((p: any) => {
+        const store = publishedStoresById.get(p.storeId)!;
+        const prodVariants = variantsByProduct.get(p.id) || [];
+        const categoryName = p.categoryId ? categoryMap.get(p.categoryId) || "General" : "General";
+        const priceNumber = Number(p.price || 0);
+        const priceCents = Math.round(priceNumber * 100);
+        const effectiveStock =
+          prodVariants.length > 0
+            ? prodVariants.reduce((sum, v) => sum + Number(v.stock || 0), 0)
+            : Number(p.stock || 0);
+
+        return {
+          id: p.id,
+          storeId: store.id,
+          storeSlug: store.slug,
+          storeName: store.name,
+          storeLogoUrl: storeLogoMap.get(store.id) || "",
+          storeTagline: storeTaglineMap.get(store.id) || "",
+          businessProfileId: store.businessProfileId || null,
+          title: p.name,
+          name: p.name,
+          description: p.description || "",
+          category: categoryName,
+          categoryId: p.categoryId || null,
+          price: priceNumber,
+          priceCents,
+          currency: store.currency || "USD",
+          stock: effectiveStock,
+          trackQuantity: Boolean(p.trackQuantity),
+          status: p.status,
+          imageUrl: p.imageUrl || "",
+          tags: p.tags || "",
+          variants: prodVariants.map((v) => ({
+            id: v.id,
+            size: v.size || "",
+            color: v.color || "",
+            stock: Number(v.stock || 0),
+            price: v.price != null ? Number(v.price) : null,
+            priceCents: v.price != null ? Math.round(Number(v.price) * 100) : null,
+            sku: v.sku || "",
+          })),
+          createdAt: p.createdAt,
+        };
+      })
+      .filter((item) => {
+        if (storeFilter) {
+          const matchesStore =
+            item.storeId.toLowerCase() === storeFilter ||
+            item.storeSlug.toLowerCase() === storeFilter ||
+            (item.businessProfileId && item.businessProfileId.toLowerCase() === storeFilter);
+          if (!matchesStore) return false;
+        }
+        if (categoryFilter && categoryFilter !== "all") {
+          if (item.category.toLowerCase() !== categoryFilter) return false;
+        }
+        if (searchFilter) {
+          const hay = `${item.title} ${item.description} ${item.category} ${item.storeName} ${item.tags}`.toLowerCase();
+          if (!hay.includes(searchFilter)) return false;
+        }
+        return true;
+      });
+
+    return res.json({
+      success: true,
+      count: catalog.length,
+      products: catalog,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to load marketplace products" });
+  }
+});
+
+router.get("/marketplace/products/:id", async (req: Request, res: Response) => {
+  try {
+    const productId = String(req.params.id || "").trim();
+    if (!productId) {
+      return res.status(400).json({ error: "Product ID is required." });
+    }
+
+    const [product] = await db
+      .select()
+      .from(productsTable)
+      .where(and(eq(productsTable.id, productId), eq(productsTable.status, "ACTIVE")))
+      .limit(1);
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found." });
+    }
+
+    const [store] = await db
+      .select()
+      .from(storesTable)
+      .where(eq(storesTable.id, product.storeId))
+      .limit(1);
+
+    if (!store || !isStorePubliclyVisible(store)) {
+      return res.status(404).json({ error: "Product is not currently published." });
+    }
+
+    const [variants, catRows, settingsRows] = await Promise.all([
+      db.select().from(productVariantsTable).where(and(eq(productVariantsTable.productId, product.id), eq(productVariantsTable.storeId, store.id))),
+      product.categoryId
+        ? db.select().from(categoriesTable).where(and(eq(categoriesTable.id, product.categoryId), eq(categoriesTable.storeId, store.id))).limit(1)
+        : Promise.resolve([]),
+      db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, store.id)),
+    ]);
+
+    const settings = Object.fromEntries(settingsRows.map((r: any) => [r.key, r.value]));
+    const categoryName = catRows[0]?.name || "General";
+    const priceNumber = Number(product.price || 0);
+    const effectiveStock =
+      variants.length > 0
+        ? variants.reduce((sum, v) => sum + Number(v.stock || 0), 0)
+        : Number(product.stock || 0);
+
+    return res.json({
+      success: true,
+      product: {
+        id: product.id,
+        storeId: store.id,
+        storeSlug: store.slug,
+        storeName: settings.store_name || store.name,
+        businessProfileId: store.businessProfileId || null,
+        title: product.name,
+        name: product.name,
+        description: product.description || "",
+        category: categoryName,
+        categoryId: product.categoryId || null,
+        price: priceNumber,
+        priceCents: Math.round(priceNumber * 100),
+        currency: store.currency || "USD",
+        stock: effectiveStock,
+        trackQuantity: Boolean(product.trackQuantity),
+        status: product.status,
+        imageUrl: product.imageUrl || "",
+        tags: product.tags || "",
+        createdAt: product.createdAt,
+      },
+      variants: variants.map((v) => ({
+        id: v.id,
+        size: v.size || "",
+        color: v.color || "",
+        stock: Number(v.stock || 0),
+        price: v.price != null ? Number(v.price) : null,
+        priceCents: v.price != null ? Math.round(Number(v.price) * 100) : null,
+        sku: v.sku || "",
+      })),
+      store: {
+        id: store.id,
+        slug: store.slug,
+        name: settings.store_name || store.name,
+        businessProfileId: store.businessProfileId || null,
+        currency: store.currency || "USD",
+        logoUrl: settings.brand_logo_url || "",
+        tagline: settings.brand_tagline || settings.tagline || "",
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to load marketplace product." });
+  }
+});
 
 router.get("/marketplace/stores", async (req: Request, res: Response) => {
   try {
     const stores = await db.select().from(storesTable);
-    const publishedStores = stores.filter((s: any) =>
-      (s.publishStatus === "PUBLISHED" || s.isPublished === true) &&
-      s.status !== "suspended" &&
-      s.publishStatus !== "SUSPENDED"
-    );
+    const publishedStores = stores.filter((s: any) => isStorePubliclyVisible(s));
 
     const [allSettings, allProducts, allCategories, allReviews] = await Promise.all([
       db.select().from(appSettingsTable).catch(() => []),
@@ -25,14 +236,11 @@ router.get("/marketplace/stores", async (req: Request, res: Response) => {
       if (c.id && c.name) categoryMap.set(c.id, c.name);
     });
 
-    const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
-    const isPreview = !hostHeader || hostHeader.includes("localhost") || hostHeader.endsWith(".run.app") || hostHeader.endsWith(".aistudio.app") || hostHeader.startsWith("127.0.0.1");
-
     const enriched = publishedStores.map((store: any) => {
       const storeSettingsRows = allSettings.filter((s: any) => s.storeId === store.id);
       const settings = Object.fromEntries(storeSettingsRows.map((s: any) => [s.key, s.value]));
 
-      const storeProducts = allProducts.filter((p: any) => p.storeId === store.id || p.store_id === store.id);
+      const storeProducts = allProducts.filter((p: any) => (p.storeId === store.id || p.store_id === store.id) && p.status === "ACTIVE");
       const storeReviews = allReviews.filter((r: any) => r.storeId === store.id || r.store_id === store.id);
 
       const rating = storeReviews.length > 0
@@ -43,7 +251,6 @@ router.get("/marketplace/stores", async (req: Request, res: Response) => {
       const productCategoryName = firstProduct?.categoryId ? categoryMap.get(firstProduct.categoryId) : null;
       const categoryName = settings["brand_category"] || settings["category"] || productCategoryName || "Luxury Collection";
 
-      // Derive key for filtering
       let categoryKey = "all";
       const catLower = categoryName.toLowerCase();
       if (catLower.includes("couture") || catLower.includes("rtw") || catLower.includes("wear")) categoryKey = "couture";
@@ -96,6 +303,7 @@ router.get("/marketplace/stores", async (req: Request, res: Response) => {
 
       return {
         id: store.id,
+        businessProfileId: store.businessProfileId || null,
         name: store.name,
         slug: cleanSlug,
         planTier: store.planTier,
@@ -138,14 +346,10 @@ router.get("/marketplace/stats", async (_req: Request, res: Response) => {
       db.select().from(ordersTable).catch(() => []),
     ]);
 
-    const published = stores.filter((s: any) =>
-      (s.publishStatus === "PUBLISHED" || s.isPublished === true) &&
-      s.status !== "suspended" &&
-      s.publishStatus !== "SUSPENDED"
-    );
+    const published = stores.filter((s: any) => isStorePubliclyVisible(s));
 
     const publishedStoreIds = new Set(published.map((s: any) => s.id));
-    const activeProducts = products.filter((p: any) => publishedStoreIds.has(p.storeId || p.store_id));
+    const activeProducts = products.filter((p: any) => publishedStoreIds.has(p.storeId || p.store_id) && p.status === "ACTIVE");
     const activeReviews = reviews.filter((r: any) => publishedStoreIds.has(r.storeId || r.store_id));
 
     let satisfaction = "100%";

@@ -103,27 +103,41 @@ function evaluateCondition(row: any, cond: any): boolean {
         else if (str.includes(" <= ")) op = "<=";
         else if (str.includes(" > ")) op = ">";
         else if (str.includes(" < ")) op = "<";
-        else if (str.includes(" is not null ")) op = "is_not_null";
-        else if (str.includes(" is null ")) op = "is_null";
+        else if (str.includes(" is not null")) op = "is_not_null";
+        else if (str.includes(" is null")) op = "is_null";
+        else if (str.includes(" in ")) op = "in";
       }
     }
 
     if (colName) {
       const toCamel = (s: string) => s.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
       const toSnake = (s: string) => s.replace(/[A-Z]/g, (l: string) => `_${l.toLowerCase()}`);
-      const val = row[colName] !== undefined 
+      const rawVal = row[colName] !== undefined 
         ? row[colName] 
         : (row[toCamel(colName)] !== undefined ? row[toCamel(colName)] : row[toSnake(colName)]);
 
-      if (op === "=") return val === rightVal;
-      if (op === "<>") return val !== rightVal;
-      if (op === ">") return val > rightVal;
-      if (op === ">=") return val >= rightVal;
-      if (op === "<") return val < rightVal;
-      if (op === "<=") return val <= rightVal;
-      if (op === "is_not_null") return val !== null && val !== undefined;
-      if (op === "is_null") return val === null || val === undefined;
-      return val == rightVal;
+      const normalizeComparable = (v: any): any => {
+        if (v instanceof Date) return v.getTime();
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+          const parsed = Date.parse(v);
+          if (!Number.isNaN(parsed)) return parsed;
+        }
+        return v;
+      };
+
+      const val = normalizeComparable(rawVal);
+      const cmpRight = normalizeComparable(rightVal);
+
+      if (op === "=") return rawVal === rightVal || val === cmpRight;
+      if (op === "<>") return rawVal !== rightVal && val !== cmpRight;
+      if (op === ">") return val > cmpRight;
+      if (op === ">=") return val >= cmpRight;
+      if (op === "<") return val < cmpRight;
+      if (op === "<=") return val <= cmpRight;
+      if (op === "in") return Array.isArray(rightVal) ? rightVal.includes(rawVal) : false;
+      if (op === "is_not_null") return rawVal !== null && rawVal !== undefined;
+      if (op === "is_null") return rawVal === null || rawVal === undefined;
+      return val == cmpRight;
     }
   }
   
@@ -296,9 +310,27 @@ async function executeQuery(chain: QueryChain) {
 
     for (let i = 0; i < rows.length; i++) {
       if (!chain.whereCond || evaluateCondition(rows[i], chain.whereCond)) {
+        const resolvedUpdate: Record<string, any> = {};
+        for (const [k, v] of Object.entries(updateVal)) {
+          if (v && typeof v === 'object' && Array.isArray((v as any).queryChunks)) {
+            const chunks = (v as any).queryChunks;
+            const colChunk = chunks.find((c: any) => c && (c.name || c.key));
+            const opChunk = chunks.find((c: any) => Array.isArray(c?.value) && (c.value.join('').includes('-') || c.value.join('').includes('+')));
+            const paramChunk = chunks.find((c: any) => c && !Array.isArray(c.value) && typeof c.value === 'number');
+            if (colChunk && opChunk && paramChunk) {
+              const cur = Number(rows[i][colChunk.name] ?? rows[i][k] ?? 0);
+              const isSub = opChunk.value.join('').includes('-');
+              resolvedUpdate[k] = isSub ? cur - Number(paramChunk.value) : cur + Number(paramChunk.value);
+            } else if (colChunk) {
+              resolvedUpdate[k] = rows[i][colChunk.name] ?? rows[i][k];
+            }
+          } else if (v !== undefined) {
+            resolvedUpdate[k] = v;
+          }
+        }
         rows[i] = {
           ...rows[i],
-          ...updateVal,
+          ...resolvedUpdate,
           updatedAt: new Date().toISOString()
         };
         updatedRows.push(rows[i]);

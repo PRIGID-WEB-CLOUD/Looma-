@@ -38,6 +38,7 @@ import {
   updateAuthUserProfile,
 } from '../services/firebase';
 import { deleteUploadedMedia } from '../services/storage';
+import { emitBusinessNotification } from '../services/businessProfiles';
 import {
   buildFallbackPrivateSettings,
   buildFallbackUserProfile,
@@ -1438,10 +1439,26 @@ export function useSocialStore() {
           return {
             id: d.id || docSnap.id,
             authorId: d.authorId,
+            ...(d.authorType === 'business' || d.authorType === 'personal'
+              ? { authorType: d.authorType }
+              : {}),
+            ...(typeof d.businessProfileId === 'string' && d.businessProfileId
+              ? { businessProfileId: d.businessProfileId }
+              : {}),
+            ...(typeof d.actorUid === 'string' && d.actorUid
+              ? { actorUid: d.actorUid }
+              : {}),
+            ...(Array.isArray(d.attachedProductIds)
+              ? {
+                  attachedProductIds: d.attachedProductIds.filter(
+                    (id: unknown): id is string => typeof id === 'string'
+                  ),
+                }
+              : {}),
             authorName: d.authorName,
             authorHandle: d.authorHandle,
             authorAvatar: normalizeAssetUrl(d.authorAvatar || ''),
-            authorVerified: Boolean(d.authorVerified || isAuthorAdmin),
+            authorVerified: Boolean(d.authorVerified || (d.authorType !== 'business' && isAuthorAdmin)),
             caption: d.caption || '',
             imageUrl: normalizeAssetUrl(d.imageUrl || ''),
             videoUrl: d.videoUrl || '',
@@ -3093,6 +3110,14 @@ export function useSocialStore() {
         audioUrl?: string;
         linkUrl?: string;
         mediaTitle?: string;
+        attachedProductIds?: string[];
+        businessAuthor?: {
+          id: string;
+          slug: string;
+          displayName: string;
+          logoUrl: string;
+          verified: boolean;
+        };
       }
     ) => {
       requireAuthorized();
@@ -3103,17 +3128,26 @@ export function useSocialStore() {
       const audioUrl = extra?.audioUrl || '';
       const linkUrl = extra?.linkUrl || '';
       const mediaTitle = sanitizeMediaTitle(extra?.mediaTitle);
-      const isAuthorAdminVerified = Boolean(
-        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
-        profile.isVerified
-      );
+      const attachedProductIds = Array.isArray(extra?.attachedProductIds)
+        ? extra.attachedProductIds.filter(Boolean).slice(0, 8)
+        : undefined;
+      const biz = extra?.businessAuthor;
+      const isAuthorAdminVerified = biz
+        ? Boolean(biz.verified)
+        : Boolean(
+            (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+            profile.isVerified
+          );
 
       const newPost: Post = {
         id: postId,
-        authorId: profile.uid,
-        authorName: profile.displayName,
-        authorHandle: profile.handle,
-        authorAvatar: profile.avatarUrl,
+        authorId: biz ? biz.id : profile.uid,
+        authorType: biz ? 'business' : 'personal',
+        ...(biz ? { businessProfileId: biz.id, actorUid: profile.uid } : {}),
+        ...(attachedProductIds && attachedProductIds.length > 0 ? { attachedProductIds } : {}),
+        authorName: biz ? biz.displayName : profile.displayName,
+        authorHandle: biz ? biz.slug : profile.handle,
+        authorAvatar: biz ? biz.logoUrl : profile.avatarUrl,
         ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
         caption: caption.trim(),
         imageUrl,
@@ -3133,10 +3167,13 @@ export function useSocialStore() {
         try {
           await setDoc(doc(db, 'posts', postId), {
             id: postId,
-            authorId: firebaseUser.uid,
-            authorName: profile.displayName,
-            authorHandle: profile.handle,
-            authorAvatar: profile.avatarUrl,
+            authorId: biz ? biz.id : firebaseUser.uid,
+            authorType: biz ? 'business' : 'personal',
+            ...(biz ? { businessProfileId: biz.id, actorUid: firebaseUser.uid } : {}),
+            ...(attachedProductIds && attachedProductIds.length > 0 ? { attachedProductIds } : {}),
+            authorName: newPost.authorName,
+            authorHandle: newPost.authorHandle,
+            authorAvatar: newPost.authorAvatar,
             ...(isAuthorAdminVerified ? { authorVerified: true } : {}),
             caption: newPost.caption,
             imageUrl: newPost.imageUrl,
@@ -3275,7 +3312,7 @@ export function useSocialStore() {
       updates: { caption: string; category: PostCategory }
     ) => {
       requireAuthorized();
-      if (post.authorId !== profile.uid) {
+      if (post.authorId !== profile.uid && post.authorType !== 'business') {
         throw new Error('You can only edit your own posts.');
       }
       const cleanCaption = updates.caption.trim();
@@ -3353,6 +3390,18 @@ export function useSocialStore() {
         }
         try {
           await batch.commit();
+          if (nextLiked && post.authorType === 'business' && post.businessProfileId) {
+            void emitBusinessNotification({
+              bpId: post.businessProfileId,
+              actorId: firebaseUser.uid,
+              actorName: profile.displayName,
+              actorAvatar: profile.avatarUrl,
+              type: 'like',
+              title: `${profile.displayName} liked your business post`,
+              body: post.caption.slice(0, 90) || 'Liked your post.',
+              targetId: post.id,
+            }).catch(() => {});
+          }
         } catch (err) {
           setLikedPostIds((prev) =>
             alreadyLiked
@@ -3483,6 +3532,24 @@ export function useSocialStore() {
         );
       }
 
+      if (
+        firebaseUser &&
+        isRemotePost &&
+        post.authorType === 'business' &&
+        post.businessProfileId
+      ) {
+        void emitBusinessNotification({
+          bpId: post.businessProfileId,
+          actorId: firebaseUser.uid,
+          actorName: profile.displayName,
+          actorAvatar: profile.avatarUrl,
+          type: 'comment',
+          title: `${profile.displayName} commented on your business post`,
+          body: newComment.text,
+          targetId: post.id,
+        }).catch(() => {});
+      }
+
       await triggerNotification({
         actorId: profile.uid,
         actorName: profile.displayName,
@@ -3514,7 +3581,7 @@ export function useSocialStore() {
   const deletePost = useCallback(
     async (post: Post) => {
       requireAuthorized();
-      if (post.authorId !== profile.uid) {
+      if (post.authorId !== profile.uid && post.authorType !== 'business') {
         throw new Error('You can only delete your own posts.');
       }
 

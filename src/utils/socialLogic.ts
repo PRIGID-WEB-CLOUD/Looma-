@@ -2512,6 +2512,9 @@ export function enrichPostWithVerifiedAuthor(
   communityUsers: AuthorProfileSnapshot[],
   currentProfile?: AuthorProfileSnapshot | null
 ): Post {
+  if (post.authorType === 'business') {
+    return post;
+  }
   if (currentProfile && currentProfile.uid === post.authorId) {
     return applyAuthorSnapshotToPost(post, currentProfile);
   }

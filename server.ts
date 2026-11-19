@@ -35,6 +35,7 @@ function buildNodeWorkerEnv(): WorkerEnv {
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     COMMERCE_API_URL: process.env.COMMERCE_API_URL,
     COMMERCE_DEFAULT_STORE_ID: process.env.COMMERCE_DEFAULT_STORE_ID,
+    COMMERCE_INTERNAL_SSO_SECRET: process.env.COMMERCE_INTERNAL_SSO_SECRET,
     COMMERCE_PUBLISHABLE_KEY: process.env.COMMERCE_PUBLISHABLE_KEY,
     COMMERCE_ADMIN_DASHBOARD_URL: process.env.COMMERCE_ADMIN_DASHBOARD_URL,
   };
@@ -129,7 +130,7 @@ async function startDevServer(): Promise<void> {
       return;
     }
     if (pathname === '/commerce' || pathname === '/looma-commerce') {
-      res.writeHead(302, { Location: `/commerce/${queryString}` });
+      res.writeHead(302, { Location: `/seller/${queryString}` });
       res.end();
       return;
     }
@@ -150,17 +151,17 @@ async function startDevServer(): Promise<void> {
     }
 
     if (!isProd) {
-      if (pathname.startsWith('/commerce') || pathname.startsWith('/looma-commerce') || pathname.startsWith('/seller')) {
+      if (pathname.startsWith('/seller')) {
         if (commerceViteMiddlewares) {
-          // Strip prefix for commerce vite app
-          const origUrl = req.url;
-          req.url = req.url?.replace(/^\/(commerce|looma-commerce|seller)/, '') || '/';
           commerceViteMiddlewares(req, res, () => {
-            req.url = origUrl;
             serveDistAsset(req, res);
           });
           return;
         }
+      } else if (pathname.startsWith('/commerce') || pathname.startsWith('/looma-commerce')) {
+        res.writeHead(302, { Location: `/seller/${queryString}` });
+        res.end();
+        return;
       } else if (viteMiddlewares) {
         viteMiddlewares(req, res, () => {
           void honoListener(req, res);

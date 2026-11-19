@@ -11,6 +11,7 @@ import {
   Play,
   Trash2,
 } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import type { PostCategory, UserProfile } from '../types/social';
 import {
   extractFirstUrl,
@@ -49,11 +50,21 @@ export interface CreatePostExtra {
   audioUrl?: string;
   linkUrl?: string;
   mediaTitle?: string;
+  attachedProductIds?: string[];
+  businessAuthor?: {
+    id: string;
+    slug: string;
+    displayName: string;
+    logoUrl: string;
+    verified: boolean;
+  };
 }
 
 interface CreatePostModalProps {
   open: boolean;
   profile: UserProfile;
+  publishableBusinesses?: BusinessProfile[];
+  initialBusinessProfileId?: string | null;
   communityUsers?: UserProfile[];
   savedHashtags?: string[];
   categories?: string[];
@@ -71,6 +82,8 @@ interface CreatePostModalProps {
 export function CreatePostModal({
   open,
   profile,
+  publishableBusinesses = [],
+  initialBusinessProfileId = null,
   communityUsers = [],
   savedHashtags = [],
   categories = POST_CATEGORIES,
@@ -97,7 +110,25 @@ export function CreatePostModal({
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (
+      initialBusinessProfileId &&
+      publishableBusinesses.some((b) => b.id === initialBusinessProfileId)
+    ) {
+      setSelectedBusinessId(initialBusinessProfileId);
+    } else {
+      setSelectedBusinessId('');
+    }
+  }, [initialBusinessProfileId, open, publishableBusinesses]);
+
+  const activeBusinessAuthor = useMemo(
+    () => publishableBusinesses.find((b) => b.id === selectedBusinessId) || null,
+    [publishableBusinesses, selectedBusinessId]
+  );
 
   const handleSelectGif = (gif: CuratedGif) => {
     setImageUrl(gif.url);
@@ -410,6 +441,17 @@ export function CreatePostModal({
         audioUrl: finalAudioUrl,
         linkUrl: finalLinkUrl,
         mediaTitle: finalMediaTitle,
+        ...(activeBusinessAuthor
+          ? {
+              businessAuthor: {
+                id: activeBusinessAuthor.id,
+                slug: activeBusinessAuthor.slug,
+                displayName: activeBusinessAuthor.displayName,
+                logoUrl: activeBusinessAuthor.logoUrl,
+                verified: activeBusinessAuthor.verified,
+              },
+            }
+          : {}),
       });
       setCaption('');
       setCategory(
@@ -486,21 +528,50 @@ export function CreatePostModal({
           <div className="max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left Column: Author, Category, Rich Caption Studio */}
             <div className="lg:col-span-7 flex flex-col gap-5">
-              <div className="flex items-center gap-3">
-                <Avatar
-                  src={profile.avatarUrl}
-                  name={profile.displayName}
-                  size="md"
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
-                    <span className="truncate">{profile.displayName}</span>
-                    {profile.isVerified && <VerifiedBadge size={14} />}
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    @{profile.handle} · Public to Looma feed
-                  </p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar
+                    src={activeBusinessAuthor ? activeBusinessAuthor.logoUrl : profile.avatarUrl}
+                    name={activeBusinessAuthor ? activeBusinessAuthor.displayName : profile.displayName}
+                    size="md"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 max-w-full min-w-0">
+                      <span className="truncate">
+                        {activeBusinessAuthor ? activeBusinessAuthor.displayName : profile.displayName}
+                      </span>
+                      {(activeBusinessAuthor ? activeBusinessAuthor.verified : profile.isVerified) && (
+                        <VerifiedBadge size={14} />
+                      )}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                      {activeBusinessAuthor
+                        ? `/business/${activeBusinessAuthor.slug} · Publishing as Business`
+                        : `@${profile.handle} · Public to Looma feed`}
+                    </p>
+                  </div>
                 </div>
+
+                {publishableBusinesses.length > 0 && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label htmlFor="post-as-select" className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                      Post as
+                    </label>
+                    <select
+                      id="post-as-select"
+                      value={selectedBusinessId}
+                      onChange={(e) => setSelectedBusinessId(e.target.value)}
+                      className="min-h-[36px] px-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    >
+                      <option value="">Personal (@{profile.handle})</option>
+                      {publishableBusinesses.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          Business: {b.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Topic Category Picker */}

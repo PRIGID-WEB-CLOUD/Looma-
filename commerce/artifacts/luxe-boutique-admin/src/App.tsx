@@ -39,12 +39,15 @@ import AdminPinterestPage from "@/pages/admin/AdminPinterestPage";
 import AdminChatPage from "@/pages/admin/AdminChatPage";
 import AdminShowroomsPage from "@/pages/admin/AdminShowroomsPage";
 import AdminNotificationsPage from "@/pages/admin/AdminNotificationsPage";
+import AdminSsoPage from "@/pages/admin/AdminSsoPage";
 
 const queryClient = new QueryClient();
 
 function Router() {
   return (
     <Switch>
+      <Route path="/sso" component={() => <AdminSsoPage />} />
+      <Route path="/seller/sso" component={() => <AdminSsoPage />} />
       <Route path="/login" component={() => <AdminLoginPage />} />
       <Route path="/register" component={() => <AdminRegisterPage />} />
       <Route path="/accept-invite" component={() => <AdminAcceptInvitePage />} />

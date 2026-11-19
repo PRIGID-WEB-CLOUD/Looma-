@@ -468,31 +468,6 @@ function AdminAppInner(_props: AdminAppProps) {
     setCheckingHealth(false);
   }, []);
 
-  // Handle Social Marketplace Cross-Authentication
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const params = new URLSearchParams(window.location.search || '');
-      if (params.get('crossAuth') === 'true') {
-        const socialUid = params.get('socialUid');
-        const socialName = params.get('socialName');
-        const socialHandle = params.get('socialHandle');
-        const socialEmail = params.get('socialEmail');
-        const socialAvatar = params.get('socialAvatar');
-        if (socialUid) {
-          const payload = {
-            uid: socialUid,
-            displayName: socialName || 'Marketplace Seller',
-            handle: socialHandle || 'seller',
-            email: socialEmail || '',
-            avatarUrl: socialAvatar || '',
-          };
-          localStorage.setItem('looma_social_cross_auth_v1', JSON.stringify(payload));
-        }
-      }
-    } catch {}
-  }, []);
-
   // Firebase Auth subscription (always enforced)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {

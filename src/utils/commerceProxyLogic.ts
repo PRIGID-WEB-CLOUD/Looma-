@@ -3,6 +3,7 @@ export interface CommerceEnvConfig {
   defaultStoreId: string;
   publishableKey: string;
   adminDashboardUrl: string;
+  internalSsoSecret: string;
 }
 
 const BLOCKED_PUBLIC_COMMERCE_PREFIXES = [
@@ -11,6 +12,61 @@ const BLOCKED_PUBLIC_COMMERCE_PREFIXES = [
   '/auth/seller',
   '/settings/credentials',
   '/channels',
+  '/internal',
+];
+
+const LOOMA_NATIVE_API_PREFIXES = [
+  '/api/storage',
+  '/api/admin/storage',
+  '/api/calls',
+  '/api/link-preview',
+  '/api/business-profiles',
+  '/api/commerce',
+  '/api/marketplace',
+  '/api/internal',
+];
+
+const COMMERCE_SELLER_API_PREFIXES = [
+  '/api/health',
+  '/api/auth',
+  '/api/admin',
+  '/api/products',
+  '/api/orders',
+  '/api/categories',
+  '/api/coupons',
+  '/api/reviews',
+  '/api/wishlist',
+  '/api/cart',
+  '/api/blog',
+  '/api/media',
+  '/api/store',
+  '/api/showroom-locations',
+  '/api/settings',
+  '/api/team',
+  '/api/users',
+  '/api/customers',
+  '/api/apikeys',
+  '/api/providers',
+  '/api/pages',
+  '/api/shipping',
+  '/api/newsletter',
+  '/api/ecommerce',
+  '/api/channels',
+  '/api/facebook',
+  '/api/twitter',
+  '/api/whatsapp',
+  '/api/push-tokens',
+  '/api/events',
+  '/api/eprolo',
+  '/api/low-stock',
+  '/api/marketing',
+  '/api/analytics',
+  '/api/payments',
+  '/api/webhooks',
+  '/api/geolocation',
+  '/api/chat',
+  '/api/upload',
+  '/api/uploads',
 ];
 
 export function cleanCommerceEnvUrl(value: string | undefined): string {
@@ -32,18 +88,34 @@ export function parseCommerceConfig(env: {
   COMMERCE_DEFAULT_STORE_ID?: string;
   COMMERCE_PUBLISHABLE_KEY?: string;
   COMMERCE_ADMIN_DASHBOARD_URL?: string;
+  COMMERCE_INTERNAL_SSO_SECRET?: string;
 }): CommerceEnvConfig {
   return {
     apiUrl: cleanCommerceEnvUrl(env.COMMERCE_API_URL),
     defaultStoreId: (env.COMMERCE_DEFAULT_STORE_ID || '').trim(),
     publishableKey: (env.COMMERCE_PUBLISHABLE_KEY || '').trim(),
     adminDashboardUrl: cleanCommerceEnvUrl(env.COMMERCE_ADMIN_DASHBOARD_URL),
+    internalSsoSecret: (env.COMMERCE_INTERNAL_SSO_SECRET || '').trim(),
   };
 }
 
 export function isBlockedPublicCommercePath(subpath: string): boolean {
   const normalized = `/${(subpath || '').replace(/^\/+/, '').toLowerCase()}`;
   return BLOCKED_PUBLIC_COMMERCE_PREFIXES.some(
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)
+  );
+}
+
+export function isCommerceSellerApiPath(pathname: string): boolean {
+  const normalized = (pathname || '').split('?')[0].toLowerCase();
+  if (
+    LOOMA_NATIVE_API_PREFIXES.some(
+      (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)
+    )
+  ) {
+    return false;
+  }
+  return COMMERCE_SELLER_API_PREFIXES.some(
     (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)
   );
 }
@@ -63,8 +135,9 @@ export function requiresVerifiedBuyerAuth(method: string, subpath: string): bool
 
 export function buildCommerceUpstreamUrl(
   baseUrl: string,
-  mountPrefix: '/api/marketplace' | '/api/commerce' | '/api/commerce/admin',
-  requestUrl: string
+  mountPrefix: '/api/marketplace' | '/api/commerce' | '/api/commerce/admin' | '/api',
+  requestUrl: string,
+  options?: { stripStoreQuery?: boolean }
 ): string {
   const parsedReq = new URL(requestUrl);
   let suffix = parsedReq.pathname;
@@ -73,7 +146,7 @@ export function buildCommerceUpstreamUrl(
     suffix = suffix.replace(/^\/api\/commerce\/admin/, '/api/admin');
   } else if (mountPrefix === '/api/commerce') {
     suffix = suffix.replace(/^\/api\/commerce/, '/api');
-  } else {
+  } else if (mountPrefix === '/api/marketplace') {
     suffix = suffix.replace(/^\/api\/marketplace/, '/api/marketplace');
   }
 
@@ -81,7 +154,30 @@ export function buildCommerceUpstreamUrl(
     suffix = `/${suffix}`;
   }
 
-  return `${baseUrl}${suffix}${parsedReq.search}`;
+  if (options?.stripStoreQuery && parsedReq.searchParams.has('storeId')) {
+    parsedReq.searchParams.delete('storeId');
+  }
+
+  const query = parsedReq.searchParams.toString();
+  return `${baseUrl}${suffix}${query ? `?${query}` : ''}`;
+}
+
+export function sanitizeProxyHeaders(
+  reqHeaders: Headers,
+  options?: { stripStoreOverride?: boolean }
+): Headers {
+  const clean = new Headers();
+  reqHeaders.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (lower.startsWith('x-looma-')) {
+      return;
+    }
+    if (options?.stripStoreOverride && lower === 'x-store-id') {
+      return;
+    }
+    clean.set(key, value);
+  });
+  return clean;
 }
 
 export function resolveTenantForwardHeaders(input: {
@@ -89,18 +185,21 @@ export function resolveTenantForwardHeaders(input: {
   requestUrl: string;
   defaultStoreId?: string;
   defaultPublishableKey?: string;
+  omitStoreHeaders?: boolean;
 }): Record<string, string> {
   const out: Record<string, string> = {};
   const url = new URL(input.requestUrl);
 
-  const reqStoreId = (
-    input.reqHeaders.get('x-store-id') ||
-    url.searchParams.get('storeId') ||
-    input.defaultStoreId ||
-    ''
-  ).trim();
-  if (reqStoreId) {
-    out['X-Store-Id'] = reqStoreId;
+  if (!input.omitStoreHeaders) {
+    const reqStoreId = (
+      input.reqHeaders.get('x-store-id') ||
+      url.searchParams.get('storeId') ||
+      input.defaultStoreId ||
+      ''
+    ).trim();
+    if (reqStoreId) {
+      out['X-Store-Id'] = reqStoreId;
+    }
   }
 
   const reqPubKey = (

@@ -32,25 +32,14 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
-// Global fetch interceptor to automatically attach admin bearer token and credentials
+// Global fetch interceptor to automatically attach credentials for HTTP-only cookies
 const originalFetch = window.fetch;
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (url.startsWith("/api") || url.includes("/api/")) {
-    let token = null;
-    try {
-      token = typeof window !== "undefined" ? localStorage.getItem("luxe_admin_token") : null;
-    } catch {
-      // Squelch
-    }
-    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : {}));
-    if (token && !headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
     const modifiedInit: RequestInit = {
       ...init,
       credentials: init?.credentials || "include",
-      headers,
     };
     if (input instanceof Request) {
       return originalFetch(new Request(input, modifiedInit));

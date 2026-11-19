@@ -86,9 +86,6 @@ export default function AdminLoginPage() {
                 throw new Error("Access Denied: You do not have administrator permissions.");
               }
 
-              if (data.token) {
-                localStorage.setItem("luxe_admin_token", data.token);
-              }
               if (data.slug) {
                 document.cookie = `prigid_store_slug=${encodeURIComponent(data.slug)}; path=/; max-age=86400; SameSite=Lax`;
               }
@@ -174,9 +171,6 @@ export default function AdminLoginPage() {
         setError(data.error ?? "Invalid email or password.");
         setLoading(false);
         return;
-      }
-      if (data.token) {
-        localStorage.setItem("luxe_admin_token", data.token);
       }
       if (data.slug) {
         document.cookie = `prigid_store_slug=${encodeURIComponent(data.slug)}; path=/; max-age=86400; SameSite=Lax`;
@@ -321,10 +315,7 @@ export default function AdminLoginPage() {
         setLoading(false);
         return;
       }
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem("luxe_admin_token", data.token);
-      }
+      await res.json().catch(() => ({}));
       await refetch();
       navigate("/");
     } catch {

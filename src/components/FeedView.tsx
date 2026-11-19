@@ -25,6 +25,7 @@ import { StoriesStrip } from './StoriesStrip';
 interface FeedViewProps {
   profile: UserProfile;
   posts: Post[];
+  canManageBusinessIds?: string[];
   storyGroups: StoryGroup[];
   commentsByPost: Record<string, PostComment[]>;
   likedPostIds: string[];
@@ -60,6 +61,7 @@ const PAGE_SIZE = 4;
 export function FeedView({
   profile,
   posts,
+  canManageBusinessIds = [],
   storyGroups,
   commentsByPost,
   likedPostIds,
@@ -355,6 +357,12 @@ export function FeedView({
               key={post.id}
               post={post}
               currentUserId={profile.uid}
+              canManagePost={
+                post.authorId === profile.uid ||
+                (post.authorType === 'business' &&
+                  Boolean(post.businessProfileId) &&
+                  canManageBusinessIds.includes(post.businessProfileId!))
+              }
               categories={categoryList}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}

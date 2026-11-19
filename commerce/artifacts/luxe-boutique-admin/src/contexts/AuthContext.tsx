@@ -19,12 +19,8 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = "luxe_admin_token";
-
 export function getAdminAuthHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const token = localStorage.getItem(TOKEN_KEY);
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -33,10 +29,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = useCallback(async (retries = 2) => {
     try {
-      const headers = getAdminAuthHeaders();
       const res = await fetch("/api/auth/me", {
         credentials: "include",
-        headers,
       });
       if (res.status === 503 && retries > 0) {
         setTimeout(() => fetchUser(retries - 1), 600);
@@ -72,9 +66,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.token) {
-        localStorage.setItem(TOKEN_KEY, data.token);
-      }
       setUser(data);
       return {};
     }
@@ -92,9 +83,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.token) {
-          localStorage.setItem(TOKEN_KEY, data.token);
-        }
         setUser(data);
         return {};
       }
@@ -106,13 +94,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    const headers = getAdminAuthHeaders();
     await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
-      headers,
     }).catch(() => {});
-    localStorage.removeItem(TOKEN_KEY);
     setUser(null);
   };
 
@@ -125,9 +110,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.token) {
-        localStorage.setItem(TOKEN_KEY, data.token);
-      }
       setUser(data);
       return {};
     }

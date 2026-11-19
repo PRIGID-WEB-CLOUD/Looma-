@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Armchair,
   ArrowLeft,
@@ -7,6 +7,7 @@ import {
   Bookmark,
   BookOpen,
   Briefcase,
+  Building2,
   Calendar,
   Car,
   Check,
@@ -44,7 +45,6 @@ import {
   Trash2,
   Trees,
   Trophy,
-  Upload,
   User,
   UserCheck,
   UserPlus,
@@ -54,6 +54,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatThread, UserProfile } from '../types/social';
+import type { BusinessProfile } from '../types/business';
 import type {
   CartItem,
   CommerceProxyStatus,
@@ -65,16 +66,13 @@ import type {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
-  ProductCondition,
 } from '../types/marketplace';
 import {
   cancelMarketplaceOrderBuyer,
   createMarketplaceOrderRecord,
   deleteMarketplaceProductRecord,
-  ensurePersonalMarketplaceStore,
   fetchCommerceProxyStatus,
   fetchUpstreamMarketplaceCatalog,
-  saveMarketplaceProductRecord,
   submitUpstreamProxyCheckout,
   subscribeActiveMarketplaceProducts,
   subscribeBuyerMarketplaceOrders,
@@ -82,13 +80,11 @@ import {
   subscribeSellerMarketplaceOrders,
   updateSellerMarketplaceOrderStatus,
 } from '../services/commerce';
+import { launchCommerceDashboardSso, provisionCommerceStoreForBusiness } from '../services/businessProfiles';
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
-import { uploadMediaToCloudflareR2 } from '../services/storage';
 import {
   ALL_MARKETPLACE_CATEGORIES,
-  CURRENCY_OPTIONS,
   MARKETPLACE_INBOX_FILTERS,
-  PRODUCT_CONDITIONS,
   RADIUS_OPTIONS_KM,
   TOP_MARKETPLACE_CATEGORIES,
   filterMarketplaceProducts,
@@ -112,9 +108,11 @@ interface MarketplaceViewProps {
   followedUserIds: string[];
   threads?: ChatThread[];
   accountEmail: string | null;
+  isAuthorized?: boolean;
   isFirebaseBacked: boolean;
   initialStoreSlug?: string | null;
   marketplaceEnabled?: boolean;
+  businesses?: BusinessProfile[];
   onMessageSeller: (
     sellerUid: string,
     initialMessage?: string,
@@ -124,6 +122,11 @@ interface MarketplaceViewProps {
   onOpenInbox?: () => void;
   onOpenChatThread?: (threadId?: string) => void;
   onOpenSellerProfile: (sellerUid: string) => void;
+  onOpenBusinessProfile?: (slug: string) => void;
+  onOpenProductDetail?: (productId: string) => void;
+  onCreateBusinessProfile?: () => void;
+  onLaunchBusinessSeller?: (businessProfileId: string) => Promise<void>;
+  onRequireAuth?: () => void;
 }
 
 type MarketplaceSubView =
@@ -133,7 +136,6 @@ type MarketplaceSubView =
   | 'search'
   | 'detail'
   | 'seller'
-  | 'sell'
   | 'account'
   | 'orders';
 
@@ -579,14 +581,21 @@ export function MarketplaceView({
   followedUserIds,
   threads = [],
   accountEmail,
+  isAuthorized = true,
   isFirebaseBacked,
   initialStoreSlug = null,
   marketplaceEnabled = true,
+  businesses = [],
   onMessageSeller,
   onToggleFollowSeller,
   onOpenInbox,
   onOpenChatThread,
   onOpenSellerProfile,
+  onOpenBusinessProfile,
+  onOpenProductDetail,
+  onCreateBusinessProfile,
+  onLaunchBusinessSeller,
+  onRequireAuth,
 }: MarketplaceViewProps) {
   const uidKey = profile.uid || 'guest';
   const bagStorageKey = `looma_marketplace_bag_v2_${uidKey}`;
@@ -608,28 +617,37 @@ export function MarketplaceView({
   const [inboxRole, setInboxRole] = useState<MarketplaceInboxRole>('selling');
   const [inboxFilter, setInboxFilter] = useState<MarketplaceInboxFilter>('all');
   const [updatingInboxOrderId, setUpdatingInboxOrderId] = useState<string | null>(null);
-  const handleRedirectToEcommerceSell = () => {
-    const payload = {
-      uid: profile.uid || 'guest',
-      displayName: profile.displayName || 'Marketplace Seller',
-      handle: profile.handle || 'seller',
-      email: accountEmail || '',
-      avatarUrl: profile.avatarUrl || '',
-    };
+
+  // Business Profile Merchant Portal Launcher state
+  const [sellBusinessPickerOpen, setSellBusinessPickerOpen] = useState(false);
+  const [launchingBpId, setLaunchingBpId] = useState<string | null>(null);
+  const [sellLauncherError, setSellLauncherError] = useState<string | null>(null);
+
+  const handleOpenMerchantSell = () => {
+    if (!isAuthorized) {
+      onRequireAuth?.();
+      return;
+    }
+    setSellLauncherError(null);
+    setSellBusinessPickerOpen(true);
+  };
+
+  const handleSelectBusinessForSelling = async (bp: BusinessProfile) => {
+    setLaunchingBpId(bp.id);
+    setSellLauncherError(null);
     try {
-      localStorage.setItem('looma_social_cross_auth_v1', JSON.stringify(payload));
-    } catch {}
-    if (typeof window !== 'undefined') {
-      const targetUrl = proxyStatus?.adminDashboardUrl || '/commerce/products/new';
-      const parsedTarget = new URL(targetUrl.includes('/admin') ? targetUrl.replace('/admin', '/commerce') : targetUrl, window.location.origin);
-      parsedTarget.searchParams.set('crossAuth', 'true');
-      parsedTarget.searchParams.set('tab', 'sell');
-      parsedTarget.searchParams.set('socialUid', payload.uid);
-      parsedTarget.searchParams.set('socialName', payload.displayName);
-      parsedTarget.searchParams.set('socialHandle', payload.handle);
-      parsedTarget.searchParams.set('socialEmail', payload.email);
-      parsedTarget.searchParams.set('socialAvatar', payload.avatarUrl);
-      window.location.href = parsedTarget.toString();
+      if (onLaunchBusinessSeller) {
+        await onLaunchBusinessSeller(bp.id);
+      } else {
+        await provisionCommerceStoreForBusiness(bp.id).catch(() => {});
+        await launchCommerceDashboardSso(bp.id);
+      }
+    } catch (err) {
+      setSellLauncherError(
+        err instanceof Error ? err.message : 'Unable to launch Merchant Portal for this Business Profile.'
+      );
+    } finally {
+      setLaunchingBpId(null);
     }
   };
   const [inboxThreadHints, setInboxThreadHints] = useState<TrackedMarketplaceThreadHint[]>(() => {
@@ -753,22 +771,7 @@ export function MarketplaceView({
     storeName: string;
   } | null>(null);
 
-  // Sell Listing form state
-  const [sellTitle, setSellTitle] = useState('');
-  const [sellPrice, setSellPrice] = useState('');
-  const [sellCurrency, setSellCurrency] = useState('USD');
-  const [sellCategory, setSellCategory] = useState(TOP_MARKETPLACE_CATEGORIES[0].name);
-  const [sellCondition, setSellCondition] = useState<ProductCondition>('New');
-  const [sellLocation, setSellLocation] = useState(marketLocation || profile.location || '');
-  const [sellStock, setSellStock] = useState('1');
-  const [sellDescription, setSellDescription] = useState('');
-  const [sellImages, setSellImages] = useState<string[]>([]);
-  const [sellUrlDraft, setSellUrlDraft] = useState('');
-  const [sellUploading, setSellUploading] = useState(false);
-  const [sellUploadProgress, setSellUploadProgress] = useState(0);
-  const [sellSubmitting, setSellSubmitting] = useState(false);
-  const [sellError, setSellError] = useState<string | null>(null);
-  const sellFileInputRef = useRef<HTMLInputElement | null>(null);
+
 
   // Persist prefs & bag
   useEffect(() => {
@@ -950,6 +953,10 @@ export function MarketplaceView({
   };
 
   const openListingDetail = (product: MarketplaceProduct) => {
+    if (onOpenProductDetail) {
+      onOpenProductDetail(product.id);
+      return;
+    }
     setSelectedProductId(product.id);
     setPdpQty(1);
     setLightboxIndex(null);
@@ -1187,6 +1194,10 @@ export function MarketplaceView({
 
   const handlePlaceOrder = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isAuthorized) {
+      onRequireAuth?.();
+      return;
+    }
     if (bagItems.length === 0) return;
 
     if (!shippingName.trim() || !shippingPhone.trim() || !shippingAddress.trim() || !shippingCity.trim()) {
@@ -1214,6 +1225,8 @@ export function MarketplaceView({
           shippingCity,
           note: orderNote,
           paymentMethod,
+          customerEmail: accountEmail || undefined,
+          currency: bagCurrency,
         });
         if (!proxyResult.ok) {
           throw new Error(proxyResult.error || 'Upstream checkout proxy failed.');
@@ -1318,143 +1331,7 @@ export function MarketplaceView({
     }
   };
 
-  const handleSellFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (sellImages.length >= 4) {
-      setSellError('Maximum 4 photos per listing.');
-      e.target.value = '';
-      return;
-    }
-    setSellError(null);
-    setSellUploading(true);
-    setSellUploadProgress(0);
-    try {
-      const uploaded = await uploadMediaToCloudflareR2(
-        file,
-        'posts',
-        (pct) => setSellUploadProgress(pct)
-      );
-      if (uploaded.kind !== 'image') {
-        setSellError('Please select an image file (JPG, PNG, WebP).');
-        return;
-      }
-      setSellImages((prev) => [...prev, uploaded.url].slice(0, 4));
-    } catch (err) {
-      setSellError(
-        err instanceof Error
-          ? err.message
-          : 'Photo upload failed. You can also paste an image URL below.'
-      );
-    } finally {
-      setSellUploading(false);
-      setSellUploadProgress(0);
-      e.target.value = '';
-    }
-  };
 
-  const handlePublishListing = async (e: FormEvent) => {
-    e.preventDefault();
-    const cleanTitle = sellTitle.trim();
-    const numericPrice = Number.parseFloat(sellPrice.replace(/[^0-9.]/g, ''));
-    const numericStock = Math.max(1, Number.parseInt(sellStock, 10) || 1);
-
-    if (cleanTitle.length < 2) {
-      setSellError('Enter a clear title for your item.');
-      return;
-    }
-    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
-      setSellError('Enter a valid price greater than zero.');
-      return;
-    }
-    if (sellImages.length === 0) {
-      setSellError('Add at least 1 photo of your item.');
-      return;
-    }
-
-    setSellSubmitting(true);
-    setSellError(null);
-    try {
-      const ownerStore = await ensurePersonalMarketplaceStore({
-        profile,
-        category: sellCategory,
-        currency: sellCurrency,
-        existingStores: stores,
-        persistToFirestore: isFirebaseBacked,
-      });
-
-      if (!stores.some((s) => s.id === ownerStore.id)) {
-        setStores((prev) => [ownerStore, ...prev]);
-      }
-
-      const priceCents = Math.round(numericPrice * 100);
-      const primaryImage = sellImages[0];
-      const extraGallery = sellImages.length > 1 ? sellImages : undefined;
-
-      if (isFirebaseBacked) {
-        await saveMarketplaceProductRecord({
-          storeId: ownerStore.id,
-          storeName: ownerStore.name,
-          storeSlug: ownerStore.slug,
-          ownerUid: profile.uid,
-          title: cleanTitle,
-          description: sellDescription.trim() || `${sellCondition} in ${sellLocation || marketLocation}.`,
-          category: sellCategory,
-          priceCents,
-          currency: sellCurrency,
-          imageUrl: primaryImage,
-          galleryUrls: extraGallery,
-          location: sellLocation.trim() || marketLocation,
-          condition: sellCondition,
-          stock: numericStock,
-          status: 'ACTIVE',
-          featured: false,
-          isCreate: true,
-        });
-      } else {
-        const localProd: MarketplaceProduct = {
-          id: `prod_local_${Date.now().toString(36)}`,
-          storeId: ownerStore.id,
-          storeName: ownerStore.name,
-          storeSlug: ownerStore.slug,
-          ownerUid: profile.uid,
-          title: cleanTitle,
-          description: sellDescription.trim() || `${sellCondition} in ${sellLocation || marketLocation}.`,
-          category: sellCategory,
-          priceCents,
-          currency: sellCurrency,
-          imageUrl: primaryImage,
-          galleryUrls: extraGallery,
-          location: sellLocation.trim() || marketLocation,
-          condition: sellCondition,
-          stock: numericStock,
-          status: 'ACTIVE',
-          featured: false,
-          createdAtMs: Date.now(),
-          updatedAtMs: Date.now(),
-        };
-        setProducts((prev) => [localProd, ...prev]);
-      }
-
-      setSellTitle('');
-      setSellPrice('');
-      setSellDescription('');
-      setSellImages([]);
-      setSellStock('1');
-      setToastNotice('Listing published to Marketplace!');
-      setSelectedStoreId('all');
-      setSelectedCategory('All');
-      setSearchQuery('');
-      setViewHistory([]);
-      setSubView('home');
-    } catch (err) {
-      setSellError(
-        err instanceof Error ? err.message : 'Unable to publish listing right now.'
-      );
-    } finally {
-      setSellSubmitting(false);
-    }
-  };
 
   const handleMarkSoldOrDelete = async (product: MarketplaceProduct) => {
     try {
@@ -2942,254 +2819,7 @@ export function MarketplaceView({
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* SUBVIEW: SELL AN ITEM COMPOSER                                     */}
-      {/* =================================================================== */}
-      {subView === 'sell' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-w-2xl mx-auto">
-          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={navigateBack}
-              aria-label="Back to Marketplace"
-              className="min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center text-slate-800 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <ChevronLeft className="w-6 h-6" aria-hidden="true" />
-            </button>
-            <h1 className="font-display text-lg font-bold text-slate-900 dark:text-white">
-              Create New Listing
-            </h1>
-          </div>
 
-          <form onSubmit={handlePublishListing} className="p-5 space-y-4">
-            {/* Photos */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Photos ({sellImages.length}/4)
-                </label>
-                <button
-                  type="button"
-                  disabled={sellUploading || sellImages.length >= 4}
-                  onClick={() => sellFileInputRef.current?.click()}
-                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                >
-                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  {sellUploading ? `Uploading ${sellUploadProgress}%` : 'Upload photo'}
-                </button>
-              </div>
-              <input
-                ref={sellFileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleSellFileUpload}
-                className="hidden"
-              />
-
-              {sellImages.length > 0 && (
-                <div className="grid grid-cols-4 gap-2">
-                  {sellImages.map((url, idx) => (
-                    <div
-                      key={`${url}_${idx}`}
-                      className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800"
-                    >
-                      <img
-                        src={url}
-                        alt={`Listing preview ${idx + 1}`}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSellImages((prev) => prev.filter((_, i) => i !== idx))
-                        }
-                        aria-label="Remove photo"
-                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={sellUrlDraft}
-                  onChange={(e) => setSellUrlDraft(e.target.value)}
-                  placeholder="Or paste image URL (https://...)"
-                  className="flex-1 min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const clean = sellUrlDraft.trim();
-                    if (!clean || sellImages.length >= 4) return;
-                    setSellImages((prev) => [...prev, clean].slice(0, 4));
-                    setSellUrlDraft('');
-                  }}
-                  className="min-h-[40px] px-3.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer"
-                >
-                  Add URL
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Title
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={100}
-                value={sellTitle}
-                onChange={(e) => setSellTitle(e.target.value)}
-                placeholder="What are you selling?"
-                className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Price
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  value={sellPrice}
-                  onChange={(e) => setSellPrice(e.target.value)}
-                  placeholder="150.00"
-                  className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm tabular-nums"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Currency
-                </label>
-                <select
-                  value={sellCurrency}
-                  onChange={(e) => setSellCurrency(e.target.value)}
-                  className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
-                >
-                  {CURRENCY_OPTIONS.map((cur) => (
-                    <option key={cur} value={cur}>
-                      {cur}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Stock Qty
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={sellStock}
-                  onChange={(e) => setSellStock(e.target.value)}
-                  className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm tabular-nums"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Category
-                </label>
-                <select
-                  value={sellCategory}
-                  onChange={(e) => setSellCategory(e.target.value)}
-                  className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
-                >
-                  {ALL_MARKETPLACE_CATEGORIES.map((cat) => (
-                    <option key={cat.name} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Condition
-                </label>
-                <select
-                  value={sellCondition}
-                  onChange={(e) => setSellCondition(e.target.value as ProductCondition)}
-                  className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
-                >
-                  {PRODUCT_CONDITIONS.map((cond) => (
-                    <option key={cond} value={cond}>
-                      {cond}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Location
-              </label>
-              <input
-                type="text"
-                maxLength={80}
-                value={sellLocation}
-                onChange={(e) => setSellLocation(e.target.value)}
-                placeholder="City, region or neighborhood"
-                className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Description
-              </label>
-              <textarea
-                rows={3}
-                maxLength={1000}
-                value={sellDescription}
-                onChange={(e) => setSellDescription(e.target.value)}
-                placeholder="Describe details, sizing, pickup or delivery terms..."
-                className="w-full p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm resize-none"
-              />
-            </div>
-
-            {sellError && (
-              <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
-                {sellError}
-              </p>
-            )}
-
-            <div className="flex items-center justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={navigateBack}
-                className="min-h-[42px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={sellSubmitting || sellUploading}
-                className="min-h-[42px] px-6 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold cursor-pointer"
-              >
-                {sellSubmitting ? 'Publishing...' : 'Publish Listing'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* =================================================================== */}
       {/* SUBVIEW: MY MARKETPLACE ACCOUNT (Saved & Own Listings)              */}
@@ -3255,11 +2885,11 @@ export function MarketplaceView({
               </h2>
               <button
                 type="button"
-                onClick={handleRedirectToEcommerceSell}
+                onClick={handleOpenMerchantSell}
                 className="min-h-[36px] px-3.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                Sell item
+                Merchant Portal
               </button>
             </div>
             {myListings.length === 0 ? (
@@ -3458,7 +3088,13 @@ export function MarketplaceView({
           <div className="px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
             <button
               type="button"
-              onClick={() => navigateTo('account')}
+              onClick={() => {
+                if (!isAuthorized) {
+                  onRequireAuth?.();
+                  return;
+                }
+                navigateTo('account');
+              }}
               aria-label="Your Marketplace account"
               className="min-h-[38px] px-3.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center justify-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
             >
@@ -3468,7 +3104,13 @@ export function MarketplaceView({
 
             <button
               type="button"
-              onClick={() => navigateTo('inbox')}
+              onClick={() => {
+                if (!isAuthorized) {
+                  onRequireAuth?.();
+                  return;
+                }
+                navigateTo('inbox');
+              }}
               className="min-h-[38px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Inbox className="w-4 h-4 sm:hidden" aria-hidden="true" />
@@ -3477,7 +3119,7 @@ export function MarketplaceView({
 
             <button
               type="button"
-              onClick={handleRedirectToEcommerceSell}
+              onClick={handleOpenMerchantSell}
               className="min-h-[38px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Tag className="w-4 h-4 sm:hidden" aria-hidden="true" />
@@ -3511,7 +3153,13 @@ export function MarketplaceView({
 
             <button
               type="button"
-              onClick={() => navigateTo('orders')}
+              onClick={() => {
+                if (!isAuthorized) {
+                  onRequireAuth?.();
+                  return;
+                }
+                navigateTo('orders');
+              }}
               className="min-h-[38px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
             >
               <span>Orders</span>
@@ -3613,10 +3261,10 @@ export function MarketplaceView({
                   )}
                   <button
                     type="button"
-                    onClick={handleRedirectToEcommerceSell}
+                    onClick={handleOpenMerchantSell}
                     className="min-h-[38px] px-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
                   >
-                    Sell an item
+                    Open Business Merchant Portal
                   </button>
                 </div>
               </div>
@@ -4018,6 +3666,138 @@ export function MarketplaceView({
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* BUSINESS PROFILE MERCHANT PORTAL LAUNCHER MODAL                     */}
+      {/* =================================================================== */}
+      {sellBusinessPickerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Select Business Profile for Selling"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Sell with a Business Profile
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Merchant tools, inventory, and payouts belong to verified Business Profiles—not personal accounts.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSellBusinessPickerOpen(false)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            {sellLauncherError && (
+              <p role="alert" className="rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+                {sellLauncherError}
+              </p>
+            )}
+
+            {businesses.length === 0 ? (
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 text-center space-y-3">
+                <Building2 className="w-8 h-8 mx-auto text-blue-600" aria-hidden="true" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                    No Business Profile yet
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Create a Looma Business Profile to unlock your Commerce storefront, product catalog, and order fulfillment portal.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSellBusinessPickerOpen(false);
+                    onCreateBusinessProfile?.();
+                  }}
+                  className="w-full min-h-[42px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Create Business Profile
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5 max-h-72 overflow-y-auto">
+                {businesses.map((bp) => {
+                  const busy = launchingBpId === bp.id;
+                  return (
+                    <div
+                      key={bp.id}
+                      className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center shrink-0">
+                          {bp.logoUrl ? (
+                            <img
+                              src={bp.logoUrl}
+                              alt={bp.displayName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <Store className="w-5 h-5 text-slate-500" aria-hidden="true" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                            {bp.displayName}
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            @{bp.slug} · {bp.category}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {onOpenBusinessProfile && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSellBusinessPickerOpen(false);
+                              onOpenBusinessProfile(bp.slug);
+                            }}
+                            className="min-h-[36px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            Page
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={Boolean(launchingBpId)}
+                          onClick={() => void handleSelectBusinessForSelling(bp)}
+                          className="min-h-[36px] px-3.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+                        >
+                          {busy ? 'Opening...' : 'Merchant Portal'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {onCreateBusinessProfile && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSellBusinessPickerOpen(false);
+                      onCreateBusinessProfile();
+                    }}
+                    className="w-full min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                    Create another Business Profile
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

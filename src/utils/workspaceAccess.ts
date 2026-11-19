@@ -2,7 +2,15 @@ import type { TabId } from '../types/social';
 import type { AuthMode } from '../components/AuthView';
 import { getLegalRoutePath, parseLegalRoute, type LegalDocId } from './legalLogic';
 
-export type AppSurface = 'auth' | 'onboarding' | 'workspace' | 'legal' | 'admin' | 'landing' | 'seller';
+export type AppSurface =
+  | 'auth'
+  | 'onboarding'
+  | 'workspace'
+  | 'legal'
+  | 'admin'
+  | 'landing'
+  | 'marketplace'
+  | 'business-profile';
 
 export type ProtectedWorkspaceTab = Exclude<TabId, 'public-profile' | 'auth'>;
 
@@ -11,6 +19,8 @@ export interface RouteAccessResolution {
   tab?: ProtectedWorkspaceTab;
   authMode?: AuthMode;
   legalDocId?: LegalDocId;
+  businessSlug?: string | null;
+  productId?: string | null;
   blockedPath?: string | null;
   blockedResourceLabel?: string | null;
   protectedNotice?: string | null;
@@ -25,11 +35,12 @@ const TAB_PATH_MAP: Record<ProtectedWorkspaceTab, string> = {
   notifications: '/notifications',
   profile: '/profile',
   settings: '/settings',
+  'business-profile': '/business',
+  'product-detail': '/marketplace',
 };
 
 const PROTECTED_TAB_BY_PATH: Record<string, { tab: ProtectedWorkspaceTab; label: string }> = {
   '/feed': { tab: 'feed', label: 'Feed posts' },
-  '/marketplace': { tab: 'marketplace', label: 'Marketplace storefront' },
   '/connections': { tab: 'connections', label: 'Friends & connections' },
   '/messages': { tab: 'messages', label: 'Messages' },
   '/notifications': { tab: 'notifications', label: 'Notifications' },
@@ -49,6 +60,29 @@ export function getTabRoutePath(tab: TabId): string {
   if (tab === 'auth') return '/auth';
   if (tab === 'public-profile') return '/feed';
   return TAB_PATH_MAP[tab] || '/feed';
+}
+
+export function parseBusinessSlugFromPath(pathname: string): string | null {
+  const normalized = normalizeAppPathname(pathname);
+  if (!normalized.startsWith('/business/')) return null;
+  const slug = normalized.slice('/business/'.length).split('/')[0]?.trim() || '';
+  return slug || null;
+}
+
+export function parseMarketplaceRoute(pathname: string): {
+  isMarketplace: boolean;
+  productId: string | null;
+} {
+  const rawClean = (pathname || '/').split('?')[0].trim().replace(/\/+$/, '') || '/';
+  const normalized = rawClean.toLowerCase();
+  if (normalized === '/marketplace') {
+    return { isMarketplace: true, productId: null };
+  }
+  if (normalized.startsWith('/marketplace/product/')) {
+    const productId = rawClean.slice('/marketplace/product/'.length).split('/')[0]?.trim() || '';
+    return { isMarketplace: true, productId: productId || null };
+  }
+  return { isMarketplace: false, productId: null };
 }
 
 export function parseProtectedWorkspacePath(
@@ -94,13 +128,9 @@ export function resolveRouteAccess(input: {
   const pathname = normalizeAppPathname(input.pathname);
   const search = input.search || '';
 
-  // Dedicated Admin, Seller (Looma Commerce), and Landing page routes resolve directly to their surfaces without redirect bouncing
+  // Dedicated Admin and Landing page routes resolve directly to their surfaces without redirect bouncing
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     return { surface: 'admin' };
-  }
-
-  if (pathname === '/seller' || pathname.startsWith('/seller/')) {
-    return { surface: 'seller' };
   }
 
   if (
@@ -122,6 +152,9 @@ export function resolveRouteAccess(input: {
     };
   }
 
+  const businessSlug = parseBusinessSlugFromPath(pathname);
+  const marketplaceRoute = parseMarketplaceRoute(input.pathname);
+
   if (!input.authReady) {
     return { surface: 'auth', authMode: resolveAuthModeFromUrl(pathname, search) };
   }
@@ -130,8 +163,22 @@ export function resolveRouteAccess(input: {
   const requestingAuth = isAuthPath(pathname);
   const authModeFromUrl = resolveAuthModeFromUrl(pathname, search);
 
-  // Unauthenticated or unverified visitor gating
+  // Public Marketplace & Public Business Profile routes remain browsable without requiring login
   if (!input.isAuthorized) {
+    if (businessSlug) {
+      return {
+        surface: 'business-profile',
+        businessSlug,
+      };
+    }
+
+    if (marketplaceRoute.isMarketplace) {
+      return {
+        surface: 'marketplace',
+        productId: marketplaceRoute.productId,
+      };
+    }
+
     if (protectedTab) {
       return {
         surface: 'auth',
@@ -153,7 +200,31 @@ export function resolveRouteAccess(input: {
   if (!input.onboardingCompleted) {
     return {
       surface: 'onboarding',
-      returnToPath: protectedTab ? protectedTab.canonicalPath : '/feed',
+      returnToPath: protectedTab
+        ? protectedTab.canonicalPath
+        : businessSlug
+          ? `/business/${businessSlug}`
+          : marketplaceRoute.isMarketplace
+            ? marketplaceRoute.productId
+              ? `/marketplace/product/${marketplaceRoute.productId}`
+              : '/marketplace'
+            : '/feed',
+    };
+  }
+
+  if (businessSlug) {
+    return {
+      surface: 'workspace',
+      tab: 'business-profile',
+      businessSlug,
+    };
+  }
+
+  if (marketplaceRoute.isMarketplace) {
+    return {
+      surface: 'workspace',
+      tab: marketplaceRoute.productId ? 'product-detail' : 'marketplace',
+      productId: marketplaceRoute.productId,
     };
   }
 
@@ -183,10 +254,18 @@ export function getCanonicalPathForSurface(
     tab?: TabId;
     authMode?: AuthMode;
     legalDocId?: LegalDocId;
+    businessSlug?: string;
+    productId?: string;
   }
 ): string {
   if (surface === 'admin') return '/admin';
   if (surface === 'landing') return '/landingpage';
+  if (surface === 'marketplace') {
+    return options?.productId ? `/marketplace/product/${options.productId}` : '/marketplace';
+  }
+  if (surface === 'business-profile') {
+    return options?.businessSlug ? `/business/${options.businessSlug}` : '/marketplace';
+  }
   if (surface === 'legal' && options?.legalDocId) {
     return getLegalRoutePath(options.legalDocId);
   }

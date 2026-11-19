@@ -14,6 +14,8 @@ import {
   ordersTable,
 } from "@workspace/db";
 import { encryptCredential, decryptCredential } from "../credentialVault";
+import { enqueueOutboxEvent, processPendingOutbox } from "../firestoreSyncWorker";
+import { enqueueProductOutboxSnapshot, restoreOrderInventoryTx } from "../inventoryService";
 import { StripePaymentProvider } from "./StripePaymentProvider";
 import { PaystackPaymentProvider } from "./PaystackPaymentProvider";
 import { FlutterwavePaymentProvider } from "./FlutterwavePaymentProvider";
@@ -1024,7 +1026,6 @@ export class PaymentService {
       await db.update(ordersTable).set({
         paymentStatus: "PAID",
         paidAt: new Date(),
-        updatedAt: new Date(),
       }).where(and(eq(ordersTable.id, transaction.orderId), eq(ordersTable.storeId, storeId)));
     }
 
@@ -1062,30 +1063,72 @@ export class PaymentService {
       providerTransactionId: transaction.providerTransactionId || undefined,
     });
 
-    await db.insert(paymentRefundsTable).values({
-      id: randomUUID(),
-      storeId,
-      transactionId: transaction.id,
-      orderId: transaction.orderId,
-      providerRefundId: refund.refundId,
-      amount: refund.amount,
-      currency: refund.currency,
-      reason: params.reason,
-      status: refund.status,
-      rawResponse: refund.raw,
+    let touchedRefundOrder = false;
+    await db.transaction(async (tx) => {
+      await tx.insert(paymentRefundsTable).values({
+        id: randomUUID(),
+        storeId,
+        transactionId: transaction.id,
+        orderId: transaction.orderId,
+        providerRefundId: refund.refundId,
+        amount: refund.amount,
+        currency: refund.currency,
+        reason: params.reason,
+        status: refund.status,
+        rawResponse: refund.raw,
+      });
+
+      await tx.update(paymentTransactionsTable).set({
+        status: "refunded",
+        updatedAt: new Date(),
+      }).where(eq(paymentTransactionsTable.id, transaction.id));
+
+      if (transaction.orderId) {
+        const [existingOrder] = await tx.select().from(ordersTable)
+          .where(and(eq(ordersTable.id, transaction.orderId), eq(ordersTable.storeId, storeId)))
+          .limit(1);
+
+        if (existingOrder) {
+          const alreadyRestored =
+            existingOrder.status === "CANCELLED" ||
+            existingOrder.status === "REFUNDED" ||
+            existingOrder.paymentStatus === "REFUNDED" ||
+            existingOrder.paymentStatus === "FAILED";
+
+          await tx.update(ordersTable).set({
+            paymentStatus: "REFUNDED",
+            status: "REFUNDED",
+          }).where(and(eq(ordersTable.id, existingOrder.id), eq(ordersTable.storeId, storeId)));
+
+          if (!alreadyRestored) {
+            const touchedProducts = await restoreOrderInventoryTx(tx as any, existingOrder.id, storeId);
+            for (const prodId of touchedProducts) {
+              await enqueueProductOutboxSnapshot(prodId, storeId, "PRODUCT_UPSERTED", tx as any);
+            }
+          }
+
+          await enqueueOutboxEvent({
+            aggregateType: "ORDER",
+            aggregateId: existingOrder.id,
+            storeId,
+            eventType: "ORDER_UPDATED",
+            payload: {
+              id: existingOrder.id,
+              businessProfileId: existingOrder.businessProfileId,
+              buyerFirebaseUid: existingOrder.buyerFirebaseUid,
+              customerName: existingOrder.customerName,
+              total: existingOrder.total,
+              status: "REFUNDED",
+              paymentStatus: "REFUNDED",
+            },
+          }, tx as any);
+          touchedRefundOrder = true;
+        }
+      }
     });
 
-    await db.update(paymentTransactionsTable).set({
-      status: "refunded",
-      updatedAt: new Date(),
-    }).where(eq(paymentTransactionsTable.id, transaction.id));
-
-    if (transaction.orderId) {
-      await db.update(ordersTable).set({
-        paymentStatus: "REFUNDED",
-        status: "REFUNDED",
-        updatedAt: new Date(),
-      }).where(and(eq(ordersTable.id, transaction.orderId), eq(ordersTable.storeId, storeId)));
+    if (touchedRefundOrder) {
+      processPendingOutbox({ storeId }).catch(() => {});
     }
 
     await this.logAudit({
@@ -1145,33 +1188,63 @@ export class PaymentService {
 
     // Update transaction and order states if matching transaction exists
     if (existingTx) {
+      let shouldFlushOutbox = false;
       try {
-        await db.update(paymentTransactionsTable).set({
-          status: eventResult.status,
-          providerTransactionId: eventResult.providerTransactionId || existingTx.providerTransactionId,
-          verifiedAt: eventResult.status === "paid" ? new Date() : existingTx.verifiedAt,
-          updatedAt: new Date(),
-        }).where(eq(paymentTransactionsTable.id, existingTx.id));
+        await db.transaction(async (tx) => {
+          await tx.update(paymentTransactionsTable).set({
+            status: eventResult.status,
+            providerTransactionId: eventResult.providerTransactionId || existingTx.providerTransactionId,
+            verifiedAt: eventResult.status === "paid" ? new Date() : existingTx.verifiedAt,
+            updatedAt: new Date(),
+          }).where(eq(paymentTransactionsTable.id, existingTx.id));
 
-        if (existingTx.orderId) {
-          if (eventResult.status === "paid") {
-            await db.update(ordersTable).set({
-              paymentStatus: "PAID",
-              paidAt: new Date(),
-              updatedAt: new Date(),
-            }).where(and(eq(ordersTable.id, existingTx.orderId), eq(ordersTable.storeId, resolvedStoreId)));
-          } else if (eventResult.status === "failed") {
-            await db.update(ordersTable).set({
-              paymentStatus: "FAILED",
-              updatedAt: new Date(),
-            }).where(and(eq(ordersTable.id, existingTx.orderId), eq(ordersTable.storeId, resolvedStoreId)));
-          } else if (eventResult.status === "refunded") {
-            await db.update(ordersTable).set({
-              paymentStatus: "REFUNDED",
-              status: "REFUNDED",
-              updatedAt: new Date(),
-            }).where(and(eq(ordersTable.id, existingTx.orderId), eq(ordersTable.storeId, resolvedStoreId)));
+          if (existingTx.orderId) {
+            const [existingOrder] = await tx.select().from(ordersTable)
+              .where(and(eq(ordersTable.id, existingTx.orderId), eq(ordersTable.storeId, resolvedStoreId!)))
+              .limit(1);
+
+            if (existingOrder) {
+              const alreadyRestored =
+                existingOrder.status === "CANCELLED" ||
+                existingOrder.status === "REFUNDED" ||
+                existingOrder.paymentStatus === "REFUNDED" ||
+                existingOrder.paymentStatus === "FAILED";
+
+              if (eventResult.status === "paid") {
+                await tx.update(ordersTable).set({
+                  paymentStatus: "PAID",
+                  paidAt: new Date(),
+                }).where(and(eq(ordersTable.id, existingOrder.id), eq(ordersTable.storeId, resolvedStoreId!)));
+              } else if (eventResult.status === "failed") {
+                await tx.update(ordersTable).set({
+                  paymentStatus: "FAILED",
+                  status: "CANCELLED",
+                }).where(and(eq(ordersTable.id, existingOrder.id), eq(ordersTable.storeId, resolvedStoreId!)));
+                if (!alreadyRestored) {
+                  const touchedProducts = await restoreOrderInventoryTx(tx as any, existingOrder.id, resolvedStoreId!);
+                  for (const prodId of touchedProducts) {
+                    await enqueueProductOutboxSnapshot(prodId, resolvedStoreId!, "PRODUCT_UPSERTED", tx as any);
+                  }
+                }
+                shouldFlushOutbox = true;
+              } else if (eventResult.status === "refunded") {
+                await tx.update(ordersTable).set({
+                  paymentStatus: "REFUNDED",
+                  status: "REFUNDED",
+                }).where(and(eq(ordersTable.id, existingOrder.id), eq(ordersTable.storeId, resolvedStoreId!)));
+                if (!alreadyRestored) {
+                  const touchedProducts = await restoreOrderInventoryTx(tx as any, existingOrder.id, resolvedStoreId!);
+                  for (const prodId of touchedProducts) {
+                    await enqueueProductOutboxSnapshot(prodId, resolvedStoreId!, "PRODUCT_UPSERTED", tx as any);
+                  }
+                }
+                shouldFlushOutbox = true;
+              }
+            }
           }
+        });
+        if (shouldFlushOutbox) {
+          processPendingOutbox({ storeId: resolvedStoreId }).catch(() => {});
         }
       } catch (dbErr) {
         console.error(`[Payment] Failed to update order/transaction from webhook:`, dbErr);
