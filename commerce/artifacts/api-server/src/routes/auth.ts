@@ -112,44 +112,16 @@ router.post("/auth/seller/login", async (_req: any, res: Response) => {
   });
 });
 
-router.post("/auth/register", validate(registerSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const { name, email, password } = req.body;
-  if (await isRateLimited(`register:ip:${req.ip}`, 10, 15 * 60 * 1000) ||
-      await isRateLimited(`register:email:${storeId}:${email}`, 5, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many registration attempts. Try again later." });
-  }
-  const existing = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (existing.length) return res.status(409).json({ error: "Email already registered in this store." });
-  const user = { id: randomUUID(), storeId, name, email, role: "CUSTOMER" as const, passwordHash: await bcrypt.hash(password, 10) };
-  await db.insert(usersTable).values(user);
-  const token = await setSession(res, user.id, storeId);
-  
-  // Dispatch welcome email & WhatsApp notification asynchronously
-  Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl]) => {
-    const storeName = getBranding(storeId).store_name;
-    sendEmail({ to: user.email, ...buildWelcomeEmail({ name: user.name, email: user.email, storeUrl, storeId, storeName }), storeId }).catch(() => {});
-    const waText = buildWhatsAppWelcomeMessage({ recipientName: user.name, storeUrl, storeName });
-    sendWhatsAppNotification(user.email, waText, storeId).catch(() => {});
-  }).catch(() => {});
-
-  const { passwordHash: _, ...safe } = user;
-  return res.status(201).json({ ...safe, token });
+router.post("/auth/register", async (_req: any, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone storefront customer registration is deprecated. Customers authenticate seamlessly through their verified Looma account via /api/auth/firebase.",
+  });
 });
 
-const loginSchema = z.object({ email: emailSchema, password: z.string().min(1).max(128) });
-router.post("/auth/login", validate(loginSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const { email, password } = req.body;
-  if (await isRateLimited(`login:ip:${req.ip}`, 15, 15 * 60 * 1000) ||
-      await isRateLimited(`login:email:${storeId}:${email}`, 10, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many login attempts. Try again later." });
-  }
-  const [user] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: "Invalid email or password." });
-  const token = await setSession(res, user.id, storeId);
-  const { passwordHash: _, ...safe } = user;
-  return res.json({ ...safe, token });
+router.post("/auth/login", async (_req: any, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone storefront customer password login is deprecated. Customers authenticate seamlessly through their verified Looma account via /api/auth/firebase.",
+  });
 });
 
 const firebaseAuthSchema = z.object({
@@ -179,7 +151,7 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
       name: name || email.split("@")[0] || "Valued Customer",
       email,
       role: "CUSTOMER" as const,
-      passwordHash: await bcrypt.hash(randomUUID(), 10),
+      passwordHash: "",
     };
     await db.insert(usersTable).values(newUser);
     user = newUser;
@@ -210,22 +182,21 @@ router.post("/auth/logout-all", requireAdmin, async (req: TenantRequest, res: Re
 router.get("/auth/admin/exists", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
   const rows = await db
-    .select({ id: usersTable.id, email: usersTable.email, name: usersTable.name, role: usersTable.role })
+    .select({ id: usersTable.id })
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
       inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
     ));
-  const isProd = process.env.NODE_ENV === "production";
   return res.json({
     exists: rows.length > 0,
-    admins: isProd ? [] : rows.map((r) => ({ email: r.email, name: r.name, role: r.role })),
+    admins: [],
   });
 });
 
 router.post("/auth/admin/quick-login", async (_req: TenantRequest, res: Response) => {
-  return res.status(403).json({
-    error: "Quick login is disabled. Seller portal access is managed exclusively via Looma Business Profile SSO.",
+  return res.status(410).json({
+    error: "Quick-login bypass is permanently removed. Seller portal access is managed exclusively via Looma Business Profile SSO.",
   });
 });
 
