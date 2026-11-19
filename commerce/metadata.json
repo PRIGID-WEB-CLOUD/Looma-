@@ -1,0 +1,12 @@
+{
+  "name": "Prigid Commerce Group ",
+  "description": "Curated luxury marketplace directory and multi-merchant e-commerce platform for independent ateliers and heritage houses.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
