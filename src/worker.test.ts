@@ -986,3 +986,47 @@ test('Worker static asset routing serves /admin and /landingpage cleanly with tr
   assert.equal((await standaloneAdminRes.text()).includes('Standalone Admin'), true);
 });
 
+test('Worker store proxy routes handle catalog retrieval, search filtering, and checkout seamlessly with fallback', async () => {
+  const app = createWorkerApp();
+
+  // Status
+  const statusRes = await app.fetch(new Request('https://looma.internal/api/store/status'));
+  assert.equal(statusRes.status, 200);
+  const statusData = (await statusRes.json()) as any;
+  assert.equal(statusData.success, true);
+  assert.equal(statusData.proxyActive, true);
+
+  // Stores
+  const storesRes = await app.fetch(new Request('https://looma.internal/api/store/marketplace/stores'));
+  assert.equal(storesRes.status, 200);
+  const storesData = (await storesRes.json()) as any;
+  assert.equal(storesData.success, true);
+  assert.ok(storesData.stores.length >= 5);
+
+  // Products filter
+  const prodsRes = await app.fetch(new Request('https://looma.internal/api/store/products?category=leather'));
+  assert.equal(prodsRes.status, 200);
+  const prods = (await prodsRes.json()) as any[];
+  assert.ok(Array.isArray(prods));
+  assert.ok(prods.some((p: any) => p.name.includes('Weekender')));
+
+  // Checkout
+  const checkoutRes = await app.fetch(
+    new Request('https://looma.internal/api/store/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        storeSlug: 'maison-moretti',
+        items: [{ productId: 'prod_moretti_weekender_01', productName: 'Weekender', quantity: 1, unitPrice: 3450, storeSlug: 'maison-moretti' }],
+        customer: { name: 'Test Client', email: 'client@example.com', address: '123 Via Milano', city: 'Milan', postalCode: '20121' },
+      }),
+    })
+  );
+  assert.equal(checkoutRes.status, 200);
+  const checkoutData = (await checkoutRes.json()) as any;
+  assert.equal(checkoutData.success, true);
+  assert.equal(checkoutData.status, 'confirmed');
+  assert.equal(checkoutData.totalAmount, 3450);
+});
+
+
