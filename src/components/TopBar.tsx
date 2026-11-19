@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Search, X } from 'lucide-react';
 import type { TabId } from '../types/social';
 import { LoomaLogo } from './LoomaLogo';
 
@@ -8,6 +9,11 @@ interface TopBarProps {
   unreadNotifications: number;
   onLogoClick?: () => void;
   rightSlot?: ReactNode;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  searchPlaceholder?: string;
+  onSearchFocus?: () => void;
+  onSearchSubmit?: (query: string) => void;
 }
 
 export function TopBar({
@@ -16,6 +22,11 @@ export function TopBar({
   unreadNotifications,
   onLogoClick,
   rightSlot,
+  searchQuery = '',
+  onSearchChange,
+  searchPlaceholder,
+  onSearchFocus,
+  onSearchSubmit,
 }: TopBarProps) {
   const navItems: { id: TabId; label: string }[] = [
     { id: 'feed', label: 'Feed' },
@@ -38,9 +49,14 @@ export function TopBar({
     return false;
   };
 
+  const defaultPlaceholder =
+    activeTab === 'marketplace'
+      ? 'Search marketplace...'
+      : 'Search posts or creators...';
+
   return (
     <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shrink-0">
-      <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-3 sm:gap-4">
         <button
           type="button"
           onClick={() => {
@@ -51,14 +67,14 @@ export function TopBar({
             }
           }}
           aria-label="Looma brand identity and info"
-          className="min-h-[44px] px-1.5 -ml-1.5 rounded-xl flex items-center hover:bg-slate-100/80 dark:hover:bg-slate-900 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          className="min-h-[44px] px-1.5 -ml-1.5 rounded-xl flex items-center hover:bg-slate-100/80 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
           <LoomaLogo />
         </button>
 
         <nav
           aria-label="Primary navigation"
-          className="hidden md:flex items-center gap-6"
+          className="hidden md:flex items-center gap-5 lg:gap-6 shrink-0"
         >
           {navItems.map((item) => {
             const active = isNavActive(item.id);
@@ -86,8 +102,44 @@ export function TopBar({
           })}
         </nav>
 
-        <div className="flex items-center justify-end min-w-0">
-          {rightSlot ? rightSlot : <div className="hidden md:block w-24 shrink-0" aria-hidden="true" />}
+        {/* Search Section */}
+        <div className="flex-1 max-w-[220px] sm:max-w-xs md:max-w-xs lg:max-w-sm flex items-center justify-end min-w-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSearchSubmit?.(searchQuery);
+            }}
+            className="relative w-full"
+            role="search"
+          >
+            <label htmlFor="header-search" className="sr-only">
+              Search posts and creators
+            </label>
+            <Search
+              className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              aria-hidden="true"
+            />
+            <input
+              id="header-search"
+              type="search"
+              value={searchQuery}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              onFocus={onSearchFocus}
+              placeholder={searchPlaceholder || defaultPlaceholder}
+              className="w-full h-9 sm:h-10 pl-9 pr-8 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white dark:focus:bg-slate-950 transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange?.('')}
+                aria-label="Clear search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-6 w-6 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-full cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            )}
+          </form>
+          {rightSlot && <div className="ml-2 shrink-0">{rightSlot}</div>}
         </div>
       </div>
     </header>

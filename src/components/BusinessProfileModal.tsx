@@ -211,34 +211,51 @@ export function BusinessProfileModal({
       aria-modal="true"
       aria-labelledby="business-profile-modal-title"
       data-testid="business-profile-modal"
-      className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 h-[100dvh] w-screen flex flex-col bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden looma-stage-enter"
     >
-      <div className="w-full max-w-xl max-h-[92dvh] flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 id="business-profile-modal-title" className="font-display text-base font-bold truncate">
-                {mode === 'edit' ? 'Edit Business Profile' : 'Create Business Profile'}
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                Separate brand identity managed by @{personalProfile.handle}
-              </p>
-            </div>
-          </div>
+      <header className="h-16 px-4 sm:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-slate-950">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close modal"
-            className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            aria-label="Close business profile modal"
+            className="min-h-[44px] min-w-[44px] px-2.5 flex items-center justify-center gap-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
           >
-            <X className="w-4 h-4" aria-hidden="true" />
+            <X className="w-5 h-5" aria-hidden="true" />
+            <span className="hidden sm:inline text-xs font-semibold">Back</span>
           </button>
+          <div className="min-w-0">
+            <h2 id="business-profile-modal-title" className="font-display text-base sm:text-lg font-bold truncate">
+              {mode === 'edit' ? 'Edit Business Profile' : 'Create Business Profile'}
+            </h2>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              Separate brand identity managed by @{personalProfile.handle}
+            </p>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
+        <button
+          type="submit"
+          form="business-profile-form"
+          disabled={submitting || uploadingLogo || uploadingBanner}
+          className="min-h-[44px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-xs sm:text-sm font-semibold cursor-pointer disabled:opacity-60 transition-colors shrink-0"
+        >
+          {submitting
+            ? mode === 'edit'
+              ? 'Saving...'
+              : 'Creating...'
+            : mode === 'edit'
+              ? 'Save Changes'
+              : 'Create Business'}
+        </button>
+      </header>
+
+      <form
+        id="business-profile-form"
+        onSubmit={handleSubmit}
+        className="flex flex-col flex-1 min-h-0 overflow-y-auto"
+      >
+        <div className="max-w-4xl mx-auto w-full p-4 sm:p-6 lg:p-8 space-y-6">
           {error && (
             <div
               role="alert"
@@ -512,8 +529,8 @@ export function BusinessProfileModal({
               </span>
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   );
 }

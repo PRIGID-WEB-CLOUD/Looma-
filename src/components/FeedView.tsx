@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Search, X } from 'lucide-react';
+import { ImagePlus, X } from 'lucide-react';
 import type {
   ChatThread,
   FeedFilter,
@@ -196,36 +196,8 @@ export function FeedView({
         </button>
       </div>
 
-      {/* Search & Feed Filter Controls */}
+      {/* Feed Filter Controls */}
       <div className="space-y-2.5">
-        <div className="relative">
-          <label htmlFor="feed-search" className="sr-only">
-            Search posts and creators
-          </label>
-          <Search
-            className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-            aria-hidden="true"
-          />
-          <input
-            id="feed-search"
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search posts or creators..."
-            className="w-full min-h-[44px] pl-10 pr-10 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
-            >
-              <X className="w-4 h-4" aria-hidden="true" />
-            </button>
-          )}
-        </div>
-
         <div
           data-testid="feed-filter-toolbar"
           className="flex flex-wrap items-center justify-between gap-2"

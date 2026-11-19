@@ -147,7 +147,10 @@ export function PublicProfileView({
               </p>
 
               {loading ? (
-                <p className="text-xs text-slate-400 mt-3">Loading profile details...</p>
+                <div className="space-y-2 mt-3 animate-pulse">
+                  <div className="h-4 w-60 rounded bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-3.5 w-36 rounded bg-slate-200 dark:bg-slate-800" />
+                </div>
               ) : (
                 <>
                   {creator.bio && (

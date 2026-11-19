@@ -326,8 +326,14 @@ export function BusinessProfilePage({
 
   if (loading) {
     return (
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center text-sm text-slate-500 dark:text-slate-400">
-        Loading Business Profile...
+      <div className="space-y-4 animate-pulse">
+        <div className="h-44 rounded-3xl bg-slate-200 dark:bg-slate-800 w-full" />
+        <div className="px-4 sm:px-6 space-y-3">
+          <div className="w-20 h-20 rounded-2xl bg-slate-200 dark:bg-slate-800 -mt-12 border-4 border-white dark:border-slate-900" />
+          <div className="h-7 w-52 rounded bg-slate-200 dark:bg-slate-800" />
+          <div className="h-4 w-36 rounded bg-slate-200 dark:bg-slate-800" />
+          <div className="h-24 w-full rounded-2xl bg-slate-100 dark:bg-slate-800" />
+        </div>
       </div>
     );
   }

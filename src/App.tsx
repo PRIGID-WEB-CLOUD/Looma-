@@ -1127,18 +1127,18 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
         onSelectTab={selectWorkspaceTab}
         unreadNotifications={unreadCount + unreadBusinessNotifications}
         onLogoClick={() => setBrandModalOpen(true)}
-        rightSlot={
-          <BusinessSwitcherMenu
-            compact
-            profile={store.profile}
-            onCreateBusiness={() => {
-              setBusinessModalMode('create');
-              setEditingBusinessProfile(null);
-              setBusinessModalOpen(true);
-            }}
-            onOpenBusinessProfile={openBusinessProfileRoute}
-          />
-        }
+        searchQuery={feedSearchQuery}
+        onSearchChange={(query) => {
+          setFeedSearchQuery(query);
+          if (activeTab !== 'feed' && query.trim()) {
+            selectWorkspaceTab('feed');
+          }
+        }}
+        onSearchSubmit={(query) => {
+          if (activeTab !== 'feed' && query.trim()) {
+            selectWorkspaceTab('feed');
+          }
+        }}
       />
 
       <PushToast
@@ -1984,6 +1984,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onBack={() => selectWorkspaceTab('profile')}
                 userVerificationRequest={store.currentUserVerificationRequest}
                 onSubmitVerificationRequest={store.submitVerificationRequest}
+                onCreateBusiness={() => {
+                  setBusinessModalMode('create');
+                  setEditingBusinessProfile(null);
+                  setBusinessModalOpen(true);
+                }}
               />
             </Suspense>
           )}

@@ -70,34 +70,44 @@ export function RequestVerificationModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="verify-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs looma-stage-enter"
+      className="fixed inset-0 z-50 h-[100dvh] w-screen flex flex-col bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden looma-stage-enter"
     >
-      <div className="max-w-lg w-full rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-blue-600 dark:text-blue-400">
-              <Award className="w-5 h-5" aria-hidden="true" />
-            </div>
-            <div>
-              <h2 id="verify-modal-title" className="font-display text-base font-bold">
-                Request Verification Badge
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Submit your reason and 1–2 reference links for admin review.
-              </p>
-            </div>
-          </div>
+      <header className="h-16 px-4 sm:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-slate-950">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={onClose}
             aria-label="Close verification request modal"
-            className="min-h-[38px] min-w-[38px] rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 cursor-pointer transition-colors"
+            className="min-h-[44px] min-w-[44px] px-2.5 flex items-center justify-center gap-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
           >
             <X className="w-5 h-5" aria-hidden="true" />
+            <span className="hidden sm:inline text-xs font-semibold">Back</span>
           </button>
+          <div className="min-w-0">
+            <h2 id="verify-modal-title" className="font-display text-base sm:text-lg font-bold truncate">
+              Request Verification Badge
+            </h2>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              Submit your reason and 1–2 reference links for admin review
+            </p>
+          </div>
         </div>
 
-        {success ? (
+        {!success && (
+          <button
+            type="submit"
+            form="verification-form"
+            disabled={submitting}
+            className="min-h-[44px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-xs sm:text-sm font-semibold cursor-pointer disabled:opacity-60 transition-colors shrink-0"
+          >
+            {submitting ? 'Submitting...' : 'Submit Request'}
+          </button>
+        )}
+      </header>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto w-full p-4 sm:p-6 lg:p-8 space-y-6">
+          {success ? (
           <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 p-5 text-center space-y-3">
             <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
               <ShieldCheck className="w-6 h-6" aria-hidden="true" />
@@ -117,7 +127,7 @@ export function RequestVerificationModal({
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          <form onSubmit={handleSubmit} id="verification-form" noValidate className="space-y-4">
             {error && (
               <div
                 role="alert"
@@ -206,6 +216,7 @@ export function RequestVerificationModal({
             </div>
           </form>
         )}
+        </div>
       </div>
     </div>
   );

@@ -3084,23 +3084,8 @@ export function MarketplaceView({
             </div>
           </div>
 
-          {/* Horizontal Action Buttons Bar: Profile | Inbox | Sell | Categories | Search */}
+          {/* Horizontal Action Buttons Bar: Inbox | Sell | Categories | Search | Orders */}
           <div className="px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
-            <button
-              type="button"
-              onClick={() => {
-                if (!isAuthorized) {
-                  onRequireAuth?.();
-                  return;
-                }
-                navigateTo('account');
-              }}
-              aria-label="Your Marketplace account"
-              className="min-h-[38px] px-3.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center justify-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <User className="w-4 h-4" aria-hidden="true" />
-              <span className="hidden sm:inline">Account</span>
-            </button>
 
             <button
               type="button"

@@ -3,11 +3,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bell,
+  Building2,
   Camera,
   Check,
   Lock,
   LogOut,
   Moon,
+  Plus,
   ShieldCheck,
   Sun,
   Trash2,
@@ -49,6 +51,7 @@ interface ProfileSettingsViewProps {
   onBack: () => void;
   userVerificationRequest?: VerificationRequest | null;
   onSubmitVerificationRequest?: (reason: string, links: string[]) => Promise<{ ok: boolean; error?: string }>;
+  onCreateBusiness?: () => void;
 }
 
 interface SwitchRowProps {
@@ -117,6 +120,7 @@ export function ProfileSettingsView({
   onBack,
   userVerificationRequest,
   onSubmitVerificationRequest,
+  onCreateBusiness,
 }: ProfileSettingsViewProps) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.handle);
@@ -291,6 +295,33 @@ export function ProfileSettingsView({
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
           Manage your public identity, appearance, notifications, and privacy.
         </p>
+      </div>
+
+      {/* Business Profiles & Brands Section */}
+      <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+            <Building2 className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Business Profiles & Brands
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Create and manage separate brand profiles, storefronts, and team roles.
+            </p>
+          </div>
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={onCreateBusiness}
+            className="min-h-[42px] px-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer"
+          >
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            <span>Create Business Profile</span>
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleSave} className="space-y-5">

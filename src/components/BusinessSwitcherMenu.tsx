@@ -282,19 +282,6 @@ export function BusinessSwitcherMenu({
             </div>
           )}
 
-          <div className="border-t border-slate-100 dark:border-slate-800 pt-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onCreateBusiness();
-              }}
-              className="w-full min-h-[38px] px-3 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Create Business Profile</span>
-            </button>
-          </div>
         </div>
       )}
     </div>

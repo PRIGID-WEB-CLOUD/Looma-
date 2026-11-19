@@ -1,17 +1,14 @@
 import { Router, type Response } from "express";
-import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "crypto";
-import { db, usersTable, sessionsTable, adminOtpCodesTable, authRateLimitsTable, appSettingsTable, storesTable, teamMembersTable } from "@workspace/db";
-import { eq, or, and, gt, lt, gte, count, sql, inArray } from "drizzle-orm";
-import { buildTenantUrl } from "@workspace/tenant-routing";
+import { createHash, randomBytes, randomUUID } from "crypto";
+import { db, usersTable, sessionsTable, authRateLimitsTable, appSettingsTable } from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
 import { SESSION_COOKIE, getSessionUser, requireAdmin } from "../middleware/requireAdmin";
 import { validate } from "../middleware/validate";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { sendEmail, buildOtpEmail, buildPasswordResetEmail, buildWelcomeEmail, getStoreUrl, loadBrandingCache, getBranding } from "../services/mailer";
+import { sendEmail, buildWelcomeEmail, getStoreUrl, loadBrandingCache, getBranding } from "../services/mailer";
 import {
   sendWhatsAppNotification,
-  buildWhatsAppOtpMessage,
-  buildWhatsAppPasswordResetMessage,
   buildWhatsAppWelcomeMessage,
 } from "../services/whatsappService";
 import { type TenantRequest } from "../middleware/tenantContext";
@@ -20,28 +17,9 @@ import { verifyFirebaseIdToken } from "../services/firebaseAuth";
 const router = Router();
 const PASSWORD_SCHEMA = z.string().min(8).max(128);
 const emailSchema = z.string().trim().toLowerCase().email();
-const passwordSchema = z.object({ password: PASSWORD_SCHEMA });
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
-
-function authSecret() {
-  const secret = process.env.SESSION_SECRET || "luxe_boutique_default_development_secret_key_123456";
-  return secret;
-}
 
 function digest(value: string) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function otpDigest(email: string, otp: string) {
-  return createHmac("sha256", authSecret()).update(`${email}:${otp}`).digest("hex");
-}
-
-function safeCompare(left: string, right: string) {
-  const a = Buffer.from(left, "hex");
-  const b = Buffer.from(right, "hex");
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 async function isRateLimited(key: string, limit: number, windowMs: number) {
@@ -122,138 +100,16 @@ router.get("/auth/me", async (req: TenantRequest, res: Response) => {
   return res.json(user);
 });
 
-const sellerRegisterSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  email: emailSchema,
-  password: PASSWORD_SCHEMA,
-  storeName: z.string().trim().min(1).max(120),
+router.post("/auth/seller/register", async (_req: any, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone seller registration is disabled. Merchant stores are provisioned automatically through your Looma Business Profile.",
+  });
 });
 
-router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req: any, res: Response) => {
-  const { name, email, password, storeName } = req.body;
-  if (await isRateLimited(`register:ip:${req.ip || "127.0.0.1"}`, 10, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many registration attempts. Try again later." });
-  }
-
-  try {
-    let baseSlug = storeName.trim().toLowerCase()
-      .replace(/[^a-z0-9]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-    if (!baseSlug) baseSlug = "store";
-
-    let slug = baseSlug;
-    let attempts = 0;
-    while (attempts < 10) {
-      const [existingStore] = await db.select().from(storesTable).where(eq(storesTable.slug, slug)).limit(1);
-      if (!existingStore) break;
-      attempts++;
-      slug = `${baseSlug}-${attempts}`;
-    }
-
-    const storeId = `store-${randomBytes(6).toString("hex")}`;
-    const pubKey = `pk_live_${randomBytes(24).toString("hex")}`;
-    const secretKey = `sk_live_${randomBytes(24).toString("hex")}`;
-    const userId = randomUUID();
-
-    await db.insert(storesTable).values({
-      id: storeId,
-      name: storeName,
-      slug: slug,
-      ownerId: userId,
-      planTier: "starter",
-      status: "active",
-      isPublished: false,
-      publishStatus: "DRAFT",
-      publishableKey: pubKey,
-      secretKeyHash: secretKey,
-      currency: "USD",
-    });
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = {
-      id: userId,
-      storeId,
-      name,
-      email,
-      role: "SUPER_ADMIN" as const,
-      passwordHash,
-    };
-    await db.insert(usersTable).values(user);
-
-    await db.insert(teamMembersTable).values({
-      id: randomUUID(),
-      storeId,
-      name,
-      email,
-      role: "Owner",
-      status: "Active",
-    });
-
-    await setSession(res, userId, storeId, { isAdminSession: true });
-    res.cookie("prigid_store_slug", slug, { sameSite: "lax", path: "/", maxAge: 86400 * 1000 });
-
-    await db.insert(appSettingsTable).values([
-      { id: randomUUID(), storeId, key: "store_name", value: storeName, updatedAt: new Date() },
-      { id: randomUUID(), storeId, key: "store_email", value: email, updatedAt: new Date() },
-      { id: randomUUID(), storeId, key: "store_currency", value: "USD", updatedAt: new Date() },
-      { id: randomUUID(), storeId, key: "brand_primary_color", value: "#006c49", updatedAt: new Date() },
-      { id: randomUUID(), storeId, key: "brand_bg_color", value: "#0f172a", updatedAt: new Date() },
-    ]);
-
-    const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
-    const canonicalUrl = buildTenantUrl({ slug, path: "/seller" }, hostHeader);
-
-    const { passwordHash: _, ...safe } = user;
-    return res.status(201).json({ ...safe, storeId, slug, canonicalUrl });
-  } catch (err: any) {
-    console.error("[Seller Register Error]", err);
-    return res.status(500).json({ error: err.message || "Failed to register seller account." });
-  }
-});
-
-const sellerLoginSchema = z.object({ email: emailSchema, password: z.string().min(1).max(128) });
-router.post("/auth/seller/login", validate(sellerLoginSchema), async (req: any, res: Response) => {
-  const { email, password } = req.body;
-  if (await isRateLimited(`login:ip:${req.ip || "127.0.0.1"}`, 15, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many login attempts. Try again later." });
-  }
-
-  try {
-    const [user] = await db.select().from(usersTable).where(and(
-      eq(usersTable.email, email),
-      inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
-    )).limit(1);
-
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-      return res.status(401).json({ error: "Invalid email or password." });
-    }
-    if (!user.storeId) {
-      return res.status(403).json({ error: "Seller account is not bound to a store tenant." });
-    }
-
-    const [store] = await db.select().from(storesTable).where(eq(storesTable.id, user.storeId)).limit(1);
-    if (!store) {
-      return res.status(403).json({ error: "Assigned merchant store could not be verified." });
-    }
-
-    await setSession(res, user.id, user.storeId, {
-      businessProfileId: store.businessProfileId ?? null,
-      isAdminSession: true,
-    });
-
-    if (store.slug) {
-      res.cookie("prigid_store_slug", store.slug, { sameSite: "lax", path: "/", maxAge: 86400 * 1000 });
-    }
-    const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
-    const canonicalUrl = buildTenantUrl({ slug: store.slug, customDomain: store.customDomain, path: "/seller" }, hostHeader);
-
-    const { passwordHash: _, ...safe } = user;
-    return res.json({ ...safe, storeId: user.storeId, slug: store.slug, canonicalUrl });
-  } catch (err: any) {
-    console.error("[Seller Login Error]", err);
-    return res.status(500).json({ error: err.message || "Failed to log in." });
-  }
+router.post("/auth/seller/login", async (_req: any, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone seller password login is disabled. Seller portal access is managed exclusively via Looma Business Profile SSO.",
+  });
 });
 
 router.post("/auth/register", validate(registerSchema), async (req: TenantRequest, res: Response) => {
@@ -367,193 +223,40 @@ router.get("/auth/admin/exists", async (req: TenantRequest, res: Response) => {
   });
 });
 
-router.post("/auth/admin/quick-login", async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  // SECURITY: Quick login is strictly disabled unless explicitly running in local dev with opt-in flag
-  if (process.env.NODE_ENV !== "development" || process.env.ALLOW_DEV_QUICK_LOGIN !== "true") {
-    return res.status(404).json({ error: "Quick login is disabled." });
-  }
-
-  const { email } = req.body || {};
-  let admin;
-  if (email && typeof email === "string") {
-    const cleanEmail = email.toLowerCase().trim();
-    [admin] = await db
-      .select()
-      .from(usersTable)
-      .where(and(eq(usersTable.email, cleanEmail), eq(usersTable.storeId, storeId)))
-      .limit(1);
-  } else {
-    [admin] = await db
-      .select()
-      .from(usersTable)
-      .where(and(
-        eq(usersTable.storeId, storeId),
-        inArray(usersTable.role, ["SUPER_ADMIN", "ADMIN", "PLATFORM_ADMIN"])
-      ))
-      .limit(1);
-  }
-
-  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) {
-    return res.status(403).json({ error: "No admin privileges found for this account in this store." });
-  }
-
-  await setSession(res, admin.id, storeId, { isAdminSession: true });
-  const { passwordHash: _, ...safe } = admin;
-  return res.json(safe);
-});
-
-const bootstrapSchema = z.object({ name: z.string().trim().min(1).max(120), email: emailSchema });
-router.post("/auth/admin/bootstrap", validate(bootstrapSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  if (await isRateLimited(`bootstrap:ip:${req.ip}`, 5, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many bootstrap attempts. Try again later." });
-  }
-  const isProd = process.env.NODE_ENV === "production";
-  const configuredSecret = process.env.ADMIN_BOOTSTRAP_SECRET || (isProd ? undefined : "admin123");
-  const providedSecret = req.get("x-admin-bootstrap-secret");
-  if (!configuredSecret || !providedSecret || !safeCompare(digest(providedSecret), digest(configuredSecret))) {
-    return res.status(403).json({ error: "A valid admin bootstrap secret is required." });
-  }
-  const { name, email } = req.body;
-  const user = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('luxe_boutique_admin_bootstrap_' || ${storeId}))`);
-    const existing = await tx.select({ id: usersTable.id }).from(usersTable)
-      .where(and(
-        eq(usersTable.storeId, storeId),
-        inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
-      )).limit(1);
-    if (existing.length) return null;
-    const [created] = await tx.insert(usersTable).values({
-      id: randomUUID(), storeId, name, email, role: "SUPER_ADMIN" as const, passwordHash: "",
-    }).returning();
-    await tx.insert(teamMembersTable).values({
-      id: randomUUID(), storeId, name, email, role: "Owner", status: "Active",
-    }).onConflictDoNothing();
-    return created;
+router.post("/auth/admin/quick-login", async (_req: TenantRequest, res: Response) => {
+  return res.status(403).json({
+    error: "Quick login is disabled. Seller portal access is managed exclusively via Looma Business Profile SSO.",
   });
-  if (!user) return res.status(410).json({ error: "Admin bootstrap is disabled after initial setup." });
-  await setSession(res, user.id, storeId);
-  const { passwordHash: _, ...safe } = user;
-  return res.status(201).json(safe);
 });
 
-const otpRequestSchema = z.object({ email: emailSchema });
-router.post("/auth/admin/request-otp", validate(otpRequestSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const email = req.body.email as string;
-  if (await isRateLimited(`otp:email:${storeId}:${email}`, 5, 15 * 60 * 1000) || await isRateLimited(`otp:ip:${req.ip}`, 20, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many OTP requests. Try again later." });
-  }
-  const [admin] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) return res.status(404).json({ error: "No admin account found for this email in this store." });
-  const code = String(randomInt(100000, 1000000));
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await db.update(adminOtpCodesTable).set({ used: true })
-    .where(and(eq(adminOtpCodesTable.email, email), eq(adminOtpCodesTable.storeId, storeId), eq(adminOtpCodesTable.used, false)));
-  await db.delete(adminOtpCodesTable).where(and(eq(adminOtpCodesTable.storeId, storeId), lt(adminOtpCodesTable.expiresAt, new Date())));
-  await db.insert(adminOtpCodesTable).values({ id: randomUUID(), storeId, email, code: otpDigest(email, code), expiresAt, used: false, attempts: 0 });
-  try {
-    await loadBrandingCache(storeId);
-    const storeName = getBranding(storeId).store_name;
-    const emailData = buildOtpEmail({ code, storeId, storeName });
-    await sendEmail({
-      to: email,
-      storeId,
-      ...emailData,
-    });
-    // Dispatch WhatsApp OTP alert asynchronously
-    const waText = buildWhatsAppOtpMessage({ code, storeName });
-    sendWhatsAppNotification(email, waText, storeId).catch(() => {});
-    return res.json({ ok: true });
-  } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[DEVELOPMENT ONLY] Admin OTP code for ${email} (Store: ${storeId}): ${code}`);
-      return res.json({ ok: true, devCode: code });
-    }
-    await db.update(adminOtpCodesTable).set({ used: true }).where(and(eq(adminOtpCodesTable.email, email), eq(adminOtpCodesTable.storeId, storeId)));
-    console.error("[Auth] Admin OTP email failed:", error instanceof Error ? error.message : error);
-    return res.status(503).json({ error: "Unable to deliver the sign-in code. Please contact an administrator." });
-  }
+router.post("/auth/admin/bootstrap", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Admin bootstrap is disabled. Store administration is managed through Looma Business Profiles.",
+  });
 });
 
-const otpVerifySchema = z.object({ email: emailSchema, otp: z.string().regex(/^\d{6}$/).optional(), code: z.string().regex(/^\d{6}$/).optional() })
-  .refine((body) => Boolean(body.otp ?? body.code), { message: "otp is required", path: ["otp"] });
-router.post("/auth/admin/verify-otp", validate(otpVerifySchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const email = req.body.email as string;
-  const otp = (req.body.otp ?? req.body.code) as string;
-  if (await isRateLimited(`otp-verify:ip:${req.ip}`, 30, 15 * 60 * 1000)) return res.status(429).json({ error: "Too many verification attempts. Try again later." });
-  const [stored] = await db.select().from(adminOtpCodesTable)
-    .where(and(eq(adminOtpCodesTable.email, email), eq(adminOtpCodesTable.storeId, storeId), eq(adminOtpCodesTable.used, false), gt(adminOtpCodesTable.expiresAt, new Date()))).limit(1);
-  if (!stored || (stored.lockedUntil && stored.lockedUntil > new Date())) return res.status(401).json({ error: "Invalid or expired code." });
-  const valid = safeCompare(stored.code, otpDigest(email, otp));
-  if (!valid) {
-    const attempts = stored.attempts + 1;
-    await db.update(adminOtpCodesTable).set({ attempts, ...(attempts >= 5 ? { used: true, lockedUntil: new Date(Date.now() + 15 * 60 * 1000) } : {}) })
-      .where(eq(adminOtpCodesTable.id, stored.id));
-    return res.status(401).json({ error: attempts >= 5 ? "Too many failed attempts. Request a new code later." : "Invalid or expired code." });
-  }
-  await db.update(adminOtpCodesTable).set({ used: true }).where(eq(adminOtpCodesTable.id, stored.id));
-  const [admin] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) return res.status(404).json({ error: "Admin not found." });
-  await setSession(res, admin.id, storeId, { isAdminSession: true });
-  const { passwordHash: _, ...safe } = admin;
-  return res.json(safe);
+router.post("/auth/admin/request-otp", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone OTP authentication is disabled. Seller portal access is managed exclusively via Looma Business Profile SSO.",
+  });
 });
 
-const forgotSchema = z.object({ email: emailSchema });
-router.post("/auth/forgot-password", validate(forgotSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const email = req.body.email as string;
-  const ok = { ok: true, message: "If that email is registered, a reset link will be sent." };
-  if (await isRateLimited(`reset:email:${storeId}:${email}`, 5, 60 * 60 * 1000) || await isRateLimited(`reset:ip:${req.ip}`, 20, 60 * 60 * 1000)) return res.status(429).json({ error: "Too many reset requests. Try again later." });
-  const [user] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!user) return res.json(ok);
-  const token = randomBytes(32).toString("base64url");
-  const expiry = new Date(Date.now() + 60 * 60 * 1000);
-  await db.update(usersTable).set({ passwordResetToken: digest(token), passwordResetExpiry: expiry }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
-  const baseUrl = await getStoreUrl(storeId).catch(() => "");
-  if (!baseUrl) {
-    await db.update(usersTable).set({ passwordResetToken: null, passwordResetExpiry: null }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
-    return res.status(503).json({ error: "Password reset email is not configured." });
-  }
-  try {
-    await loadBrandingCache(storeId);
-    const storeName = getBranding(storeId).store_name;
-    const resetUrl = `${baseUrl.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
-    const emailData = buildPasswordResetEmail({
-      name: user.name,
-      resetUrl,
-      storeId,
-      storeName,
-    });
-    await sendEmail({
-      to: email,
-      storeId,
-      ...emailData,
-    });
-    // Dispatch WhatsApp Password Reset notification
-    const waText = buildWhatsAppPasswordResetMessage({ recipientName: user.name, resetUrl, storeName });
-    sendWhatsAppNotification(user.email, waText, storeId).catch(() => {});
-  } catch (error) {
-    await db.update(usersTable).set({ passwordResetToken: null, passwordResetExpiry: null }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
-    console.error("[Auth] Password reset email failed:", error instanceof Error ? error.message : error);
-    return res.status(503).json({ error: "Unable to deliver the password reset email. Please try again later." });
-  }
-  return res.json(ok);
+router.post("/auth/admin/verify-otp", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone OTP verification is disabled. Seller portal access is managed exclusively via Looma Business Profile SSO.",
+  });
 });
 
-const resetSchema = z.object({ token: z.string().min(20).max(200), password: PASSWORD_SCHEMA });
-router.post("/auth/reset-password", validate(resetSchema), async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const { token, password } = req.body;
-  const [user] = await db.select().from(usersTable).where(and(eq(usersTable.passwordResetToken, digest(token)), eq(usersTable.storeId, storeId))).limit(1);
-  if (!user) return res.status(400).json({ error: "Invalid or expired reset token." });
-  if (!user.passwordResetExpiry || user.passwordResetExpiry < new Date()) return res.status(400).json({ error: "Reset token expired. Request a new one." });
-  await db.update(usersTable).set({ passwordHash: await bcrypt.hash(password, 10), passwordResetToken: null, passwordResetExpiry: null }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
-  await db.delete(sessionsTable).where(and(eq(sessionsTable.userId, user.id), eq(sessionsTable.storeId, storeId)));
-  return res.json({ ok: true, message: "Password reset successfully." });
+router.post("/auth/forgot-password", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone password reset is disabled. Account authentication is managed via Looma Auth.",
+  });
+});
+
+router.post("/auth/reset-password", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone password reset is disabled. Account authentication is managed via Looma Auth.",
+  });
 });
 
 router.get("/auth/google", async (req: TenantRequest, res: Response) => {
