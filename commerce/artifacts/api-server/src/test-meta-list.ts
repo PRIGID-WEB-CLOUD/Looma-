@@ -1,31 +1,11 @@
 import { db, channelCredentialsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { createDecipheriv, createHash } from "crypto";
-
-function encryptionKey() {
-  const secret = process.env.CREDENTIAL_ENCRYPTION_KEY || "luxe-boutique-default-secret-key-32b";
-  return createHash("sha256").update(secret).digest();
-}
-
-function decryptSecret(value: string) {
-  if (!value.startsWith("enc:v1:")) return value;
-  const [, , ivText, tagText, ciphertextText] = value.split(":");
-  const iv = Buffer.from(ivText, "base64url");
-  const tag = Buffer.from(tagText, "base64url");
-  const ciphertext = Buffer.from(ciphertextText, "base64url");
-  try {
-    const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
-  } catch {
-    return value;
-  }
-}
+import { decryptCredential } from "./services/credentialVault";
 
 async function getChannelCredentials(channel: string): Promise<Record<string, string>> {
   const [row] = await db.select().from(channelCredentialsTable).where(eq(channelCredentialsTable.channel, channel)).limit(1);
   const stored = (row?.data as Record<string, string>) || {};
-  return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, decryptSecret(value as any)]));
+  return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, decryptCredential(value as any)]));
 }
 
 async function run() {

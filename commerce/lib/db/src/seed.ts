@@ -628,29 +628,8 @@ export async function seed() {
     .from(usersTable)
     .where(or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"), eq(usersTable.role, "PLATFORM_ADMIN")))
     .limit(1);
-  if (existing.length === 0) {
-    await db.insert(usersTable).values([
-      {
-        id:           "user-super-admin",
-        storeId:      DEFAULT_STORE_ID,
-        name:         "LUXE Admin",
-        email:        "admin@luxeboutique.com",
-        role:         "SUPER_ADMIN",
-        passwordHash: "",
-      },
-      {
-        id:           "user-platform-admin",
-        storeId:      DEFAULT_STORE_ID,
-        name:         "Prigid Platform Admin",
-        email:        "platform@prigidcommerce.com",
-        role:         "PLATFORM_ADMIN",
-        passwordHash: "",
-      },
-    ]).onConflictDoNothing();
-    console.log("✓ super admin & platform admin users seeded");
-  } else {
-    console.log("✓ admin already exists, skipping");
-  }
+  // Note: Merchant admins are provisioned dynamically via Looma Business Profiles SSO.
+  console.log("✓ seed complete: merchant users are managed via Looma Business Profiles");
 
   if (pool && typeof pool.end === "function" && process.env.DATABASE_URL) {
     await pool.end();

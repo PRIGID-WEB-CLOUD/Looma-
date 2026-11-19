@@ -255,15 +255,10 @@ router.get("/apikeys", async (req: TenantRequest, res: Response) => {
   return res.json(keys.map(safeKey));
 });
 
-router.post("/apikeys", async (req: TenantRequest, res: Response) => {
-  const storeId = req.storeId!;
-  const { name } = req.body as { name?: string };
-  if (!name) return res.status(400).json({ error: "name is required." });
-  const { rawKey, keyPrefix } = makeKey();
-  const [key] = await db.insert(apiKeysTable).values({
-    id: randomUUID(), storeId, name, keyHash: createHash("sha256").update(rawKey).digest("hex"), keyPrefix,
-  }).returning();
-  return res.status(201).json({ ...safeKey(key), rawKey });
+router.post("/apikeys", async (_req: TenantRequest, res: Response) => {
+  return res.status(410).json({
+    error: "Standalone API key minting is disabled. API access is managed exclusively via Looma Business Profile tokens.",
+  });
 });
 
 router.delete("/apikeys/:id", async (req: TenantRequest, res: Response) => {

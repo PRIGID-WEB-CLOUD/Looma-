@@ -3,7 +3,13 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 const PREFIX = "enc:v1:";
 
 function encryptionKey() {
-  const secret = process.env.CREDENTIAL_ENCRYPTION_KEY || process.env.SESSION_SECRET || "luxe_boutique_master_vault_key_2026_default_fallback_secret";
+  const secret = process.env.CREDENTIAL_ENCRYPTION_KEY || process.env.SESSION_SECRET || process.env.COMMERCE_INTERNAL_SSO_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CREDENTIAL_ENCRYPTION_KEY or SESSION_SECRET must be configured in production.");
+    }
+    return createHash("sha256").update("looma_commerce_vault_dev_fallback_seed").digest();
+  }
   return createHash("sha256").update(secret).digest();
 }
 

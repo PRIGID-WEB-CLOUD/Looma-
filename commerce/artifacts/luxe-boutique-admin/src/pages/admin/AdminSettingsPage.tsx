@@ -306,12 +306,10 @@ function ApiKeysPanel() {
               Issue keys for programmatic access to your store API. Revoke any key instantly.
             </p>
           </div>
-          <button
-            onClick={() => { setShowCreate(true); setNewKey(null); setCreateErr(null); }}
-            className="flex items-center gap-2 px-5 py-2.5 bg-black text-white font-[Manrope] font-bold text-xs tracking-widest uppercase hover:bg-[#006c49] transition-all rounded-lg shadow">
-            <MdAdd className="text-sm" />
-            New Key
-          </button>
+          <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#e6f7f1] border border-[#a2e8ce] text-[#006c49] text-xs font-[Manrope] font-bold">
+            <MdShield className="text-base" />
+            <span>Looma Auth Managed</span>
+          </div>
         </div>
 
         {/* Stats */}
@@ -342,14 +340,11 @@ function ApiKeysPanel() {
               <MdKeyOff className="text-2xl text-[#7c839b]" />
             </div>
             <div>
-              <p className="font-serif text-[18px] font-semibold mb-1">No API keys yet</p>
-              <p className="text-sm font-[Manrope] text-[#7c839b]">Create your first key to enable programmatic access.</p>
+              <p className="font-serif text-[18px] font-semibold mb-1">Looma Unified Authentication</p>
+              <p className="text-sm font-[Manrope] text-[#7c839b] max-w-md mx-auto leading-relaxed">
+                Programmatic and client API requests are secured seamlessly via your verified Looma Business Profile tokens and edge proxy. Standalone API key minting has been retired for unified security.
+              </p>
             </div>
-            <button onClick={() => { setShowCreate(true); setNewKey(null); }}
-              className="px-5 py-2.5 bg-black text-white font-[Manrope] font-bold text-xs tracking-widest uppercase hover:bg-[#006c49] transition-all rounded-lg flex items-center gap-2">
-              <MdAdd className="text-sm" />
-              Create First Key
-            </button>
           </div>
         ) : (
           <div>
