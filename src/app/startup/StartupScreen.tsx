@@ -8,7 +8,7 @@ interface StartupScreenProps {
 }
 
 export function StartupScreen({ children }: StartupScreenProps) {
-  const { snapshot, retry, continueOffline } = useInitialization();
+  const { snapshot, retry } = useInitialization();
 
   if (snapshot.isFailed || snapshot.isTimeout) {
     return (
@@ -18,9 +18,6 @@ export function StartupScreen({ children }: StartupScreenProps) {
         retryCount={snapshot.retryCount}
         onRetry={() => {
           void retry();
-        }}
-        onContinueOffline={() => {
-          continueOffline();
         }}
       />
     );

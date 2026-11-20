@@ -73,15 +73,22 @@ function applyThemeToDocument(theme: ThemeMode): void {
 
 async function waitForFirebaseAuthReady(signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) {
-    throw new DOMException('Aborted', 'AbortError');
+    if (auth.currentUser) {
+      return Boolean(auth.currentUser.emailVerified);
+    }
+    return false;
   }
   const authWithReady = auth as typeof auth & {
     authStateReady?: () => Promise<void>;
   };
 
   if (typeof authWithReady.authStateReady === 'function') {
-    await authWithReady.authStateReady();
-    return Boolean(auth.currentUser?.emailVerified);
+    try {
+      await authWithReady.authStateReady();
+      return Boolean(auth.currentUser?.emailVerified);
+    } catch {
+      return Boolean(auth.currentUser?.emailVerified);
+    }
   }
 
   return await new Promise<boolean>((resolve, reject) => {
@@ -90,7 +97,11 @@ async function waitForFirebaseAuthReady(signal: AbortSignal): Promise<boolean> {
       if (done) return;
       done = true;
       unsub();
-      reject(new DOMException('Aborted', 'AbortError'));
+      if (auth.currentUser) {
+        resolve(Boolean(auth.currentUser.emailVerified));
+      } else {
+        resolve(false);
+      }
     };
     signal.addEventListener('abort', onAbort, { once: true });
     const unsub = onAuthStateChanged(

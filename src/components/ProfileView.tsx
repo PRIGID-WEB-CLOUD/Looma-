@@ -171,7 +171,7 @@ export function ProfileView({
                 )}
               </p>
 
-              {(activeBusinessProfile || profile.accountType === 'business') && (
+              {activeBusinessProfile && (
                 <p
                   data-testid="profile-unified-business-meta"
                   className="text-xs font-medium text-blue-700 dark:text-blue-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1"

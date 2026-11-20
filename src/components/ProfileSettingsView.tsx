@@ -158,15 +158,6 @@ export function ProfileSettingsView({
   const [bio, setBio] = useState(profile.bio);
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl);
   const [interests, setInterests] = useState<string[]>(profile.interests);
-  const [businessCategory, setBusinessCategory] = useState(
-    profile.businessCategory || BUSINESS_ACCOUNT_CATEGORIES[0]
-  );
-  const [businessWebsiteUrl, setBusinessWebsiteUrl] = useState(
-    profile.businessWebsiteUrl || ''
-  );
-  const [transitionPanelOpen, setTransitionPanelOpen] = useState(false);
-  const [transitionBusy, setTransitionBusy] = useState(false);
-  const [transitionError, setTransitionError] = useState<string | null>(null);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   const [pushEnabled, setPushEnabled] = useState(privateSettings.pushEnabled);
@@ -196,7 +187,6 @@ export function ProfileSettingsView({
   const syncedUidRef = useRef<string>(profile.uid);
   const isDirtyRef = useRef<boolean>(false);
 
-  const isUnifiedBusiness = profile.accountType === 'business';
   const activeBusinessProfile =
     activeIdentity?.type === 'business'
       ? businesses.find((b) => b.id === activeIdentity.businessProfileId) ||
@@ -344,14 +334,6 @@ export function ProfileSettingsView({
       setBio(profile.bio);
       setAvatarUrl(profile.avatarUrl);
       setInterests(profile.interests);
-      setBusinessCategory(
-        profile.businessCategory || BUSINESS_ACCOUNT_CATEGORIES[0]
-      );
-      setBusinessWebsiteUrl(profile.businessWebsiteUrl || '');
-      if (uidChanged) {
-        setTransitionPanelOpen(false);
-        setTransitionError(null);
-      }
       setPushEnabled(privateSettings.pushEnabled);
       setNotifyLikes(privateSettings.notifyLikes);
       setNotifyComments(privateSettings.notifyComments);
@@ -360,39 +342,6 @@ export function ProfileSettingsView({
       setMessagePrivacy(privateSettings.messagePrivacy);
     }
   }, [profile, privateSettings]);
-
-  const handleActivateBusinessMode = async () => {
-    const bizCheck = validateBusinessAccountDetails(
-      businessCategory,
-      businessWebsiteUrl
-    );
-    if (!bizCheck.valid) {
-      setTransitionError(bizCheck.error || 'Please review your business details.');
-      return;
-    }
-    setTransitionError(null);
-    setError(null);
-    setSavedNotice(null);
-    setTransitionBusy(true);
-    try {
-      await onUpdateProfile({
-        accountType: 'business',
-        businessCategory: businessCategory.trim(),
-        businessWebsiteUrl: businessWebsiteUrl.trim(),
-      });
-      setTransitionPanelOpen(false);
-      isDirtyRef.current = false;
-      setSavedNotice('Profile transitioned to Business mode');
-    } catch (err) {
-      setTransitionError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to transition profile to Business mode.'
-      );
-    } finally {
-      setTransitionBusy(false);
-    }
-  };
 
   const handleAvatarUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -452,18 +401,6 @@ export function ProfileSettingsView({
       return;
     }
 
-    if (isUnifiedBusiness) {
-      const bizCheck = validateBusinessAccountDetails(
-        businessCategory,
-        businessWebsiteUrl
-      );
-      if (!bizCheck.valid) {
-        setError(bizCheck.error || 'Please review your business details.');
-        setSavedNotice(null);
-        return;
-      }
-    }
-
     setError(null);
     setSaving(true);
     try {
@@ -475,13 +412,6 @@ export function ProfileSettingsView({
         bio: bio.trim(),
         avatarUrl,
         interests,
-        ...(isUnifiedBusiness
-          ? {
-              accountType: 'business',
-              businessCategory: businessCategory.trim(),
-              businessWebsiteUrl: businessWebsiteUrl.trim(),
-            }
-          : {}),
       });
       await onUpdatePrivateSettings({
         pushEnabled,
@@ -533,142 +463,7 @@ export function ProfileSettingsView({
         </p>
       </div>
 
-      {/* Unified In-Place Normal <-> Business Profile Transition */}
-      {!isBusinessMode && (
-        <div
-          data-testid="in-place-profile-conversion"
-          className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4"
-        >
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                {isUnifiedBusiness ? (
-                  <Building2 className="w-5 h-5" aria-hidden="true" />
-                ) : (
-                  <User className="w-5 h-5" aria-hidden="true" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-                  {isUnifiedBusiness
-                    ? 'Unified Business Profile'
-                    : 'Unified Personal Profile'}
-                </p>
-                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                  {isUnifiedBusiness
-                    ? 'Business Profile Mode Active'
-                    : 'Transition Normal Profile to Business Profile'}
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
-                  {isUnifiedBusiness
-                    ? `Your single unified account (@${profile.handle}) is displayed as a Business Profile${profile.businessCategory ? ` in ${profile.businessCategory}` : ''}. Your followers, posts, verification badge, and messages stay intact.`
-                    : `Convert your existing @${profile.handle} account into a Business Profile in-place—keeping your followers, posts, verification badge, and messages under one unified identity.`}
-                </p>
-              </div>
-            </div>
 
-            {!isUnifiedBusiness && !transitionPanelOpen && (
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  data-testid="transition-to-business-btn"
-                  onClick={() => {
-                    setTransitionError(null);
-                    setSavedNotice(null);
-                    setTransitionPanelOpen(true);
-                  }}
-                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                >
-                  <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Transition to Business Profile</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {transitionError && (
-            <p
-              role="alert"
-              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-            >
-              {transitionError}
-            </p>
-          )}
-
-          {!isUnifiedBusiness && transitionPanelOpen && (
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="transition-business-category"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Business Category
-                  </label>
-                  <select
-                    id="transition-business-category"
-                    value={businessCategory}
-                    onChange={(e) => setBusinessCategory(e.target.value)}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  >
-                    {BUSINESS_ACCOUNT_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="transition-business-website"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Business Website (Optional)
-                  </label>
-                  <input
-                    id="transition-business-website"
-                    type="url"
-                    value={businessWebsiteUrl}
-                    onChange={(e) => setBusinessWebsiteUrl(e.target.value)}
-                    placeholder="https://studio.example.com"
-                    maxLength={200}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={transitionBusy}
-                  onClick={() => {
-                    setTransitionPanelOpen(false);
-                    setTransitionError(null);
-                  }}
-                  className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  data-testid="confirm-business-transition-btn"
-                  disabled={transitionBusy}
-                  onClick={() => void handleActivateBusinessMode()}
-                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                >
-                  <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>
-                    {transitionBusy
-                      ? 'Transitioning...'
-                      : 'Activate Business Profile'}
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Profile Switcher (Icon-Only) */}
       <div
@@ -1039,7 +834,7 @@ export function ProfileSettingsView({
               01 · Identity
             </p>
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-              {isUnifiedBusiness ? 'Business Profile Details' : 'Normal Profile Details'}
+              Personal Profile Details
             </h2>
           </div>
 
@@ -1133,61 +928,6 @@ export function ProfileSettingsView({
               className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
             />
           </div>
-
-          {isUnifiedBusiness && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-              <div>
-                <label
-                  htmlFor="settings-business-category"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                >
-                  Business Category
-                </label>
-                <select
-                  id="settings-business-category"
-                  value={businessCategory}
-                  onChange={(e) => {
-                    isDirtyRef.current = true;
-                    setBusinessCategory(e.target.value);
-                    setSavedNotice(null);
-                  }}
-                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                >
-                  {BUSINESS_ACCOUNT_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                  {businessCategory &&
-                    !BUSINESS_ACCOUNT_CATEGORIES.includes(businessCategory) && (
-                      <option value={businessCategory}>{businessCategory}</option>
-                    )}
-                </select>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="settings-business-website"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                >
-                  Business Website (Optional)
-                </label>
-                <input
-                  id="settings-business-website"
-                  type="url"
-                  value={businessWebsiteUrl}
-                  onChange={(e) => {
-                    isDirtyRef.current = true;
-                    setBusinessWebsiteUrl(e.target.value);
-                    setSavedNotice(null);
-                  }}
-                  placeholder="https://studio.example.com"
-                  maxLength={200}
-                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                />
-              </div>
-            </div>
-          )}
 
           <div>
             <div className="flex items-center justify-between mb-1.5">

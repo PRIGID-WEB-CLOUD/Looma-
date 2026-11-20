@@ -15,9 +15,9 @@ export interface InitializationConfig {
   firebaseProjectId: string | null;
 }
 
-export const DEFAULT_INITIALIZATION_TIMEOUT_MS = 12_000;
-export const DEFAULT_STEP_TIMEOUT_MS = 5_000;
-export const DEFAULT_PROBE_TIMEOUT_MS = 2_500;
+export const DEFAULT_INITIALIZATION_TIMEOUT_MS = 30_000;
+export const DEFAULT_STEP_TIMEOUT_MS = 20_000;
+export const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 
 const THEME_STORAGE_KEY = 'looma_theme_v1';
 

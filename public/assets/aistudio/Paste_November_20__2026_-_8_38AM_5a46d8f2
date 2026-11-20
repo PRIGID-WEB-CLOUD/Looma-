@@ -1,0 +1,1870 @@
+LOOMA — MASTER ARCHITECTURE TRANSFORMATION & IMPLEMENTATION
+
+Two Independent Platform Experiences Within One Application
+
+Project: Looma
+Repository: https://github.com/PRIGID-WEB-CLOUD/Looma-
+Primary objective: Transform Looma into one unified application containing two genuinely independent platform experiences:
+
+1. NORMAL PLATFORM — Personal social networking.
+2. BUSINESS PLATFORM — Professional social networking, business communication and commerce.
+
+Development approach: Repository-aware, audit-first, phased implementation, backend-enforced security, reversible migrations and comprehensive testing.
+
+---
+
+0. EXECUTIVE PROJECT DIRECTIVE
+
+You are working on Looma, an existing social networking and commerce platform.
+
+Your responsibility is to inspect, architect, correct and implement a complete two-platform architecture within the existing application.
+
+These are NOT two profile types that merely display different names, avatars or badges.
+
+They must function as two distinct application environments with different:
+
+- Interfaces and layouts.
+- Navigation systems.
+- Features and workflows.
+- Identity contexts.
+- Data ownership.
+- Messaging environments.
+- Notifications and activity.
+- Settings.
+- Permissions.
+- Commerce capabilities.
+
+Both platforms belong to one mother account and share carefully selected underlying infrastructure.
+
+The user must be able to switch between the two environments seamlessly, similar to Facebook's multiple-profile switching experience, but with significantly more independent functionality.
+
+Critical distinction: Profile switching is not the same as platform switching.
+
+Changing the active profile must activate the entire corresponding platform experience.
+
+Do not create two unrelated applications. Do not duplicate the entire backend. Build two independent application experiences using shared infrastructure where appropriate.
+
+Repository and implementation context
+
+The initial static repository audit identified the following existing architecture:
+
+- React 19 and TypeScript.
+- Vite frontend.
+- Firebase Authentication.
+- Cloud Firestore.
+- Cloudflare Workers and Hono.
+- Cloudflare R2 media storage.
+- Existing business profile and membership infrastructure.
+- Existing marketplace and commerce functionality.
+- PostgreSQL-based multi-tenant commerce infrastructure.
+- Looma-to-Commerce SSO integration.
+- Existing personal and business notification infrastructure.
+
+Important existing files include:
+
+- "src/App.tsx"
+- "src/contexts/ActiveIdentityContext.tsx"
+- "src/types/social.ts"
+- "src/types/business.ts"
+- "src/services/businessProfiles.ts"
+- "src/components/BusinessSwitcherMenu.tsx"
+- "src/components/BusinessProfilePage.tsx"
+- "src/components/ProfileSettingsView.tsx"
+- "src/components/CreatePostModal.tsx"
+- "src/components/ChatView.tsx"
+- "src/components/FeedView.tsx"
+- "src/hooks/useSocialStore.ts"
+- "src/utils/socialLogic.ts"
+- "firestore.rules"
+- "src/services/calls.ts"
+- "src/services/storage.ts"
+
+These are starting points, not a complete inventory. Inspect the actual current repository before relying on these findings.
+
+Do not assume that the existing audit describes every current implementation detail.
+
+---
+
+PART 1 — CORE ACCOUNT ARCHITECTURE
+
+1. Mother Account
+
+Every Looma user has one mother account rooted in Firebase Authentication.
+
+The authoritative authentication object is the existing Firebase user, such as "store.firebaseUser".
+
+It controls:
+
+- Firebase UID.
+- Email address.
+- Email verification.
+- Authentication providers.
+- Account security.
+- Account recovery.
+- Session management.
+- Profile creation.
+- Profile management.
+- Profile switching.
+- Global account preferences.
+
+Do not create a separate Firebase account when a user creates a Business Profile.
+
+A user can own or manage multiple Business Profiles using the same mother account.
+
+The mother account is the authentication and account-management authority. It does not automatically acquire unrestricted authority over every profile-specific action.
+
+Profile-specific operations must still pass the appropriate authorization checks.
+
+2. Personal Profile
+
+The personal profile is stored at:
+
+"/users/{uid}"
+
+Use the existing "UserProfile" type in "src/types/social.ts".
+
+The personal profile is the human social identity.
+
+It contains personal information such as:
+
+- Immutable personal profile ID, associated with the Firebase UID.
+- Display name.
+- Independent username/handle.
+- Avatar URL.
+- Biography.
+- Location.
+- Interests.
+- Personal followers and following.
+- Personal social connections.
+- Personal privacy settings.
+- Personal posts and activity.
+
+Personal settings must remain personal.
+
+The personal profile must not become a business profile.
+
+3. Business Profile Entity
+
+Business Profiles are separate organizational entities stored at:
+
+"/businessProfiles/{businessProfileId}"
+
+Use the existing "BusinessProfile" type in "src/types/business.ts".
+
+Each Business Profile must have:
+
+- Immutable Business Profile ID.
+- Independent business name.
+- Independent username/slug.
+- Business logo/avatar.
+- Cover image.
+- Biography.
+- Business category.
+- Website.
+- Contact information.
+- Business followers and following.
+- Business-specific settings.
+- Verification status.
+- Commerce linkage.
+- Store ID.
+- Store slug.
+- Business activity.
+
+Business profile handles must be independently reserved in:
+
+"/businessHandles/{slug}"
+
+Normal and Business Profile usernames must not overwrite one another.
+
+Changing a Business Profile name or username must not modify the personal profile.
+
+4. Business Membership Relationship
+
+Use:
+
+"/businessMemberships/{membershipId}"
+
+The relationship must identify:
+
+- "userId"
+- "businessProfileId"
+- "role"
+- "status"
+- Creation timestamp.
+- Relevant membership metadata.
+
+Supported roles:
+
+- OWNER
+- ADMIN
+- EDITOR
+- VIEWER
+
+A mother account can belong to multiple businesses.
+
+A business can have multiple authorized members.
+
+All business operations must verify the user's active membership and permissions.
+
+Do not rely on frontend role checks alone.
+
+5. Eliminate the Incorrect Account-Type Model
+
+The initial audit identified an incorrect architectural approach involving fields such as:
+
+- "accountType: 'personal' | 'business'"
+- "businessCategory"
+- "businessWebsiteUrl"
+
+inside "/users/{uid}".
+
+This conflates an individual human profile with an organizational entity.
+
+Required correction:
+
+- "/users/{uid}" remains the personal profile.
+- "/businessProfiles/{bpId}" remains the business entity.
+- "/businessMemberships/{id}" remains the relationship and authorization mechanism.
+- Deprecate and ignore legacy "accountType: 'business'" for platform identity decisions.
+- Remove the obsolete Activate Seller Store conversion workflow after verifying its dependencies.
+- Preserve any existing business information that needs migration.
+- Do not delete legacy fields until a safe migration and compatibility period have been completed.
+
+Do not create a second competing identity architecture.
+
+Use the existing Business Profile entity as the canonical business identity.
+
+---
+
+PART 2 — TWO DISTINCT PLATFORM EXPERIENCES
+
+PLATFORM A: NORMAL
+
+Normal is the personal social networking environment.
+
+It must preserve the existing personal social networking functionality.
+
+A. Personal Profile
+
+Include:
+
+- Personal display name.
+- Personal @handle.
+- Profile picture.
+- Biography.
+- Followers.
+- Following.
+- Personal posts.
+- Personal media.
+- Saved content.
+- Personal activity.
+- Personal settings.
+
+Do not display business administration cards, business previews or business configuration fields on the personal profile.
+
+B. Personal Feed
+
+Support:
+
+- Text posts.
+- Image posts.
+- Video posts.
+- Stories where supported.
+- Likes and reactions.
+- Comments and replies.
+- Sharing.
+- Reposting where supported.
+- Bookmarks.
+- Personal social content.
+
+Only display content appropriate to the Normal platform's feed rules.
+
+C. Personal Messaging
+
+Maintain an independent personal messaging environment.
+
+Support:
+
+- Personal direct conversations.
+- Friends and contacts.
+- Personal group chats.
+- Media sharing.
+- Personal messaging notifications.
+- Audio and video calls where supported.
+- Personal privacy controls.
+- Existing personal chat history.
+
+Personal conversations must remain separate from Business customer conversations.
+
+Preserve existing WebRTC and Cloudflare Calls functionality where it is currently working.
+
+D. Personal Search
+
+Provide discovery for:
+
+- People.
+- Posts.
+- Videos.
+- Hashtags.
+- Places.
+
+Do not expose business administration tools in Normal.
+
+E. Personal Settings
+
+Personal settings must contain personal functionality only:
+
+- Personal profile information.
+- Personal email/account security access.
+- Personal avatar.
+- Personal biography.
+- Privacy.
+- Theme.
+- Personal notifications.
+- Personal preferences.
+
+Remove:
+
+- Activate Seller Store.
+- Business profile configuration forms.
+- Business storefront management.
+- Business preview banners.
+- Business administration cards.
+
+Do not remove account-level security functions simply because they are accessible from personal settings.
+
+---
+
+PLATFORM B: BUSINESS
+
+Business is a distinct professional social networking and commerce environment.
+
+It must not be treated as a personal profile with a Business label.
+
+A. Business Profile
+
+Include:
+
+- Business name.
+- Independent @handle.
+- Business profile picture/logo.
+- Cover image.
+- Biography.
+- Business category.
+- Website.
+- Contact information.
+- Followers.
+- Following.
+- Business-specific settings.
+- Business verification.
+- Storefront access.
+- Business activity.
+
+B. Automatic Business Username Generation
+
+When creating a Business Profile:
+
+1. Generate an initial username from the business name.
+2. Convert it into a lowercase slug.
+3. Remove unsupported characters.
+4. Normalize whitespace and separators.
+5. Check global availability.
+6. Suggest alternatives when unavailable.
+7. Allow manual editing.
+8. Validate the final username.
+9. Reserve it safely during creation.
+
+Example:
+
+Business name: "Prigid Web Cloud"
+
+Generated handle: "@prigidwebcloud"
+
+The username must be reserved transactionally or through an equivalent race-safe backend process.
+
+Two businesses must never successfully reserve the same handle.
+
+Do not rebuild this functionality blindly. The existing "BusinessProfileModal.tsx" already contains partial automatic slug generation and availability checking. Inspect and extend it.
+
+C. Business Feed
+
+Create an independent professional feed.
+
+Support:
+
+- Business image posts.
+- Business videos.
+- Product posts.
+- Product promotions.
+- Business announcements.
+- Service posts.
+- Product references.
+- Customer discussions.
+- Business engagement.
+
+The active Business Profile determines the author identity.
+
+Remove the unnecessary automatic word "Business" from post-author displays.
+
+Display the actual business name, handle, publication time and relevant post category.
+
+Retain internal business classification and authorization metadata.
+
+D. Business Navigation
+
+Build a dedicated BusinessPlatformLayout.
+
+Its navigation should include:
+
+1. Overview / Dashboard.
+2. Catalog / Products.
+3. Orders.
+4. Customer Inquiries.
+5. Brand Posts.
+6. Team Members.
+7. Store Settings.
+
+Adapt the navigation responsively for Android, iOS and web.
+
+The Business environment must have a professional interface suited to business operations.
+
+Do not simply reuse the personal navigation with different labels.
+
+E. Business Dashboard
+
+Build a real business dashboard connected to existing commerce and social data.
+
+Display relevant information such as:
+
+- Revenue.
+- Order count.
+- Order velocity.
+- Pending orders.
+- Processing orders.
+- Inventory health.
+- Low-stock products.
+- Business followers.
+- Customer inquiries.
+- Recent business activity.
+
+Do not use dummy values to represent completed backend integration.
+
+If a metric is unavailable, display a meaningful empty or unavailable state.
+
+F. Catalog and Inventory
+
+Provide a Business workspace for:
+
+- Product creation.
+- Product editing.
+- Product deletion where authorized.
+- Product images.
+- SKUs.
+- Variants.
+- Option sets.
+- Pricing.
+- Inventory.
+- Stock adjustments.
+- Product availability.
+- Product publishing.
+
+Connect to the existing commerce engine.
+
+Do not create a second product database unnecessarily.
+
+G. Orders and Fulfillment
+
+Provide:
+
+- Order listing.
+- Order details.
+- Customer information.
+- Payment status.
+- Fulfillment status.
+- Order history.
+- Order communication.
+
+Support the existing lifecycle where applicable:
+
+Pending → Processing → Shipped → Delivered.
+
+Preserve cancellation and restocking behavior.
+
+Never bypass existing inventory reduction, cancellation or restock logic.
+
+H. Team Management
+
+Provide:
+
+- Member listing.
+- Invitations.
+- Role assignment.
+- Membership revocation.
+- Membership status.
+- Permission visibility.
+
+Support OWNER, ADMIN, EDITOR and VIEWER.
+
+Use existing membership and invitation services.
+
+Do not create an unrelated team-management system.
+
+I. Store Settings
+
+Provide dedicated business configuration:
+
+- Business identity.
+- Store information.
+- Storefront settings.
+- Operating hours where supported.
+- Contact details.
+- Shipping configuration where supported.
+- Policies.
+- Relevant commerce settings.
+
+Keep these settings outside the personal settings interface.
+
+J. Merchant Link
+
+The Merchant Link icon must appear exclusively on the Business Profile page.
+
+It must not appear on Normal Profiles or indiscriminately throughout the application.
+
+Preserve existing storefront links and commerce relationships.
+
+---
+
+PART 3 — INDEPENDENT BUSINESS MESSAGING
+
+This is one of the highest-priority architectural changes.
+
+1. Current problem
+
+The initial audit identified that marketplace Message Seller functionality can call personal direct messaging functions such as:
+
+- "startDirectThread"
+- "sendChatMessage"
+- "subscribeChatMessages"
+
+The existing personal chat system uses shared chat collections and Firebase UID-based membership.
+
+This causes customer enquiries to enter the seller's personal inbox.
+
+That architecture is incorrect for business customer support.
+
+2. Required Business Inbox
+
+Create a dedicated Business Messaging environment.
+
+It should feel like a separate messaging application inside Looma.
+
+Include:
+
+- Business Inbox.
+- Customer conversations.
+- Customer profiles.
+- Conversation history.
+- Conversation search.
+- Conversation labels.
+- Quick replies.
+- Automated welcome messages.
+- Away messages.
+- Product catalogue sharing.
+- Order conversations.
+- Customer support workflows.
+- Conversation assignment.
+- Team collaboration.
+- Business messaging permissions.
+- Business notifications.
+- Messaging analytics.
+
+Do not merely add business options to the existing personal ChatView.
+
+3. Business Conversation Ownership
+
+Every business conversation must belong to a Business Profile ID.
+
+Use an explicit schema equivalent to:
+
+"/businessChats/{chatId}"
+
+or a carefully designed compatible extension of the existing chat architecture.
+
+Required fields should include:
+
+- "scope: 'business'"
+- "businessProfileId"
+- "customerId"
+- "customerName" where appropriate.
+- "customerAvatar" where appropriate.
+- "participantIds"
+- "assignedTo" where applicable.
+- "createdAt"
+- "updatedAt"
+- "lastMessage"
+- "status"
+- "productContext" where applicable.
+- "orderContext" where applicable.
+
+Messages must be stored under the appropriate business conversation relationship.
+
+A customer may have:
+
+- A personal conversation with an individual.
+- A separate business conversation with that individual's company.
+
+These conversations must never be merged simply because the same Firebase UID is involved.
+
+4. Marketplace Message Seller
+
+Change the marketplace Message Seller workflow.
+
+It must:
+
+1. Resolve the seller's Business Profile ID.
+2. Create or retrieve a business-scoped conversation.
+3. Attach product context where relevant.
+4. Open the Business Inquiry workflow.
+5. Avoid creating a personal direct thread.
+
+The same applies to Business Profile contact actions.
+
+5. Team Access
+
+Any active member with an authorized role must be able to access business inquiries according to the permission matrix.
+
+At minimum:
+
+- OWNER: Full business messaging control.
+- ADMIN: Read and respond; manage permitted workflows.
+- EDITOR: Read and respond.
+- VIEWER: Read-only access where permitted.
+
+Implement granular authorization if needed for assignments, automation and settings.
+
+Firestore security rules and backend APIs must validate actual membership and permissions.
+
+Never trust a role value supplied by the frontend.
+
+The business owner must not have to share personal login credentials with employees.
+
+Business employees must never gain access to the owner's personal messages.
+
+6. Migration
+
+Do not blindly convert every existing personal chat into a business conversation.
+
+Inspect existing chat documents and their origins.
+
+Identify marketplace-generated conversations.
+
+Prepare a safe migration strategy for identifiable business enquiries.
+
+Preserve existing personal conversations.
+
+Where ownership is ambiguous, retain the original record and report the issue instead of guessing.
+
+---
+
+PART 4 — GLOBAL PLATFORM SWITCHING
+
+1. Platform Context
+
+Create or extend a centralized platform context.
+
+It should expose:
+
+- "platformMode: 'normal' | 'business'"
+- "activeProfileId"
+- "activeBusinessProfile"
+- "activeMembershipRole"
+- "activeMembership"
+- "switchToNormal()"
+- "switchToBusiness(businessProfileId)"
+- "switchProfile(profileId)"
+- Loading and transition state.
+- Permission state.
+
+Adapt the existing "ActiveIdentityContext.tsx" rather than introducing competing contexts.
+
+The platform context must be the single source of truth for active platform identity.
+
+2. Independent Application Shells
+
+The top-level application must support two distinct shells.
+
+NormalPlatformLayout
+
+Navigation:
+
+- Feed.
+- Marketplace.
+- Messages.
+- Activity.
+- Profile.
+
+The marketplace remains a buyer-facing experience in Normal.
+
+The personal shell must use personal messaging and personal activity.
+
+BusinessPlatformLayout
+
+Navigation:
+
+- Dashboard.
+- Catalog.
+- Orders.
+- Inquiries.
+- Brand Posts.
+- Team.
+- Store Settings.
+
+The business shell must use business messaging, business activity and business operational data.
+
+Both shells may reuse shared UI primitives, media components and infrastructure services.
+
+They must not reuse the same application navigation and merely rename its tabs.
+
+3. Facebook-Style Switcher
+
+Place a clean profile switcher in the top header and appropriate profile interface locations.
+
+Display profile icons/avatars and selectable identities.
+
+Do not use long profile names as the main switcher identifier.
+
+The switcher must support:
+
+- Mother Account's Normal Profile.
+- Every accessible Business Profile.
+- Business membership role.
+- Active profile indication.
+- Loading state.
+- Error handling.
+
+Only show Business Profiles the authenticated user is authorized to access.
+
+Switching back to Normal must restore the Normal platform.
+
+4. Orbit Synchronization Loading
+
+Whenever switching begins, immediately display a premium Looma synchronization animation.
+
+Visual requirements:
+
+- Smooth rotating orbital rings.
+- Central synchronization indicator.
+- Premium appearance.
+- Looma design system.
+- Responsive rendering.
+- No distracting full-page reload.
+
+Technical requirements:
+
+- Immediately block old-profile content from appearing under the new identity.
+- Resolve the destination profile.
+- Resolve membership and permissions.
+- Load destination-specific navigation and essential data.
+- Maintain independent caches.
+- Prevent stale asynchronous requests.
+- Handle rapid repeated switching.
+- Cancel or ignore stale requests.
+- Recover from network errors.
+- Remove the animation only when the destination environment is ready.
+
+Do not reload the entire application unnecessarily.
+
+Do not claim switching succeeded before the destination identity and authorization are resolved.
+
+5. Cache and State Isolation
+
+Use separate cache namespaces for Normal and each Business Profile.
+
+For example, conceptually:
+
+- "normal:{uid}:feed"
+- "normal:{uid}:messages"
+- "business:{bpId}:feed"
+- "business:{bpId}:inquiries"
+- "business:{bpId}:dashboard"
+
+Adapt this to the existing cache architecture.
+
+Do not allow data from one Business Profile to appear in another.
+
+Do not allow personal conversations, notifications or settings to leak into the Business environment.
+
+---
+
+PART 5 — IDENTITY, AVATAR AND HISTORICAL CONTENT INTEGRITY
+
+1. Immutable Identity Relationships
+
+Every post and profile-owned record must reference an immutable profile identifier.
+
+Use an explicit ownership relationship equivalent to:
+
+- "authorProfileId"
+- "authorProfileType"
+- "actorUid" where needed for attribution and authorization.
+
+For existing business posts, inspect and preserve fields such as:
+
+- "authorId"
+- "authorType"
+- "businessProfileId"
+- "actorUid"
+
+Do not rename or remove existing fields without a compatibility migration.
+
+Mutable names and usernames must never be the primary ownership relationship.
+
+2. Authoritative Profile Data
+
+The authoritative identity record must determine the current:
+
+- Display name.
+- Handle.
+- Avatar.
+- Profile type.
+- Profile URL.
+
+Historical posts should resolve the current profile identity using the immutable profile ID.
+
+Do not depend exclusively on old denormalized "authorName", "authorHandle" or "authorAvatar" fields.
+
+Avoid unnecessary N+1 database requests. Use an appropriate profile cache, batch resolver or subscription strategy.
+
+3. Avatar Synchronization
+
+When a Normal Profile avatar changes, update all relevant personal references.
+
+When a Business Profile avatar changes, update all relevant business references.
+
+Include:
+
+- Profile page.
+- Profile switcher.
+- Posts.
+- Comments.
+- Replies.
+- Messaging identity.
+- Notifications.
+- Search results.
+- Followers and following.
+- Profile cards.
+
+Do not update another profile's avatar accidentally.
+
+Invalidate the correct cache entries.
+
+Avoid destructive rewriting of historical content simply to update a displayed avatar.
+
+4. Historical Post Preservation
+
+Changing a profile's:
+
+- Username.
+- Business name.
+- Display name.
+- Profile picture.
+
+Must not delete, recreate or orphan historical posts.
+
+Preserve:
+
+- Post ID.
+- Author profile ID.
+- Content.
+- Media.
+- Comments.
+- Replies.
+- Likes.
+- Shares.
+- Reactions.
+- Product relationships.
+- Analytics.
+- Existing URLs where possible.
+
+The existing audit identified a specific Business Profile issue:
+
+"updateBusinessProfile()" may delete an old business handle record when the slug changes.
+
+Historical posts can retain the old handle and subsequently lose their original route.
+
+Correct this using a safe old-handle redirect or alias strategy.
+
+Preserve old URLs where possible.
+
+Do not reuse a previous handle in a way that redirects old content to the wrong business.
+
+---
+
+PART 6 — POST CREATION
+
+Remove the manual Business option from the post creation page's Post As selector.
+
+The active platform identity must determine the publishing identity.
+
+Normal active:
+
+- Publish as the Normal Profile.
+
+Business active:
+
+- Publish as the active Business Profile.
+
+Automatically resolve:
+
+- Profile ID.
+- Profile type.
+- Display name.
+- Handle.
+- Avatar.
+- Authorized publishing permissions.
+
+Never allow the frontend to select an arbitrary Business Profile ID and publish without server-side membership validation.
+
+Preserve existing:
+
+- Text publishing.
+- Image uploads.
+- Video uploads.
+- Media editing.
+- Product attachments.
+- Post visibility.
+- Engagement.
+- Existing media storage.
+
+Business publishing must use the active Business Profile and the authorized membership.
+
+If the user switches identity during an unfinished post, prevent accidental publication under the wrong profile.
+
+Preserve draft content where possible.
+
+---
+
+PART 7 — ONE POST PER SCREEN
+
+Redesign the main feed for a one-post-per-screen experience.
+
+Requirements:
+
+- Viewport-sized feed items.
+- Vertical scrolling.
+- Scroll snapping.
+- One settled post per viewport.
+- Smooth transitions.
+- Next-post preloading.
+- Image posts with appropriate proportions.
+- Immersive video posts.
+- Automatic video playback when visible.
+- Pause videos when off-screen.
+- Readable text posts.
+- Commerce posts with accessible product information.
+- Likes.
+- Comments.
+- Sharing.
+- Bookmarks.
+
+Support Android, iOS and web.
+
+Normal and Business must have independently scoped feeds.
+
+Do not break existing commerce interactions.
+
+Inspect the current "FeedView.tsx" implementation before redesigning it.
+
+Preserve accessibility, reduced-motion preferences and mobile performance.
+
+---
+
+PART 8 — DEDICATED COMMENT EXPERIENCE
+
+Replace restrictive comment pop-ups with a dedicated full-screen comment page.
+
+When a user taps a comment icon or comment count, open a dedicated comment route/page.
+
+Display:
+
+- Original post context.
+- Post author.
+- Original post media.
+- Complete comment thread.
+- Nested replies.
+- Persistent comment composer.
+
+Implement:
+
+- Create comments.
+- Reply to comments.
+- Reply directly to commenters.
+- Nested replies.
+- Like and unlike comments.
+- Mentions.
+- Edit and delete authorized comments.
+- Sorting.
+- Pagination.
+- Infinite scrolling.
+- Real-time updates.
+- Reply notifications.
+- Mention notifications.
+- Reporting.
+- Moderation.
+
+Comment Data Model
+
+Every comment must have:
+
+- Immutable comment ID.
+- Post ID.
+- "authorProfileId".
+- "authorProfileType" where applicable.
+- Optional "parentCommentId".
+- Content.
+- Creation timestamp.
+- Updated timestamp.
+- Relevant engagement metadata.
+
+The relationship must support nested replies.
+
+Do not create a disconnected second comment system.
+
+Preserve existing comment history.
+
+The initial audit identified that the current "PostComment" model lacks "parentCommentId".
+
+It also identified restrictions in the existing Firestore comment update rules.
+
+Inspect and correct the data model and rules together.
+
+Do not permit arbitrary comment editing or deletion.
+
+Commerce Comment Integration
+
+Support:
+
+- Business Profile replies.
+- Customer enquiries.
+- Product references.
+- Seller responses.
+- Business moderation.
+
+Business replies must use authorized Business Profile identity.
+
+---
+
+PART 9 — ANNOUNCEMENT SYSTEM
+
+Eliminate automatic announcement pop-ups.
+
+Announcements must remain accessible through the existing Notifications page.
+
+Remove the underlying automatic display behavior, not merely its CSS visibility.
+
+Remove:
+
+- Automatic announcement modals.
+- Announcement overlays.
+- Duplicate announcement banners.
+- Automatic announcement pop-ups during login.
+- Automatic announcement pop-ups during navigation.
+- Announcement pop-ups during profile switching.
+
+Preserve:
+
+- Announcement records.
+- Read/unread status.
+- Announcement history.
+- Notifications page.
+- Essential security alerts.
+- Transaction confirmations.
+- Payment feedback.
+- Operational notifications.
+
+Inspect the existing "visibleAnnouncements.map()" rendering in "App.tsx" and trace its triggering behavior.
+
+Do not delete the notification infrastructure.
+
+---
+
+PART 10 — DEDICATED SEARCH ARCHITECTURE
+
+Create a complete Search environment.
+
+Search must be a dedicated application page, not merely a search pop-up.
+
+Main Search Page
+
+Include:
+
+- Search input.
+- Recent searches.
+- Trending searches.
+- Live suggestions.
+- Recommended content.
+- Discovery categories.
+
+Dedicated Result Categories
+
+Implement:
+
+1. All.
+2. People.
+3. Businesses.
+4. Posts.
+5. Videos.
+6. Products.
+7. Hashtags.
+8. Places.
+
+Each category must have an appropriate results interface.
+
+People Search
+
+Display:
+
+- Profile picture.
+- Display name.
+- Independent handle.
+- Follow actions.
+
+Business Search
+
+Display:
+
+- Business name.
+- Business handle.
+- Profile picture.
+- Description.
+- Business Profile link.
+- Relevant storefront access.
+
+Post Search
+
+Display relevant image, text and video posts.
+
+Video Search
+
+Provide a dedicated video discovery interface.
+
+Product Search
+
+Connect to the existing commerce catalogue.
+
+Hashtag Search
+
+Display hashtag pages and related content.
+
+Places Search
+
+Support location-based discovery using existing location infrastructure where available.
+
+Search Functionality
+
+Implement:
+
+- Search history.
+- Clear search history.
+- Typo-tolerant matching where supported.
+- Filters.
+- Sorting.
+- Pagination.
+- Infinite scrolling.
+- Loading states.
+- Empty states.
+- Error recovery.
+- Shareable search URLs.
+
+Support independent Normal and Business handles.
+
+Search results must resolve to immutable profile IDs.
+
+Inspect existing search infrastructure before introducing a new search engine or service.
+
+---
+
+PART 11 — BUSINESS VERIFICATION
+
+Create a verification application system associated with the individual Business Profile ID.
+
+Include:
+
+- Request Verification.
+- Business information submission.
+- Supporting document uploads.
+- Verification request history.
+- Pending review.
+- Under review.
+- Verified.
+- Rejected.
+- More information required.
+- Administrative approval.
+- Administrative rejection.
+- Resubmission.
+
+Suggested record fields:
+
+- "businessProfileId"
+- "submittedByUid"
+- "status"
+- "submittedAt"
+- "reviewedAt"
+- "reviewedBy"
+- "documents"
+- "reviewNotes"
+- "updatedAt"
+
+Use appropriate secure storage for verification documents.
+
+Do not expose private documents publicly.
+
+Only authorized administrators may approve or reject applications.
+
+Never display a verification badge merely because a request was submitted.
+
+The initial audit found that the existing verification workflow is primarily UID-based.
+
+Extend the existing verification administration workflow to support Business Profile IDs.
+
+Do not replace a working administration system unnecessarily.
+
+---
+
+PART 12 — STARTUP AND INITIALIZATION RESILIENCE
+
+The initial audit identified an initialization timeout issue.
+
+Inspect:
+
+"src/app/initialization/initialization-config.ts"
+
+The existing configuration includes:
+
+"DEFAULT_STEP_TIMEOUT_MS = 5_000"
+
+This may cause Firebase session restoration to fail during ordinary network delays.
+
+Inspect the complete initialization sequence before changing it.
+
+Required behavior:
+
+- Do not abort legitimate Firebase session restoration merely because five seconds have elapsed.
+- Use resilient retry and timeout handling.
+- Distinguish transient network failure from authentication failure.
+- Avoid duplicate initialization.
+- Avoid race conditions.
+- Provide useful loading and recovery states.
+- Preserve security checks.
+- Avoid endless loading without feedback.
+
+Remove the "Continue Offline" button and the obsolete offline continuation path from "InitializationError.tsx".
+
+Do not falsely treat an unauthenticated or unverified session as authenticated.
+
+Do not bypass authentication or authorization to make startup appear successful.
+
+The application must recover gracefully from transient network interruptions.
+
+---
+
+PART 13 — EXISTING COMMERCE INFRASTRUCTURE
+
+Preserve Looma's existing commerce architecture.
+
+The initial repository audit identified:
+
+- PostgreSQL multi-tenant commerce database under the existing commerce implementation.
+- Tenant isolation using "X-Store-Id".
+- Product catalogue.
+- SKUs.
+- Variants.
+- Option sets.
+- Inventory.
+- Pricing.
+- Taxes.
+- Shipping rates.
+- Order lifecycle.
+- Inventory reduction during checkout.
+- Restocking on cancellation.
+- Encrypted payment gateway credentials.
+- Paystack integration.
+- Flutterwave integration.
+- Stripe integration where configured.
+- PayPal integration where configured.
+- Looma Firebase-to-Commerce SSO.
+- Existing storefront and marketplace functionality.
+
+Inspect the actual implementation and confirm every item before depending on it.
+
+Preserve the existing SSO endpoint:
+
+"/api/commerce/sso/authorize"
+
+Do not create standalone merchant passwords if the existing SSO architecture is designed to avoid them.
+
+Do not weaken tenant isolation.
+
+Do not alter payment credential encryption.
+
+Do not replace existing payment integrations with dummy implementations.
+
+Do not break:
+
+- Public "/marketplace" route.
+- "/marketplace/product/:id".
+- "/business/:slug".
+- Existing storefront links.
+- Shopping cart.
+- Checkout.
+- Payment processing.
+- Inventory operations.
+- Order lifecycle.
+
+Connect the Business Platform to the existing commerce engine through its existing authenticated APIs and tenant relationships.
+
+The Business Profile's "storeId" must resolve to the correct PostgreSQL tenant.
+
+Verify authorization on every operation.
+
+---
+
+PART 14 — RECOMMENDED APPLICATION ARCHITECTURE
+
+Adapt the actual repository structure rather than blindly creating duplicate directories.
+
+The logical target is:
+
+LOOMA
+|
+|-- SHARED CORE
+|   |-- Authentication
+|   |-- Mother Account
+|   |-- Profile Management
+|   |-- Platform Switching
+|   |-- Permissions
+|   |-- Media Storage
+|   |-- Security
+|   |-- Notifications Infrastructure
+|   |-- Search Infrastructure
+|   |-- Realtime Services
+|   |-- Shared UI Primitives
+|
+|-- NORMAL PLATFORM
+|   |-- Personal Profile
+|   |-- Personal Feed
+|   |-- Personal Messaging
+|   |-- Personal Comments
+|   |-- Personal Activity
+|   |-- Personal Search
+|   |-- Personal Settings
+|
+|-- BUSINESS PLATFORM
+|   |-- Business Profile
+|   |-- Business Feed
+|   |-- Business Messaging
+|   |-- Customer Management
+|   |-- Commerce
+|   |-- Catalog
+|   |-- Orders
+|   |-- Business Verification
+|   |-- Team Management
+|   |-- Business Search
+|   |-- Business Activity
+|   |-- Store Settings
+|
+|-- EXISTING COMMERCE ENGINE
+|-- PostgreSQL
+|-- Tenant Management
+|-- Products
+|-- Inventory
+|-- Orders
+|-- Payments
+|-- Storefront
+|-- SSO
+
+Shared infrastructure is allowed.
+
+Shared application identity, navigation and data ownership are not automatically appropriate.
+
+---
+
+PART 15 — STRICT DEVELOPMENT RULES
+
+These rules are mandatory.
+
+1. Inspect the actual repository before editing.
+2. Read existing database schemas and migrations.
+3. Read Firestore security rules.
+4. Trace affected components, services, hooks and APIs.
+5. Identify components incorrectly mixing Normal and Business functionality.
+6. Identify existing functionality that already works.
+7. Preserve correct implementations.
+8. Do not create superficial UI-only fixes.
+9. Do not duplicate existing services unnecessarily.
+10. Do not delete users, profiles, posts, messages or relationships.
+11. Do not overwrite working functionality.
+12. Do not use dummy data to simulate completed backend functionality.
+13. Enforce authorization on the server.
+14. Preserve backward compatibility wherever possible.
+15. Use safe, reversible database migrations.
+16. Make the application mobile-first and responsive.
+17. Test both environments independently.
+18. Test profile switching.
+19. Test data isolation.
+20. Test existing commerce functionality.
+21. Test historical content after identity changes.
+22. Preserve existing public routes.
+23. Preserve existing media attachments.
+24. Preserve existing account authentication.
+25. Never expose personal data to business team members.
+26. Never expose one business's data to another business.
+27. Never claim a feature is complete without evidence.
+
+If requirements conflict with existing architecture, identify the conflict and propose a safe migration before destructive changes.
+
+Do not silently make architectural decisions that risk existing user data.
+
+---
+
+PART 16 — PHASED IMPLEMENTATION PLAN
+
+Implement in controlled phases.
+
+Do not attempt to implement every feature in one uncontrolled operation.
+
+PHASE 0 — FINAL REPOSITORY AND DEPENDENCY AUDIT
+
+Before making changes:
+
+- Inspect the latest main branch.
+- Confirm the current commit.
+- Inspect package scripts.
+- Inspect the full frontend structure.
+- Inspect authentication and session restoration.
+- Inspect profile types and services.
+- Inspect "ActiveIdentityContext".
+- Inspect all switcher components.
+- Inspect "App.tsx".
+- Inspect personal and business navigation.
+- Inspect all feed components.
+- Inspect post creation and publishing.
+- Inspect post ownership and author resolution.
+- Inspect comment models and rules.
+- Inspect messaging services and collections.
+- Inspect business membership services.
+- Inspect verification functionality.
+- Inspect notifications.
+- Inspect search.
+- Inspect commerce APIs.
+- Inspect PostgreSQL schemas and migrations.
+- Inspect Cloudflare Workers.
+- Inspect R2.
+- Inspect administrative workflows.
+- Inspect available tests.
+
+Produce a dependency map.
+
+Identify:
+
+- What exists and works.
+- What exists but is incomplete.
+- What is incorrectly shared.
+- What is missing.
+- What must be migrated.
+- What is dangerous to change.
+
+Do not start destructive implementation until this audit is complete.
+
+PHASE 1 — STARTUP RESILIENCE AND IDENTITY FOUNDATION
+
+Implement:
+
+- Resilient Firebase session restoration.
+- Removal of the Continue Offline pathway.
+- Canonical Mother Account model.
+- Canonical Personal Profile model.
+- Canonical Business Profile model.
+- Canonical membership relationships.
+- Removal of business conversion behavior from personal settings.
+- Safe treatment of legacy "accountType" fields.
+- Centralized platform context.
+- Server-side permission resolution.
+
+Acceptance:
+
+- Existing accounts still authenticate.
+- Existing personal profiles still load.
+- Existing Business Profiles remain accessible.
+- No data is deleted.
+- Personal and Business identity fields remain independent.
+
+PHASE 2 — COMPLETE PLATFORM SHELL SEPARATION
+
+Implement:
+
+- "NormalPlatformLayout".
+- "BusinessPlatformLayout".
+- Independent navigation.
+- Independent page routing/state.
+- Facebook-style profile switcher.
+- Orbit synchronization loader.
+- Isolated profile state.
+- Independent platform cache namespaces.
+- Correct loading and error handling.
+
+Acceptance:
+
+- Switching to Business changes the entire application environment.
+- Switching to Normal restores the personal environment.
+- No stale content appears.
+- Rapid switching does not produce race conditions.
+- Unauthorized businesses cannot be activated.
+- The application does not require unnecessary full-page reloads.
+
+PHASE 3 — IDENTITY AND CONTENT INTEGRITY
+
+Implement:
+
+- Immutable profile ownership relationships.
+- Correct author resolution.
+- Profile avatar synchronization.
+- Historical post identity resolution.
+- Business handle aliases or redirects.
+- Safe post publishing under the active identity.
+- Removal of the manual Post As Business selector.
+
+Acceptance:
+
+- Changing a personal avatar does not change a business avatar.
+- Changing a business name does not change the personal name.
+- Historical posts remain intact.
+- Old business URLs continue working where possible.
+- Publishing always uses the authorized active profile.
+
+PHASE 4 — BUSINESS MESSAGING
+
+Implement:
+
+- Business-scoped inquiry threads.
+- Business conversation storage.
+- Business Inbox UI.
+- Marketplace Message Seller integration.
+- Product context.
+- Customer context.
+- Team access.
+- Conversation assignment.
+- Business messaging notifications.
+- Server-side and Firestore authorization.
+
+Acceptance:
+
+- Personal messages never appear in Business Inbox.
+- Business inquiries never appear in personal DMs.
+- Authorized employees can respond.
+- Viewers cannot perform unauthorized actions.
+- The same customer can have separate personal and business conversations.
+- Existing personal chat history remains intact.
+
+PHASE 5 — BUSINESS WORKSPACES AND COMMERCE
+
+Implement:
+
+- Business Dashboard.
+- Catalog and Inventory.
+- Orders and Fulfillment.
+- Team Management.
+- Store Settings.
+- Business activity.
+- Commerce API connections.
+
+Acceptance:
+
+- Business workspace data resolves to the correct store.
+- Tenant isolation remains intact.
+- Product changes reach the correct commerce backend.
+- Order operations preserve inventory logic.
+- Payment functionality remains operational.
+- No dummy metrics are represented as real data.
+
+PHASE 6 — BUSINESS VERIFICATION
+
+Implement:
+
+- Business verification application.
+- Secure document uploads.
+- Request history.
+- Review statuses.
+- Administrative review.
+- Approval/rejection.
+- Resubmission.
+- Verified badge logic.
+
+Acceptance:
+
+- Verification belongs to a Business Profile ID.
+- Submitting a request does not automatically verify a business.
+- Only authorized administrators can approve.
+- Private documents remain protected.
+
+PHASE 7 — FEED, COMMENTS AND SEARCH
+
+Implement:
+
+- One-post-per-screen feeds.
+- Independent Normal and Business feeds.
+- Full-screen comment page.
+- Hierarchical replies.
+- Comment moderation.
+- Real-time comment updates.
+- Dedicated Search page.
+- All search categories.
+- Search history and filters.
+- Product catalogue search integration.
+
+Acceptance:
+
+- One post settles per viewport.
+- Videos pause when no longer visible.
+- Nested replies work.
+- Existing comment history remains intact.
+- Search results open the correct immutable profile or content ID.
+- Normal and Business search results respect their respective permissions.
+
+PHASE 8 — ANNOUNCEMENTS, SETTINGS AND POLISH
+
+Implement:
+
+- Removal of automatic announcement presentation.
+- Preservation of Notifications page.
+- Strictly personal settings.
+- Dedicated Business settings.
+- Icon-only profile switching where appropriate.
+- Responsive layouts.
+- Loading states.
+- Empty states.
+- Error recovery.
+- Accessibility improvements.
+- Performance optimization.
+
+Acceptance:
+
+- No automatic announcement pop-ups remain.
+- Notifications still work.
+- Personal settings contain no business administration.
+- Business settings contain business operational controls.
+
+PHASE 9 — FULL REGRESSION AND SECURITY TESTING
+
+Run:
+
+- TypeScript compilation.
+- ESLint.
+- Existing unit tests.
+- Existing integration tests.
+- Build.
+- Relevant end-to-end tests.
+- Firestore rules tests.
+- API authorization tests.
+- Commerce regression tests.
+
+If scripts differ from expectations, inspect "package.json" and use the actual scripts.
+
+Do not report tests as passed unless they were actually executed.
+
+---
+
+PART 17 — REQUIRED TEST SCENARIOS
+
+At minimum, test the following.
+
+Account and Identity
+
+1. A new user creates a Normal Profile.
+2. The same user creates a Business Profile.
+3. The same user creates a second Business Profile.
+4. The Normal handle is independent of both business handles.
+5. Business handle uniqueness is enforced.
+6. An unauthorized user cannot activate another user's business.
+
+Platform Switching
+
+1. Normal to Business.
+2. Business to Normal.
+3. Business A to Business B.
+4. Rapid repeated switching.
+5. Switching during a network interruption.
+6. Switching while data is still loading.
+7. Switching while a post draft is open.
+8. Restoring the last valid platform after refresh.
+
+Data Isolation
+
+1. Personal feed does not display private Business data.
+2. Business feed resolves the correct Business identity.
+3. Personal messages remain personal.
+4. Business inquiries remain business-scoped.
+5. Business A cannot access Business B's private records.
+6. Business team members cannot access the owner's personal messages.
+7. Personal settings do not modify Business settings.
+
+Historical Content
+
+1. Change a personal display name.
+2. Change a personal handle.
+3. Change a personal avatar.
+4. Change a business name.
+5. Change a business handle.
+6. Change a business logo.
+7. Verify historical posts and URLs remain accessible.
+8. Verify comments, likes, shares and media remain intact.
+
+Messaging
+
+1. Customer contacts a business from a product page.
+2. Customer contacts a business from its profile.
+3. Business owner responds.
+4. Authorized admin responds.
+5. Authorized editor responds.
+6. Viewer cannot reply if the permission matrix is read-only.
+7. Same customer has separate personal and business chats.
+
+Commerce
+
+1. Create a product.
+2. Edit a product.
+3. Update inventory.
+4. Complete checkout.
+5. Verify inventory deduction.
+6. Update order status.
+7. Cancel an order.
+8. Verify inventory restocking.
+9. Verify the correct store tenant is used.
+10. Verify payment and SSO behavior.
+
+Search and Comments
+
+1. Search for a person.
+2. Search for a business.
+3. Search for a product.
+4. Search for a video.
+5. Search for a hashtag.
+6. Open a nested comment thread.
+7. Reply to a comment.
+8. Like and unlike a comment.
+9. Verify notifications.
+10. Verify moderation permissions.
+
+---
+
+PART 18 — IMPLEMENTATION REPORTING
+
+After every phase, provide a concise but evidence-based report.
+
+Include:
+
+A. Completed Work
+
+- Functionality implemented.
+- Backend changes.
+- Frontend changes.
+- Database changes.
+- Authorization changes.
+
+B. Files Changed
+
+- Files created.
+- Files modified.
+- Files removed, if any.
+
+C. Database and API
+
+- New collections or fields.
+- Migrations.
+- Updated rules.
+- API changes.
+- Compatibility considerations.
+
+D. Testing
+
+- Commands executed.
+- Tests passed.
+- Tests failed.
+- Tests not run.
+- Known regressions.
+
+E. Remaining Work
+
+Clearly distinguish:
+
+- Fully implemented.
+- Partially implemented.
+- Blocked.
+- Not implemented.
+
+Do not claim completion merely because a screen exists.
+
+A feature is complete only when its interface, backend behavior, data relationships, authorization and relevant tests work together.
+
+---
+
+PART 19 — FINAL ACCEPTANCE CRITERIA
+
+Looma is architecturally correct only when:
+
+1. Normal and Business are genuinely distinct application experiences.
+2. Both operate under one Firebase Auth mother account.
+3. The personal profile remains at "/users/{uid}".
+4. Business Profiles remain independent at "/businessProfiles/{bpId}".
+5. Memberships control business access.
+6. Every profile has independent identity fields.
+7. Normal and Business handles are independent.
+8. Switching changes the entire application environment.
+9. Each environment has its own navigation and workflows.
+10. Business Messaging is independent of Personal Messaging.
+11. Business inquiries belong to Business Profile IDs.
+12. Authorized business team members can manage inquiries.
+13. Business commerce is correctly connected to existing tenant infrastructure.
+14. Personal information is not exposed to business employees.
+15. Business data is not exposed across unrelated businesses.
+16. Profile pictures synchronize correctly.
+17. Historical posts survive identity changes.
+18. Business verification works.
+19. Posts automatically publish under the active profile.
+20. The feed displays one post per screen.
+21. Comments use a dedicated threaded conversation page.
+22. Automatic announcement pop-ups are eliminated.
+23. Search has dedicated category pages.
+24. Existing commerce functionality remains operational.
+25. Existing authentication and user data are preserved.
+26. TypeScript, lint, build and relevant tests pass, or outstanding failures are explicitly reported.
+
+---
+
+FINAL ULTIMATE OBJECTIVE
+
+Build Looma as one unified application containing two independent platform experiences:
+
+NORMAL: A complete personal social networking platform.
+
+BUSINESS: A complete professional social networking, customer communication and commerce platform.
+
+They share the underlying Looma infrastructure, but maintain their own identities, interfaces, data ownership, permissions, messaging environments, settings and functional capabilities.
+
+The mother account provides the authentication foundation.
+
+The personal profile remains the human identity.
+
+Business Profiles remain independent organizational identities.
+
+Memberships define business authority.
+
+Platform switching activates the entire corresponding application environment.
+
+Never confuse profile switching with platform switching.
+
+Never confuse a human account with a business organization.
+
+Never sacrifice existing user data or working commerce functionality to achieve the new architecture.
+
+The objective is not simply to redesign Looma. It is to transform its underlying architecture and deliver two genuinely independent experiences within one coherent application.

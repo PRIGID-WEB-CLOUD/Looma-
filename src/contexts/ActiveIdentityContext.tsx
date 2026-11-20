@@ -13,8 +13,10 @@ import type {
   ActiveIdentity,
   BusinessInvite,
   BusinessMembership,
+  BusinessMembershipRole,
   BusinessNotification,
   BusinessProfile,
+  PlatformMode,
 } from '../types/business';
 import {
   subscribeBusinessNotifications,
@@ -25,17 +27,24 @@ import {
 
 const STORAGE_KEY_PREF = 'looma_active_business_id_pref_v1';
 
-interface ActiveIdentityContextValue {
+export interface ActiveIdentityContextValue {
+  platformMode: PlatformMode;
+  activeProfileId: string;
   activeIdentity: ActiveIdentity;
   memberships: BusinessMembership[];
   businesses: BusinessProfile[];
   pendingInvites: BusinessInvite[];
   activeBusinessProfile: BusinessProfile | null;
   activeBusinessMembership: BusinessMembership | null;
+  activeMembershipRole: BusinessMembershipRole | null;
+  canManageActiveBusiness: boolean;
   businessNotifications: BusinessNotification[];
   unreadBusinessNotifications: number;
+  isTransitioning: boolean;
+  switchToNormal: () => void;
   switchToPersonal: () => void;
   switchToBusiness: (businessProfileId: string) => void;
+  switchProfile: (profileId: string) => void;
 }
 
 const ActiveIdentityContext = createContext<ActiveIdentityContextValue | null>(null);
@@ -55,6 +64,7 @@ export function ActiveIdentityProvider({
   const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
   const [pendingInvites, setPendingInvites] = useState<BusinessInvite[]>([]);
   const [businessNotifications, setBusinessNotifications] = useState<BusinessNotification[]>([]);
+  const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
 
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -114,6 +124,25 @@ export function ActiveIdentityProvider({
     );
   }, [activeBusinessMembership, businesses]);
 
+  const activeMembershipRole: BusinessMembershipRole | null = useMemo(
+    () => activeBusinessMembership?.role || null,
+    [activeBusinessMembership]
+  );
+
+  const canManageActiveBusiness: boolean = useMemo(() => {
+    if (!activeBusinessMembership) return false;
+    const role = activeBusinessMembership.role;
+    return role === 'OWNER' || role === 'ADMIN' || role === 'EDITOR';
+  }, [activeBusinessMembership]);
+
+  const platformMode: PlatformMode = useMemo(() => {
+    return activeBusinessProfile && activeBusinessMembership ? 'business' : 'normal';
+  }, [activeBusinessMembership, activeBusinessProfile]);
+
+  const activeProfileId: string = useMemo(() => {
+    return activeBusinessProfile ? activeBusinessProfile.id : profile.uid;
+  }, [activeBusinessProfile, profile.uid]);
+
   useEffect(() => {
     if (!activeBusinessProfile || !firebaseUser || isLocalAutostart) {
       setBusinessNotifications([]);
@@ -122,7 +151,15 @@ export function ActiveIdentityProvider({
     return subscribeBusinessNotifications(activeBusinessProfile.id, setBusinessNotifications);
   }, [activeBusinessProfile, firebaseUser, isLocalAutostart]);
 
+  const triggerTransition = useCallback(() => {
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setIsTransitioning(false);
+    }, 280);
+  }, []);
+
   const switchToPersonal = useCallback(() => {
+    triggerTransition();
     setSelectedBusinessId(null);
     if (typeof window !== 'undefined') {
       try {
@@ -131,18 +168,35 @@ export function ActiveIdentityProvider({
         // Ignore storage error
       }
     }
-  }, []);
+  }, [triggerTransition]);
 
-  const switchToBusiness = useCallback((businessProfileId: string) => {
-    setSelectedBusinessId(businessProfileId);
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(STORAGE_KEY_PREF, businessProfileId);
-      } catch {
-        // Ignore storage error
+  const switchToNormal = switchToPersonal;
+
+  const switchToBusiness = useCallback(
+    (businessProfileId: string) => {
+      triggerTransition();
+      setSelectedBusinessId(businessProfileId);
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(STORAGE_KEY_PREF, businessProfileId);
+        } catch {
+          // Ignore storage error
+        }
       }
-    }
-  }, []);
+    },
+    [triggerTransition]
+  );
+
+  const switchProfile = useCallback(
+    (profileId: string) => {
+      if (!profileId || profileId === profile.uid) {
+        switchToPersonal();
+      } else {
+        switchToBusiness(profileId);
+      }
+    },
+    [profile.uid, switchToBusiness, switchToPersonal]
+  );
 
   const activeIdentity: ActiveIdentity = useMemo(() => {
     if (activeBusinessProfile && activeBusinessMembership) {
@@ -179,26 +233,40 @@ export function ActiveIdentityProvider({
 
   const value = useMemo<ActiveIdentityContextValue>(
     () => ({
+      platformMode,
+      activeProfileId,
       activeIdentity,
       memberships,
       businesses,
       pendingInvites,
       activeBusinessProfile,
       activeBusinessMembership,
+      activeMembershipRole,
+      canManageActiveBusiness,
       businessNotifications,
       unreadBusinessNotifications,
+      isTransitioning,
+      switchToNormal,
       switchToPersonal,
       switchToBusiness,
+      switchProfile,
     }),
     [
       activeBusinessMembership,
       activeBusinessProfile,
       activeIdentity,
+      activeMembershipRole,
+      activeProfileId,
       businessNotifications,
       businesses,
+      canManageActiveBusiness,
+      isTransitioning,
       memberships,
       pendingInvites,
+      platformMode,
+      switchProfile,
       switchToBusiness,
+      switchToNormal,
       switchToPersonal,
       unreadBusinessNotifications,
     ]

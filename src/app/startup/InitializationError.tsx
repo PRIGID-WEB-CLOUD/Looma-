@@ -1,4 +1,4 @@
-import { AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { LoomaLogoMark } from '../../components/LoomaLogo';
 import type { SafeInitializationError } from '../initialization';
 
@@ -7,14 +7,12 @@ interface InitializationErrorProps {
   isTimeout?: boolean;
   retryCount?: number;
   onRetry: () => void;
-  onContinueOffline?: () => void;
 }
 
 export function InitializationError({
   error,
   isTimeout = false,
   onRetry,
-  onContinueOffline,
 }: InitializationErrorProps) {
   const title =
     error?.title ||
@@ -64,17 +62,6 @@ export function InitializationError({
             <RefreshCw className="w-4 h-4" aria-hidden="true" />
             <span>Try Again</span>
           </button>
-
-          {onContinueOffline && error?.recoverable !== false && (
-            <button
-              type="button"
-              onClick={onContinueOffline}
-              className="w-full min-h-[44px] px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 cursor-pointer"
-            >
-              <WifiOff className="w-4 h-4" aria-hidden="true" />
-              <span>Continue Offline</span>
-            </button>
-          )}
         </div>
       </div>
     </div>

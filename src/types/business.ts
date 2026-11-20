@@ -1,3 +1,4 @@
+export type PlatformMode = 'normal' | 'business';
 export type BusinessMembershipRole = 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER';
 export type BusinessProfileStatus = 'ACTIVE' | 'SUSPENDED';
 export type BusinessMembershipStatus = 'ACTIVE' | 'INVITED' | 'REVOKED';

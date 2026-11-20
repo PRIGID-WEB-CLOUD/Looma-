@@ -80,6 +80,7 @@ import { TopBar } from './components/TopBar';
 import { BrandLogoModal } from './components/BrandLogoModal';
 import { VerifiedBadge } from './components/VerifiedBadge';
 import { LoomaLogo } from './components/LoomaLogo';
+import { OrbitSyncOverlay } from './components/OrbitSyncOverlay';
 import { useInitialization } from './app/initialization';
 import { InitializationScreen } from './app/startup/InitializationScreen';
 
@@ -162,6 +163,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     activeBusinessProfile,
     businessNotifications,
     unreadBusinessNotifications,
+    isTransitioning,
+    platformMode,
     switchToPersonal,
     switchToBusiness,
   } = useActiveIdentity();
@@ -2455,6 +2458,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
       />
 
       <OfflineIndicator />
+      {isTransitioning && <OrbitSyncOverlay />}
     </div>
   );
 }
