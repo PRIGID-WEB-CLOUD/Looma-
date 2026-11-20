@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, X } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import type {
   ChatThread,
   FeedFilter,
@@ -24,6 +25,7 @@ import { StoriesStrip } from './StoriesStrip';
 
 interface FeedViewProps {
   profile: UserProfile;
+  activeBusinessProfile?: BusinessProfile | null;
   posts: Post[];
   canManageBusinessIds?: string[];
   storyGroups: StoryGroup[];
@@ -60,6 +62,7 @@ const PAGE_SIZE = 4;
 
 export function FeedView({
   profile,
+  activeBusinessProfile = null,
   posts,
   canManageBusinessIds = [],
   storyGroups,
@@ -164,12 +167,20 @@ export function FeedView({
     }
   };
 
+  const activeComposerAvatar = activeBusinessProfile
+    ? activeBusinessProfile.logoUrl
+    : profile.avatarUrl;
+  const activeComposerName = activeBusinessProfile
+    ? activeBusinessProfile.displayName
+    : profile.displayName;
+
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
       {/* Homefeed Header Stories */}
       {storiesEnabled && (
         <StoriesStrip
           profile={profile}
+          activeBusinessProfile={activeBusinessProfile}
           storyGroups={storyGroups}
           onOpenStory={onOpenStory}
           onOpenAddStory={onOpenAddStory}
@@ -178,13 +189,15 @@ export function FeedView({
 
       {/* Quick Post Prompt */}
       <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 flex items-center gap-3">
-        <Avatar src={profile.avatarUrl} name={profile.displayName} size="md" />
+        <Avatar src={activeComposerAvatar} name={activeComposerName} size="md" />
         <button
           type="button"
           onClick={onOpenComposer}
           className="flex-1 min-w-0 min-h-[44px] px-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-left text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer truncate"
         >
-          Share a note or photo, {profile.displayName.split(' ')[0]}...
+          {activeBusinessProfile
+            ? `Share a note or photo as ${activeBusinessProfile.displayName}...`
+            : `Share a note or photo, ${profile.displayName.split(' ')[0]}...`}
         </button>
         <button
           type="button"

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Bell, Building2, CheckCheck, Megaphone, Trash2, User } from 'lucide-react';
+import { useMemo } from 'react';
+import { Bell, CheckCheck, Megaphone, Trash2 } from 'lucide-react';
 import type { UserProfile } from '../types/social';
 import type { BusinessNotification, BusinessProfile } from '../types/business';
 import {
@@ -41,16 +41,13 @@ export function NotificationsView({
   onDeleteNotification,
   onClearAllNotifications,
 }: NotificationsViewProps) {
-  const [scope, setScope] = useState<'personal' | 'business'>('personal');
-  const activeScope = activeBusinessProfile ? scope : 'personal';
+  const activeScope = activeBusinessProfile ? 'business' : 'personal';
 
   const verifiedSet = useMemo(() => {
     const ids = new Set(verifiedAuthorIds);
     if (profile.isVerified) ids.add(profile.uid);
     return ids;
   }, [verifiedAuthorIds, profile.isVerified, profile.uid]);
-
-  const unreadBusinessCount = businessNotifications.filter((n) => !n.read).length;
 
   return (
     <section
@@ -60,50 +57,28 @@ export function NotificationsView({
       {/* Push Notification Controls */}
       <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-            <Bell className="w-5 h-5" aria-hidden="true" />
-          </div>
+          {activeBusinessProfile ? (
+            <Avatar
+              src={activeBusinessProfile.logoUrl}
+              name={activeBusinessProfile.displayName}
+              size="md"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+              <Bell className="w-5 h-5" aria-hidden="true" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-lg font-bold">
-              Activity & Push Alerts
+            <h1 className="font-display text-lg font-bold truncate">
+              {activeBusinessProfile
+                ? `${activeBusinessProfile.displayName} · Activity`
+                : 'Activity & Push Alerts'}
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Browser push status: {pushPermission} · Live engagement alerts enabled
             </p>
           </div>
         </div>
-
-        {activeBusinessProfile && (
-          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 w-fit">
-            <button
-              type="button"
-              onClick={() => setScope('personal')}
-              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
-                activeScope === 'personal'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-500 dark:text-slate-400'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Personal (@{profile.handle})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScope('business')}
-              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
-                activeScope === 'business'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-500 dark:text-slate-400'
-              }`}
-            >
-              <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>
-                {activeBusinessProfile.displayName}
-                {unreadBusinessCount > 0 ? ` (${unreadBusinessCount})` : ''}
-              </span>
-            </button>
-          </div>
-        )}
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {pushPermission !== 'granted' && pushPermission !== 'unsupported' && (

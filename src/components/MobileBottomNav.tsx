@@ -1,16 +1,21 @@
 import { Bell, Home, MessageSquare, ShoppingBag, User } from 'lucide-react';
 import type { TabId } from '../types/social';
+import { Avatar } from './Avatar';
 
 interface MobileBottomNavProps {
   activeTab: TabId;
   onSelectTab: (tab: TabId) => void;
   unreadNotifications: number;
+  activeAvatarUrl?: string;
+  activeDisplayName?: string;
 }
 
 export function MobileBottomNav({
   activeTab,
   onSelectTab,
   unreadNotifications,
+  activeAvatarUrl,
+  activeDisplayName,
 }: MobileBottomNavProps) {
   const items: {
     id: TabId;
@@ -65,7 +70,21 @@ export function MobileBottomNav({
               />
             )}
             <span className="relative">
-              <Icon className="w-4 h-4" aria-hidden="true" />
+              {item.id === 'profile' && activeDisplayName ? (
+                <span
+                  className={`inline-flex rounded-full ${
+                    active ? 'ring-2 ring-blue-600 dark:ring-blue-400' : ''
+                  }`}
+                >
+                  <Avatar
+                    src={activeAvatarUrl || ''}
+                    name={activeDisplayName}
+                    size="xs"
+                  />
+                </span>
+              ) : (
+                <Icon className="w-4 h-4" aria-hidden="true" />
+              )}
               {hasBadge ? (
                 <span className="absolute -top-1.5 -right-2.5 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center tabular-nums">
                   {item.badge! > 9 ? '9+' : item.badge}

@@ -135,6 +135,7 @@ import {
   resolvePublicProfile,
   sanitizeHandle,
   sanitizeMediaTitle,
+  sanitizeSafeHttpUrl,
   shouldAutoQueuePostReport,
   shouldBlockActionByModeration,
   shouldDispatchChatPushNotification,
@@ -1212,6 +1213,15 @@ export function useSocialStore() {
             followingCount: Number(d.followingCount || 0),
             isVerified: Boolean(d.isVerified || isAdminUser),
             onboardingCompleted: Boolean(d.onboardingCompleted),
+            accountType: d.accountType === 'business' ? 'business' : 'personal',
+            businessCategory:
+              typeof d.businessCategory === 'string'
+                ? d.businessCategory.trim().slice(0, 60)
+                : '',
+            businessWebsiteUrl: sanitizeSafeHttpUrl(
+              typeof d.businessWebsiteUrl === 'string' ? d.businessWebsiteUrl : '',
+              200
+            ),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
           };
@@ -1249,6 +1259,13 @@ export function useSocialStore() {
             followingCount: 0,
             isVerified: newProfile.isVerified,
             onboardingCompleted: newProfile.onboardingCompleted,
+            accountType:
+              newProfile.accountType === 'business' ? 'business' : 'personal',
+            businessCategory: (newProfile.businessCategory || '').trim().slice(0, 60),
+            businessWebsiteUrl: sanitizeSafeHttpUrl(
+              newProfile.businessWebsiteUrl,
+              200
+            ),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           }).catch(() => {});
@@ -1382,6 +1399,15 @@ export function useSocialStore() {
             followingCount: Number(d.followingCount || 0),
             isVerified: Boolean(d.isVerified || isAdminUser),
             onboardingCompleted: Boolean(d.onboardingCompleted),
+            accountType: d.accountType === 'business' ? 'business' : 'personal',
+            businessCategory:
+              typeof d.businessCategory === 'string'
+                ? d.businessCategory.trim().slice(0, 60)
+                : '',
+            businessWebsiteUrl: sanitizeSafeHttpUrl(
+              typeof d.businessWebsiteUrl === 'string' ? d.businessWebsiteUrl : '',
+              200
+            ),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
           };
@@ -1408,6 +1434,9 @@ export function useSocialStore() {
             followingCount: 0,
             isVerified: Boolean(seed.isVerified || isAdminUser),
             onboardingCompleted: seed.onboardingCompleted,
+            accountType: seed.accountType === 'business' ? 'business' : 'personal',
+            businessCategory: (seed.businessCategory || '').trim().slice(0, 60),
+            businessWebsiteUrl: sanitizeSafeHttpUrl(seed.businessWebsiteUrl, 200),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           }).catch(() => {});
@@ -1639,7 +1668,7 @@ export function useSocialStore() {
       usersQuery,
       (snapshot) => {
         const remoteMembers: UserProfile[] = snapshot.docs
-          .map((docSnap) => {
+          .map((docSnap): UserProfile => {
             const d = docSnap.data();
             const isAdmin = Boolean(d.email && isAllowlistedAdminEmail(d.email));
             return {
@@ -1654,6 +1683,15 @@ export function useSocialStore() {
               followingCount: Number(d.followingCount || 0),
               isVerified: Boolean(d.isVerified || isAdmin),
               onboardingCompleted: Boolean(d.onboardingCompleted),
+              accountType: d.accountType === 'business' ? 'business' : 'personal',
+              businessCategory:
+                typeof d.businessCategory === 'string'
+                  ? d.businessCategory.trim().slice(0, 60)
+                  : '',
+              businessWebsiteUrl: sanitizeSafeHttpUrl(
+                typeof d.businessWebsiteUrl === 'string' ? d.businessWebsiteUrl : '',
+                200
+              ),
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
             };
@@ -2242,6 +2280,15 @@ export function useSocialStore() {
             followingCount: Number(d.followingCount || 0),
             isVerified: Boolean(d.isVerified),
             onboardingCompleted: Boolean(d.onboardingCompleted),
+            accountType: d.accountType === 'business' ? 'business' : 'personal',
+            businessCategory:
+              typeof d.businessCategory === 'string'
+                ? d.businessCategory.trim().slice(0, 60)
+                : '',
+            businessWebsiteUrl: sanitizeSafeHttpUrl(
+              typeof d.businessWebsiteUrl === 'string' ? d.businessWebsiteUrl : '',
+              200
+            ),
             createdAtMs: timestampToMs(d.createdAt),
             updatedAtMs: timestampToMs(d.updatedAt),
           };
@@ -2903,6 +2950,10 @@ export function useSocialStore() {
               location: next.location,
               interests: next.interests,
               onboardingCompleted: next.onboardingCompleted,
+              accountType:
+                next.accountType === 'business' ? 'business' : 'personal',
+              businessCategory: next.businessCategory ?? '',
+              businessWebsiteUrl: next.businessWebsiteUrl ?? '',
               updatedAt: serverTimestamp(),
             });
           } catch (updateErr) {
@@ -2927,6 +2978,10 @@ export function useSocialStore() {
                   next.isVerified || isAllowlistedAdminEmail(firebaseUser.email)
                 ),
                 onboardingCompleted: next.onboardingCompleted,
+                accountType:
+                  next.accountType === 'business' ? 'business' : 'personal',
+                businessCategory: next.businessCategory ?? '',
+                businessWebsiteUrl: next.businessWebsiteUrl ?? '',
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
               });
@@ -4529,6 +4584,15 @@ export function useSocialStore() {
               followingCount: Number(d.followingCount || 0),
               isVerified: Boolean(d.isVerified),
               onboardingCompleted: Boolean(d.onboardingCompleted),
+              accountType: d.accountType === 'business' ? 'business' : 'personal',
+              businessCategory:
+                typeof d.businessCategory === 'string'
+                  ? d.businessCategory.trim().slice(0, 60)
+                  : '',
+              businessWebsiteUrl: sanitizeSafeHttpUrl(
+                typeof d.businessWebsiteUrl === 'string' ? d.businessWebsiteUrl : '',
+                200
+              ),
               createdAtMs: timestampToMs(d.createdAt),
               updatedAtMs: timestampToMs(d.updatedAt),
             };

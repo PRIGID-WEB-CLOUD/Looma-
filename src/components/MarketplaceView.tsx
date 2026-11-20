@@ -7,7 +7,6 @@ import {
   Bookmark,
   BookOpen,
   Briefcase,
-  Building2,
   Calendar,
   Car,
   Check,
@@ -54,7 +53,6 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatThread, UserProfile } from '../types/social';
-import type { BusinessProfile } from '../types/business';
 import type {
   CartItem,
   CommerceProxyStatus,
@@ -80,7 +78,6 @@ import {
   subscribeSellerMarketplaceOrders,
   updateSellerMarketplaceOrderStatus,
 } from '../services/commerce';
-import { launchCommerceDashboardSso, provisionCommerceStoreForBusiness } from '../services/businessProfiles';
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
 import {
   ALL_MARKETPLACE_CATEGORIES,
@@ -112,7 +109,6 @@ interface MarketplaceViewProps {
   isFirebaseBacked: boolean;
   initialStoreSlug?: string | null;
   marketplaceEnabled?: boolean;
-  businesses?: BusinessProfile[];
   onMessageSeller: (
     sellerUid: string,
     initialMessage?: string,
@@ -124,8 +120,6 @@ interface MarketplaceViewProps {
   onOpenSellerProfile: (sellerUid: string) => void;
   onOpenBusinessProfile?: (slug: string) => void;
   onOpenProductDetail?: (productId: string) => void;
-  onCreateBusinessProfile?: () => void;
-  onLaunchBusinessSeller?: (businessProfileId: string) => Promise<void>;
   onRequireAuth?: () => void;
 }
 
@@ -585,7 +579,6 @@ export function MarketplaceView({
   isFirebaseBacked,
   initialStoreSlug = null,
   marketplaceEnabled = true,
-  businesses = [],
   onMessageSeller,
   onToggleFollowSeller,
   onOpenInbox,
@@ -593,8 +586,6 @@ export function MarketplaceView({
   onOpenSellerProfile,
   onOpenBusinessProfile,
   onOpenProductDetail,
-  onCreateBusinessProfile,
-  onLaunchBusinessSeller,
   onRequireAuth,
 }: MarketplaceViewProps) {
   const uidKey = profile.uid || 'guest';
@@ -617,39 +608,6 @@ export function MarketplaceView({
   const [inboxRole, setInboxRole] = useState<MarketplaceInboxRole>('selling');
   const [inboxFilter, setInboxFilter] = useState<MarketplaceInboxFilter>('all');
   const [updatingInboxOrderId, setUpdatingInboxOrderId] = useState<string | null>(null);
-
-  // Business Profile Merchant Portal Launcher state
-  const [sellBusinessPickerOpen, setSellBusinessPickerOpen] = useState(false);
-  const [launchingBpId, setLaunchingBpId] = useState<string | null>(null);
-  const [sellLauncherError, setSellLauncherError] = useState<string | null>(null);
-
-  const handleOpenMerchantSell = () => {
-    if (!isAuthorized) {
-      onRequireAuth?.();
-      return;
-    }
-    setSellLauncherError(null);
-    setSellBusinessPickerOpen(true);
-  };
-
-  const handleSelectBusinessForSelling = async (bp: BusinessProfile) => {
-    setLaunchingBpId(bp.id);
-    setSellLauncherError(null);
-    try {
-      if (onLaunchBusinessSeller) {
-        await onLaunchBusinessSeller(bp.id);
-      } else {
-        await provisionCommerceStoreForBusiness(bp.id).catch(() => {});
-        await launchCommerceDashboardSso(bp.id);
-      }
-    } catch (err) {
-      setSellLauncherError(
-        err instanceof Error ? err.message : 'Unable to launch Merchant Portal for this Business Profile.'
-      );
-    } finally {
-      setLaunchingBpId(null);
-    }
-  };
   const [inboxThreadHints, setInboxThreadHints] = useState<TrackedMarketplaceThreadHint[]>(() => {
     try {
       const raw = window.localStorage.getItem(inboxHintsStorageKey);
@@ -1373,30 +1331,37 @@ export function MarketplaceView({
     localOnly;
 
   return (
-    <div className="max-w-6xl mx-auto pb-12 space-y-4">
+    <div
+      data-testid="marketplace-fullscreen-container"
+      className="w-full min-h-[calc(100dvh-3.5rem)] md:min-h-[calc(100dvh-4rem)] bg-white dark:bg-slate-950 flex flex-col pb-20 md:pb-8"
+    >
       {/* Subtle floating action notice */}
       {toastNotice && (
-        <div
-          role="status"
-          className="rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 px-4 py-2.5 flex items-center justify-between gap-3 text-xs font-semibold text-blue-800 dark:text-blue-200"
-        >
-          <span>{toastNotice}</span>
-          <button
-            type="button"
-            onClick={() => setBagOpen(true)}
-            className="text-blue-600 dark:text-blue-300 underline cursor-pointer whitespace-nowrap"
+        <div className="px-4 sm:px-6 lg:px-8 pt-3">
+          <div
+            role="status"
+            className="rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/60 px-4 py-2.5 flex items-center justify-between gap-3 text-xs font-semibold text-blue-800 dark:text-blue-200"
           >
-            Open Bag ({bagCount})
-          </button>
+            <span>{toastNotice}</span>
+            <button
+              type="button"
+              onClick={() => setBagOpen(true)}
+              className="text-blue-600 dark:text-blue-300 underline cursor-pointer whitespace-nowrap"
+            >
+              Open Bag ({bagCount})
+            </button>
+          </div>
         </div>
       )}
 
       {loadError && (
-        <div
-          role="alert"
-          className="rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/50 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
-        >
-          {loadError}
+        <div className="px-4 sm:px-6 lg:px-8 pt-3">
+          <div
+            role="alert"
+            className="rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/50 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
+          >
+            {loadError}
+          </div>
         </div>
       )}
 
@@ -1404,8 +1369,8 @@ export function MarketplaceView({
       {/* SUBVIEW: CHANGE CATEGORY (Screenshot 1)                             */}
       {/* =================================================================== */}
       {subView === 'categories' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
+        <div className="w-full flex-1 bg-white dark:bg-slate-950">
+          <div className="px-4 sm:px-6 lg:px-8 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
             <button
               type="button"
               onClick={navigateBack}
@@ -1553,7 +1518,7 @@ export function MarketplaceView({
       {/* SUBVIEW: SEARCH MARKETPLACE (Screenshot 2)                          */}
       {/* =================================================================== */}
       {subView === 'search' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden min-h-[540px]">
+        <div className="w-full flex-1 bg-white dark:bg-slate-950 flex flex-col">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1774,7 +1739,7 @@ export function MarketplaceView({
                   No listings match &ldquo;{searchDraft.trim()}&rdquo;. Try another keyword.
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4 lg:gap-5">
                   {searchLiveResults.map((prod) => (
                     <ProductSquareTile
                       key={prod.id}
@@ -1800,7 +1765,7 @@ export function MarketplaceView({
       {subView === 'inbox' && (
         <div
           data-testid="marketplace-inbox-view"
-          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden min-h-[580px] flex flex-col"
+          className="w-full flex-1 bg-white dark:bg-slate-950 flex flex-col"
         >
           {/* Header: Back Chevron + Centered Title */}
           <div className="px-3 sm:px-4 py-3 flex items-center justify-between gap-3">
@@ -2067,9 +2032,9 @@ export function MarketplaceView({
       {/* SUBVIEW: LISTING DETAIL / PDP (Screenshots 3 & 5)                   */}
       {/* =================================================================== */}
       {subView === 'detail' && selectedProduct && selectedProductSeller && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <div className="w-full flex-1 bg-white dark:bg-slate-950">
           {/* Header Bar */}
-          <div className="px-3 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 sticky top-0 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
+          <div className="px-4 sm:px-6 lg:px-8 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 sticky top-0 z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
             <button
               type="button"
               onClick={navigateBack}
@@ -2552,7 +2517,7 @@ export function MarketplaceView({
       {/* SUBVIEW: MARKETPLACE SELLER PROFILE (Screenshot 4)                  */}
       {/* =================================================================== */}
       {subView === 'seller' && activeSellerProfile && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-w-3xl mx-auto">
+        <div className="w-full flex-1 bg-white dark:bg-slate-950">
           {/* Header */}
           <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
             <button
@@ -2825,7 +2790,7 @@ export function MarketplaceView({
       {/* SUBVIEW: MY MARKETPLACE ACCOUNT (Saved & Own Listings)              */}
       {/* =================================================================== */}
       {subView === 'account' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden space-y-6 p-4 sm:p-6">
+        <div className="w-full flex-1 bg-white dark:bg-slate-950 space-y-6 px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <button
@@ -2883,18 +2848,10 @@ export function MarketplaceView({
               <h2 className="text-base font-bold text-slate-900 dark:text-white">
                 Your listings ({myListings.length})
               </h2>
-              <button
-                type="button"
-                onClick={handleOpenMerchantSell}
-                className="min-h-[36px] px-3.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                Merchant Portal
-              </button>
             </div>
             {myListings.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                You haven&apos;t listed any items on Marketplace yet.
+                No storefront listings published under this account yet.
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2946,7 +2903,7 @@ export function MarketplaceView({
       {/* SUBVIEW: ORDERS HISTORY                                             */}
       {/* =================================================================== */}
       {subView === 'orders' && (
-        <section className="space-y-4">
+        <section className="w-full flex-1 px-4 sm:px-6 lg:px-8 py-5 space-y-4">
           <div className="flex items-center justify-between gap-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
             <div className="flex items-center gap-2.5">
               <button
@@ -3034,9 +2991,9 @@ export function MarketplaceView({
       {/* SUBVIEW: MARKETPLACE HOME (Screenshot 6)                            */}
       {/* =================================================================== */}
       {subView === 'home' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <div className="w-full flex-1 flex flex-col">
           {/* Top Header */}
-          <div className="px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-3">
+          <div className="px-4 sm:px-6 lg:px-8 pt-4 pb-2.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               {hasActiveFilter && (
                 <button
@@ -3054,7 +3011,7 @@ export function MarketplaceView({
                   <ChevronLeft className="w-6 h-6" aria-hidden="true" />
                 </button>
               )}
-              <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+              <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
                 Marketplace
               </h1>
             </div>
@@ -3084,8 +3041,8 @@ export function MarketplaceView({
             </div>
           </div>
 
-          {/* Horizontal Action Buttons Bar: Inbox | Sell | Categories | Search | Orders */}
-          <div className="px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {/* Horizontal Action Buttons Bar: Inbox | Categories | Search | Orders */}
+          <div className="px-4 sm:px-6 lg:px-8 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar border-b border-slate-100 dark:border-slate-800/80">
 
             <button
               type="button"
@@ -3100,15 +3057,6 @@ export function MarketplaceView({
             >
               <Inbox className="w-4 h-4 sm:hidden" aria-hidden="true" />
               <span>Inbox</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleOpenMerchantSell}
-              className="min-h-[38px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <Tag className="w-4 h-4 sm:hidden" aria-hidden="true" />
-              <span>Sell</span>
             </button>
 
             <button
@@ -3153,7 +3101,7 @@ export function MarketplaceView({
 
           {/* Active filter indicator strip when filtered */}
           {hasActiveFilter && (
-            <div className="px-4 py-2 bg-slate-50 dark:bg-slate-950/60 border-y border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+            <div className="px-4 sm:px-6 lg:px-8 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 flex-wrap text-slate-700 dark:text-slate-300 font-medium">
                 <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
                 {selectedCategory !== 'All' && <span>Category: {selectedCategory}</span>}
@@ -3178,7 +3126,7 @@ export function MarketplaceView({
           )}
 
           {/* Today's picks + Clickable Location · Radius header */}
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
+          <div className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-3">
             <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white">
               {selectedCategory !== 'All'
                 ? selectedCategory
@@ -3203,10 +3151,10 @@ export function MarketplaceView({
           </div>
 
           {/* Product Grid */}
-          <div className="px-4 pb-6">
+          <div className="px-4 sm:px-6 lg:px-8 pb-8 flex-1">
             {loading ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                {[1, 2, 3, 4, 5, 6].map((n) => (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4 lg:gap-5">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                   <div key={n} className="space-y-2 animate-pulse">
                     <div className="aspect-square rounded-lg bg-slate-100 dark:bg-slate-800" />
                     <div className="h-3.5 w-3/4 rounded bg-slate-100 dark:bg-slate-800" />
@@ -3214,7 +3162,7 @@ export function MarketplaceView({
                 ))}
               </div>
             ) : filteredProducts.length === 0 ? (
-              <div className="py-14 text-center space-y-3">
+              <div className="py-16 text-center space-y-3">
                 <ShoppingBag className="w-9 h-9 mx-auto text-slate-400" aria-hidden="true" />
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-slate-900 dark:text-white">
@@ -3225,11 +3173,11 @@ export function MarketplaceView({
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     {hasActiveFilter
                       ? 'Try clearing filters or browsing another category.'
-                      : 'Be the first to sell an item or browse published storefronts.'}
+                      : 'Check back soon or browse published storefronts and categories.'}
                   </p>
                 </div>
-                <div className="flex items-center justify-center gap-2 pt-1">
-                  {hasActiveFilter && (
+                {hasActiveFilter && (
+                  <div className="flex items-center justify-center gap-2 pt-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -3243,18 +3191,11 @@ export function MarketplaceView({
                     >
                       Clear filters
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleOpenMerchantSell}
-                    className="min-h-[38px] px-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
-                  >
-                    Open Business Merchant Portal
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4 lg:gap-5">
                 {filteredProducts.map((product) => (
                   <ProductSquareTile
                     key={product.id}
@@ -3651,138 +3592,6 @@ export function MarketplaceView({
                 </>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* BUSINESS PROFILE MERCHANT PORTAL LAUNCHER MODAL                     */}
-      {/* =================================================================== */}
-      {sellBusinessPickerOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Select Business Profile for Selling"
-        >
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-                  Sell with a Business Profile
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Merchant tools, inventory, and payouts belong to verified Business Profiles—not personal accounts.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSellBusinessPickerOpen(false)}
-                aria-label="Close modal"
-                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
-              >
-                <X className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            {sellLauncherError && (
-              <p role="alert" className="rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-                {sellLauncherError}
-              </p>
-            )}
-
-            {businesses.length === 0 ? (
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 text-center space-y-3">
-                <Building2 className="w-8 h-8 mx-auto text-blue-600" aria-hidden="true" />
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                    No Business Profile yet
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Create a Looma Business Profile to unlock your Commerce storefront, product catalog, and order fulfillment portal.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSellBusinessPickerOpen(false);
-                    onCreateBusinessProfile?.();
-                  }}
-                  className="w-full min-h-[42px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
-                >
-                  Create Business Profile
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-72 overflow-y-auto">
-                {businesses.map((bp) => {
-                  const busy = launchingBpId === bp.id;
-                  return (
-                    <div
-                      key={bp.id}
-                      className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center shrink-0">
-                          {bp.logoUrl ? (
-                            <img
-                              src={bp.logoUrl}
-                              alt={bp.displayName}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <Store className="w-5 h-5 text-slate-500" aria-hidden="true" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                            {bp.displayName}
-                          </p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            @{bp.slug} · {bp.category}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {onOpenBusinessProfile && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSellBusinessPickerOpen(false);
-                              onOpenBusinessProfile(bp.slug);
-                            }}
-                            className="min-h-[36px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            Page
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          disabled={Boolean(launchingBpId)}
-                          onClick={() => void handleSelectBusinessForSelling(bp)}
-                          className="min-h-[36px] px-3.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
-                        >
-                          {busy ? 'Opening...' : 'Merchant Portal'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {onCreateBusinessProfile && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSellBusinessPickerOpen(false);
-                      onCreateBusinessProfile();
-                    }}
-                    className="w-full min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                    Create another Business Profile
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}

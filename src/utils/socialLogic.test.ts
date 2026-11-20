@@ -35,12 +35,14 @@ import {
   resolvePostLinkPreview,
   resolvePublicProfile,
   sanitizeHandle,
+  sanitizeSafeHttpUrl,
   isOpaqueMediaIdentifier,
   sanitizeMediaTitle,
   sanitizeUploadedFilenameTitle,
   toggleFollowState,
   togglePostLikeState,
   validateAuthForm,
+  validateBusinessAccountDetails,
   validateCommentInput,
   validatePostInput,
   validateProfileInput,
@@ -1824,6 +1826,69 @@ test('normalizeProfileUpdateFields sanitizes and enforces Firestore schema bound
   // Blank displayName preserves existing name safely
   const blankName = normalizeProfileUpdateFields(base, { displayName: '   ' }, 5000);
   assert.equal(blankName.displayName, 'Alex Rivera');
+  assert.equal(blankName.accountType, 'personal');
+
+  // In-place transition: personal -> business keeps uid, handle, followers, following, verified
+  const transitioned = normalizeProfileUpdateFields(
+    base,
+    {
+      accountType: 'business',
+      businessCategory: `  ${'Architecture & Objects '.repeat(4)}  `,
+      businessWebsiteUrl: '  https://studio.alexrivera.design/shop  ',
+    },
+    12000
+  );
+  assert.equal(transitioned.accountType, 'business');
+  assert.equal(transitioned.uid, base.uid);
+  assert.equal(transitioned.handle, base.handle);
+  assert.equal(transitioned.followersCount, 12);
+  assert.equal(transitioned.followingCount, 8);
+  assert.equal(transitioned.isVerified, true);
+  assert.equal((transitioned.businessCategory || '').length, 60);
+  assert.equal(
+    transitioned.businessWebsiteUrl,
+    'https://studio.alexrivera.design/shop'
+  );
+
+  // Rejects unsafe URL schemes on businessWebsiteUrl
+  const unsafeUrl = normalizeProfileUpdateFields(
+    transitioned,
+    {
+      businessWebsiteUrl: 'javascript:alert(1)',
+    },
+    13000
+  );
+  assert.equal(unsafeUrl.accountType, 'business');
+  assert.equal(unsafeUrl.businessWebsiteUrl, '');
+
+  // Transition back: business -> personal preserves unified identity
+  const reverted = normalizeProfileUpdateFields(
+    transitioned,
+    { accountType: 'personal' },
+    14000
+  );
+  assert.equal(reverted.accountType, 'personal');
+  assert.equal(reverted.uid, base.uid);
+  assert.equal(reverted.handle, base.handle);
+  assert.equal(reverted.followersCount, 12);
+});
+
+test('validateBusinessAccountDetails and sanitizeSafeHttpUrl enforce safe categories and HTTP(S) URLs', () => {
+  assert.equal(validateBusinessAccountDetails('Art & Design', '').valid, true);
+  assert.equal(
+    validateBusinessAccountDetails('Studio & Services', 'https://looma.studio').valid,
+    true
+  );
+  assert.equal(
+    validateBusinessAccountDetails('A', 'https://looma.studio').valid,
+    false
+  );
+  assert.equal(
+    validateBusinessAccountDetails('Art & Design', 'javascript:alert(1)').valid,
+    false
+  );
+  assert.equal(sanitizeSafeHttpUrl('ftp://files.example.com'), '');
+  assert.equal(sanitizeSafeHttpUrl('https://ok.example.com/path'), 'https://ok.example.com/path');
 });
 
 test('profile name, handle, and avatar updates dynamically reflect across posts, comments, stories, and live profiles', () => {

@@ -986,47 +986,69 @@ test('Worker static asset routing serves /admin and /landingpage cleanly with tr
   assert.equal((await standaloneAdminRes.text()).includes('Standalone Admin'), true);
 });
 
-test('Worker store proxy routes handle catalog retrieval, search filtering, and checkout seamlessly with fallback', async () => {
+test('Worker commerce and marketplace proxy routes report status, block admin paths, and enforce SSO auth', async () => {
   const app = createWorkerApp();
 
-  // Status
-  const statusRes = await app.fetch(new Request('https://looma.internal/api/store/status'));
-  assert.equal(statusRes.status, 200);
-  const statusData = (await statusRes.json()) as any;
-  assert.equal(statusData.success, true);
-  assert.equal(statusData.proxyActive, true);
+  // Status when unconfigured (no env passed)
+  const unconfiguredStatusRes = await app.fetch(
+    new Request('https://looma.internal/api/commerce/status')
+  );
+  assert.equal(unconfiguredStatusRes.status, 200);
+  const unconfiguredData = (await unconfiguredStatusRes.json()) as {
+    configured: boolean;
+    upstreamConfigured: boolean;
+    ssoConfigured: boolean;
+    defaultStoreId: string | null;
+  };
+  assert.equal(unconfiguredData.configured, false);
+  assert.equal(unconfiguredData.upstreamConfigured, false);
+  assert.equal(unconfiguredData.ssoConfigured, false);
+  assert.equal(unconfiguredData.defaultStoreId, null);
 
-  // Stores
-  const storesRes = await app.fetch(new Request('https://looma.internal/api/store/marketplace/stores'));
-  assert.equal(storesRes.status, 200);
-  const storesData = (await storesRes.json()) as any;
-  assert.equal(storesData.success, true);
-  assert.ok(storesData.stores.length >= 5);
+  // Status when configured
+  const configuredStatusRes = await app.fetch(
+    new Request('https://looma.internal/api/commerce/status'),
+    {
+      COMMERCE_API_URL: 'https://commerce.example.com',
+      COMMERCE_DEFAULT_STORE_ID: 'store_default',
+      COMMERCE_INTERNAL_SSO_SECRET: 'sso_secret_123',
+    }
+  );
+  assert.equal(configuredStatusRes.status, 200);
+  const configuredData = (await configuredStatusRes.json()) as {
+    configured: boolean;
+    upstreamConfigured: boolean;
+    ssoConfigured: boolean;
+    defaultStoreId: string | null;
+  };
+  assert.equal(configuredData.configured, true);
+  assert.equal(configuredData.upstreamConfigured, true);
+  assert.equal(configuredData.ssoConfigured, true);
+  assert.equal(configuredData.defaultStoreId, 'store_default');
 
-  // Products filter
-  const prodsRes = await app.fetch(new Request('https://looma.internal/api/store/products?category=leather'));
-  assert.equal(prodsRes.status, 200);
-  const prods = (await prodsRes.json()) as any[];
-  assert.ok(Array.isArray(prods));
-  assert.ok(prods.some((p: any) => p.name.includes('Weekender')));
+  // Unconfigured /api/marketplace/* gracefully reports 503 for Firestore fallback
+  const unconfiguredProductsRes = await app.fetch(
+    new Request('https://looma.internal/api/marketplace/products')
+  );
+  assert.equal(unconfiguredProductsRes.status, 503);
+  const productsErr = (await unconfiguredProductsRes.json()) as { code: string };
+  assert.equal(productsErr.code, 'COMMERCE_PROXY_UNCONFIGURED');
 
-  // Checkout
-  const checkoutRes = await app.fetch(
-    new Request('https://looma.internal/api/store/checkout', {
+  // Public commerce internal/admin bypass paths are strictly blocked
+  const adminBlockedRes = await app.fetch(
+    new Request('https://looma.internal/api/commerce/platform-admin/users')
+  );
+  assert.equal(adminBlockedRes.status, 403);
+
+  // /api/commerce/sso/authorize requires verified Firebase Bearer token
+  const ssoUnauthRes = await app.fetch(
+    new Request('https://looma.internal/api/commerce/sso/authorize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeSlug: 'maison-moretti',
-        items: [{ productId: 'prod_moretti_weekender_01', productName: 'Weekender', quantity: 1, unitPrice: 3450, storeSlug: 'maison-moretti' }],
-        customer: { name: 'Test Client', email: 'client@example.com', address: '123 Via Milano', city: 'Milan', postalCode: '20121' },
-      }),
+      body: JSON.stringify({ businessProfileId: 'bp_1' }),
     })
   );
-  assert.equal(checkoutRes.status, 200);
-  const checkoutData = (await checkoutRes.json()) as any;
-  assert.equal(checkoutData.success, true);
-  assert.equal(checkoutData.status, 'confirmed');
-  assert.equal(checkoutData.totalAmount, 3450);
+  assert.equal(ssoUnauthRes.status, 401);
 });
 
 

@@ -1,5 +1,9 @@
 import type { ThemeMode, UserPrivateSettings, UserProfile } from '../types/social';
-import { normalizeAssetUrl, sanitizeHandle } from './socialLogic';
+import {
+  normalizeAssetUrl,
+  sanitizeHandle,
+  sanitizeSafeHttpUrl,
+} from './socialLogic';
 import { isAllowlistedAdminEmail } from '../../admin/adminLogic';
 
 export interface FirebaseAuthUserLike {
@@ -118,6 +122,12 @@ export function buildFallbackUserProfile(
       interests: Array.isArray(cachedProfile.interests)
         ? cachedProfile.interests
         : [],
+      accountType: cachedProfile.accountType === 'business' ? 'business' : 'personal',
+      businessCategory:
+        typeof cachedProfile.businessCategory === 'string'
+          ? cachedProfile.businessCategory.trim().slice(0, 60)
+          : '',
+      businessWebsiteUrl: sanitizeSafeHttpUrl(cachedProfile.businessWebsiteUrl, 200),
       followersCount: Number(cachedProfile.followersCount || 0),
       followingCount: Number(cachedProfile.followingCount || 0),
       isVerified: Boolean(cachedProfile.isVerified || isAdmin),
@@ -134,6 +144,9 @@ export function buildFallbackUserProfile(
     avatarUrl: authAvatar,
     location: 'Earth',
     interests: ['Architecture', 'Photography'],
+    accountType: 'personal',
+    businessCategory: '',
+    businessWebsiteUrl: '',
     followersCount: 0,
     followingCount: 0,
     isVerified: isAdmin,

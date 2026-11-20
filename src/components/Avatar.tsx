@@ -3,11 +3,12 @@ import { useState } from 'react';
 interface AvatarProps {
   src?: string;
   name: string;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   online?: boolean;
 }
 
 const SIZE_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
+  xs: 'w-5 h-5 text-[9px]',
   sm: 'w-8 h-8 text-xs',
   md: 'w-10 h-10 text-sm',
   lg: 'w-14 h-14 text-base',
@@ -15,6 +16,7 @@ const SIZE_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
 };
 
 const DOT_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
+  xs: 'w-2 h-2',
   sm: 'w-2.5 h-2.5',
   md: 'w-3 h-3',
   lg: 'w-3.5 h-3.5',

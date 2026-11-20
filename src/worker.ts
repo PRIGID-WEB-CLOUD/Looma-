@@ -372,10 +372,11 @@ export function createWorkerApp() {
     c.header('X-Frame-Options', 'SAMEORIGIN');
 
     const reqOrigin = c.req.header('origin');
+    const env = c.env || {};
     const configuredOrigins = [
-      cleanCallsEnvValue(c.env.ALLOWED_ORIGINS),
-      cleanCallsEnvValue(c.env.PUBLIC_APP_URL),
-      cleanCallsEnvValue(c.env.APP_URL),
+      cleanCallsEnvValue(env.ALLOWED_ORIGINS),
+      cleanCallsEnvValue(env.PUBLIC_APP_URL),
+      cleanCallsEnvValue(env.APP_URL),
     ]
       .filter(Boolean)
       .join(',');

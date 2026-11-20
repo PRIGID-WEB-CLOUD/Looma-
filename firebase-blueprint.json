@@ -50,6 +50,18 @@
         "isVerified": {
           "type": "boolean"
         },
+        "accountType": {
+          "type": "string",
+          "enum": ["personal", "business"]
+        },
+        "businessCategory": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "businessWebsiteUrl": {
+          "type": "string",
+          "maxLength": 200
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

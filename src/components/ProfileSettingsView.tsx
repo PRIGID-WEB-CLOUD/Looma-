@@ -13,8 +13,14 @@ import {
   ShieldCheck,
   Sun,
   Trash2,
+  User,
 } from 'lucide-react';
 import type { PushPermissionState } from '../services/notifications';
+import type {
+  ActiveIdentity,
+  BusinessMembership,
+  BusinessProfile,
+} from '../types/business';
 import type {
   MessagePrivacy,
   ProfileVisibility,
@@ -23,12 +29,24 @@ import type {
   UserProfile,
   VerificationRequest,
 } from '../types/social';
+import {
+  BUSINESS_CATEGORIES,
+  BUSINESS_CURRENCIES,
+  normalizeBusinessSlug,
+  updateBusinessProfile,
+  validateBusinessProfileInput,
+} from '../services/businessProfiles';
 import { RequestVerificationModal } from './RequestVerificationModal';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
 } from '../services/storage';
-import { INTEREST_OPTIONS, validateProfileInput } from '../utils/socialLogic';
+import {
+  BUSINESS_ACCOUNT_CATEGORIES,
+  INTEREST_OPTIONS,
+  validateBusinessAccountDetails,
+  validateProfileInput,
+} from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import type { LegalDocId } from '../utils/legalLogic';
@@ -39,6 +57,13 @@ interface ProfileSettingsViewProps {
   accountEmail?: string | null;
   theme: ThemeMode;
   pushPermission: PushPermissionState;
+  activeIdentity?: ActiveIdentity;
+  businesses?: BusinessProfile[];
+  memberships?: BusinessMembership[];
+  onSwitchToPersonal?: () => void;
+  onSwitchToBusiness?: (businessProfileId: string) => void;
+  onOpenBusinessProfile?: (slug: string) => void;
+  onEditBusiness?: (business: BusinessProfile) => void;
   onSetTheme: (theme: ThemeMode) => void;
   onEnablePush: () => Promise<PushPermissionState>;
   onLogout: () => Promise<void>;
@@ -110,6 +135,11 @@ export function ProfileSettingsView({
   accountEmail,
   theme,
   pushPermission,
+  activeIdentity,
+  businesses = [],
+  memberships = [],
+  onSwitchToPersonal,
+  onSwitchToBusiness,
   onSetTheme,
   onEnablePush,
   onLogout,
@@ -128,6 +158,15 @@ export function ProfileSettingsView({
   const [bio, setBio] = useState(profile.bio);
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl);
   const [interests, setInterests] = useState<string[]>(profile.interests);
+  const [businessCategory, setBusinessCategory] = useState(
+    profile.businessCategory || BUSINESS_ACCOUNT_CATEGORIES[0]
+  );
+  const [businessWebsiteUrl, setBusinessWebsiteUrl] = useState(
+    profile.businessWebsiteUrl || ''
+  );
+  const [transitionPanelOpen, setTransitionPanelOpen] = useState(false);
+  const [transitionBusy, setTransitionBusy] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   const [pushEnabled, setPushEnabled] = useState(privateSettings.pushEnabled);
@@ -157,6 +196,143 @@ export function ProfileSettingsView({
   const syncedUidRef = useRef<string>(profile.uid);
   const isDirtyRef = useRef<boolean>(false);
 
+  const isUnifiedBusiness = profile.accountType === 'business';
+  const activeBusinessProfile =
+    activeIdentity?.type === 'business'
+      ? businesses.find((b) => b.id === activeIdentity.businessProfileId) ||
+        activeIdentity.businessProfile
+      : null;
+  const activeBusinessRole =
+    activeIdentity?.type === 'business'
+      ? memberships.find((m) => m.businessProfileId === activeIdentity.businessProfileId)?.role ||
+        activeIdentity.role
+      : null;
+  const isBusinessMode = Boolean(activeBusinessProfile);
+  const canEditActiveBusiness =
+    activeBusinessRole === 'OWNER' || activeBusinessRole === 'ADMIN';
+
+  const [bizDisplayName, setBizDisplayName] = useState(
+    activeBusinessProfile?.displayName || ''
+  );
+  const [bizSlug, setBizSlug] = useState(activeBusinessProfile?.slug || '');
+  const [bizCategory, setBizCategory] = useState(
+    activeBusinessProfile?.category || BUSINESS_CATEGORIES[0]
+  );
+  const [bizBio, setBizBio] = useState(activeBusinessProfile?.bio || '');
+  const [bizLocation, setBizLocation] = useState(
+    activeBusinessProfile?.location || ''
+  );
+  const [bizWebsiteUrl, setBizWebsiteUrl] = useState(
+    activeBusinessProfile?.websiteUrl || ''
+  );
+  const [bizCurrency, setBizCurrency] = useState(
+    activeBusinessProfile?.currency || 'USD'
+  );
+  const [bizLogoUrl, setBizLogoUrl] = useState(
+    activeBusinessProfile?.logoUrl || ''
+  );
+  const [bizUploadingLogo, setBizUploadingLogo] = useState(false);
+  const [bizSaving, setBizSaving] = useState(false);
+  const [bizError, setBizError] = useState<string | null>(null);
+  const [bizSavedNotice, setBizSavedNotice] = useState<string | null>(null);
+  const bizLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const syncedBizIdRef = useRef<string | null>(activeBusinessProfile?.id || null);
+  const isBizDirtyRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const nextBizId = activeBusinessProfile?.id || null;
+    const bizChanged = syncedBizIdRef.current !== nextBizId;
+    if (bizChanged || !isBizDirtyRef.current) {
+      syncedBizIdRef.current = nextBizId;
+      isBizDirtyRef.current = false;
+      setBizDisplayName(activeBusinessProfile?.displayName || '');
+      setBizSlug(activeBusinessProfile?.slug || '');
+      setBizCategory(activeBusinessProfile?.category || BUSINESS_CATEGORIES[0]);
+      setBizBio(activeBusinessProfile?.bio || '');
+      setBizLocation(activeBusinessProfile?.location || '');
+      setBizWebsiteUrl(activeBusinessProfile?.websiteUrl || '');
+      setBizCurrency(activeBusinessProfile?.currency || 'USD');
+      setBizLogoUrl(activeBusinessProfile?.logoUrl || '');
+      if (bizChanged) {
+        setBizError(null);
+        setBizSavedNotice(null);
+      }
+    }
+  }, [activeBusinessProfile]);
+
+  const handleBizLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeBusinessProfile) return;
+    setBizError(null);
+    setBizSavedNotice(null);
+    setBizUploadingLogo(true);
+    try {
+      const uploaded = await uploadMediaToCloudflareR2(file, 'avatars');
+      if (uploaded.kind !== 'image') {
+        void deleteUploadedMedia(uploaded.url, { ignoreNotFound: true }).catch(
+          () => {}
+        );
+        setBizError('Please select a valid image file (PNG, JPG, WebP, GIF, or AVIF).');
+        return;
+      }
+      isBizDirtyRef.current = true;
+      setBizLogoUrl(uploaded.url);
+    } catch (err) {
+      setBizError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to upload logo to Cloudflare R2.'
+      );
+    } finally {
+      setBizUploadingLogo(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveBusinessDetails = async () => {
+    if (!activeBusinessProfile || bizSaving || bizUploadingLogo) return;
+    const validation = validateBusinessProfileInput({
+      displayName: bizDisplayName,
+      slug: bizSlug,
+      category: bizCategory,
+      bio: bizBio,
+      websiteUrl: bizWebsiteUrl,
+      location: bizLocation,
+      currency: bizCurrency,
+    });
+    if (!validation.valid) {
+      setBizError(validation.error || 'Please review your Business Profile details.');
+      setBizSavedNotice(null);
+      return;
+    }
+
+    setBizError(null);
+    setBizSavedNotice(null);
+    setBizSaving(true);
+    try {
+      await updateBusinessProfile(
+        activeBusinessProfile.id,
+        activeBusinessProfile.slug,
+        {
+          ...validation.clean,
+          logoUrl: bizLogoUrl,
+          bannerUrl: activeBusinessProfile.bannerUrl || '',
+          ownerUid: activeBusinessProfile.ownerUid,
+        }
+      );
+      isBizDirtyRef.current = false;
+      setBizSavedNotice('Business profile details saved');
+    } catch (err) {
+      setBizError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save Business Profile details.'
+      );
+    } finally {
+      setBizSaving(false);
+    }
+  };
+
   useEffect(() => {
     const uidChanged = syncedUidRef.current !== profile.uid;
     if (uidChanged || !isDirtyRef.current) {
@@ -168,6 +344,14 @@ export function ProfileSettingsView({
       setBio(profile.bio);
       setAvatarUrl(profile.avatarUrl);
       setInterests(profile.interests);
+      setBusinessCategory(
+        profile.businessCategory || BUSINESS_ACCOUNT_CATEGORIES[0]
+      );
+      setBusinessWebsiteUrl(profile.businessWebsiteUrl || '');
+      if (uidChanged) {
+        setTransitionPanelOpen(false);
+        setTransitionError(null);
+      }
       setPushEnabled(privateSettings.pushEnabled);
       setNotifyLikes(privateSettings.notifyLikes);
       setNotifyComments(privateSettings.notifyComments);
@@ -176,6 +360,39 @@ export function ProfileSettingsView({
       setMessagePrivacy(privateSettings.messagePrivacy);
     }
   }, [profile, privateSettings]);
+
+  const handleActivateBusinessMode = async () => {
+    const bizCheck = validateBusinessAccountDetails(
+      businessCategory,
+      businessWebsiteUrl
+    );
+    if (!bizCheck.valid) {
+      setTransitionError(bizCheck.error || 'Please review your business details.');
+      return;
+    }
+    setTransitionError(null);
+    setError(null);
+    setSavedNotice(null);
+    setTransitionBusy(true);
+    try {
+      await onUpdateProfile({
+        accountType: 'business',
+        businessCategory: businessCategory.trim(),
+        businessWebsiteUrl: businessWebsiteUrl.trim(),
+      });
+      setTransitionPanelOpen(false);
+      isDirtyRef.current = false;
+      setSavedNotice('Profile transitioned to Business mode');
+    } catch (err) {
+      setTransitionError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to transition profile to Business mode.'
+      );
+    } finally {
+      setTransitionBusy(false);
+    }
+  };
 
   const handleAvatarUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -235,6 +452,18 @@ export function ProfileSettingsView({
       return;
     }
 
+    if (isUnifiedBusiness) {
+      const bizCheck = validateBusinessAccountDetails(
+        businessCategory,
+        businessWebsiteUrl
+      );
+      if (!bizCheck.valid) {
+        setError(bizCheck.error || 'Please review your business details.');
+        setSavedNotice(null);
+        return;
+      }
+    }
+
     setError(null);
     setSaving(true);
     try {
@@ -246,6 +475,13 @@ export function ProfileSettingsView({
         bio: bio.trim(),
         avatarUrl,
         interests,
+        ...(isUnifiedBusiness
+          ? {
+              accountType: 'business',
+              businessCategory: businessCategory.trim(),
+              businessWebsiteUrl: businessWebsiteUrl.trim(),
+            }
+          : {}),
       });
       await onUpdatePrivateSettings({
         pushEnabled,
@@ -297,32 +533,483 @@ export function ProfileSettingsView({
         </p>
       </div>
 
-      {/* Business Profiles & Brands Section */}
-      <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-            <Building2 className="w-5 h-5" aria-hidden="true" />
+      {/* Unified In-Place Normal <-> Business Profile Transition */}
+      {!isBusinessMode && (
+        <div
+          data-testid="in-place-profile-conversion"
+          className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                {isUnifiedBusiness ? (
+                  <Building2 className="w-5 h-5" aria-hidden="true" />
+                ) : (
+                  <User className="w-5 h-5" aria-hidden="true" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                  {isUnifiedBusiness
+                    ? 'Unified Business Profile'
+                    : 'Unified Personal Profile'}
+                </p>
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                  {isUnifiedBusiness
+                    ? 'Business Profile Mode Active'
+                    : 'Transition Normal Profile to Business Profile'}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  {isUnifiedBusiness
+                    ? `Your single unified account (@${profile.handle}) is displayed as a Business Profile${profile.businessCategory ? ` in ${profile.businessCategory}` : ''}. Your followers, posts, verification badge, and messages stay intact.`
+                    : `Convert your existing @${profile.handle} account into a Business Profile in-place—keeping your followers, posts, verification badge, and messages under one unified identity.`}
+                </p>
+              </div>
+            </div>
+
+            {!isUnifiedBusiness && !transitionPanelOpen && (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  data-testid="transition-to-business-btn"
+                  onClick={() => {
+                    setTransitionError(null);
+                    setSavedNotice(null);
+                    setTransitionPanelOpen(true);
+                  }}
+                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Transition to Business Profile</span>
+                </button>
+              </div>
+            )}
           </div>
+
+          {transitionError && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+            >
+              {transitionError}
+            </p>
+          )}
+
+          {!isUnifiedBusiness && transitionPanelOpen && (
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="transition-business-category"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Business Category
+                  </label>
+                  <select
+                    id="transition-business-category"
+                    value={businessCategory}
+                    onChange={(e) => setBusinessCategory(e.target.value)}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  >
+                    {BUSINESS_ACCOUNT_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="transition-business-website"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Business Website (Optional)
+                  </label>
+                  <input
+                    id="transition-business-website"
+                    type="url"
+                    value={businessWebsiteUrl}
+                    onChange={(e) => setBusinessWebsiteUrl(e.target.value)}
+                    placeholder="https://studio.example.com"
+                    maxLength={200}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={transitionBusy}
+                  onClick={() => {
+                    setTransitionPanelOpen(false);
+                    setTransitionError(null);
+                  }}
+                  className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-testid="confirm-business-transition-btn"
+                  disabled={transitionBusy}
+                  onClick={() => void handleActivateBusinessMode()}
+                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>
+                    {transitionBusy
+                      ? 'Transitioning...'
+                      : 'Activate Business Profile'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Profile Switcher (Icon-Only) */}
+      <div
+        data-testid="settings-profile-switcher"
+        className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Business Profiles & Brands
+              Profile Switcher
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Create and manage separate brand profiles, storefronts, and team roles.
+              Active: {activeBusinessProfile ? activeBusinessProfile.displayName : profile.displayName}
             </p>
           </div>
-        </div>
-        <div>
-          <button
-            type="button"
-            onClick={onCreateBusiness}
-            className="min-h-[42px] px-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer"
-          >
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            <span>Create Business Profile</span>
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Personal Profile Icon */}
+            <button
+              type="button"
+              data-testid="switcher-option-personal"
+              aria-pressed={!isBusinessMode}
+              aria-label={`Switch to ${profile.displayName}`}
+              title={profile.displayName}
+              onClick={() => {
+                setSavedNotice(null);
+                onSwitchToPersonal?.();
+              }}
+              className={`relative rounded-full p-0.5 transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+                !isBusinessMode
+                  ? 'ring-2 ring-blue-600 dark:ring-blue-400'
+                  : 'opacity-75 hover:opacity-100'
+              }`}
+            >
+              <Avatar src={profile.avatarUrl} name={profile.displayName} size="md" />
+              {!isBusinessMode && (
+                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-600 text-white border-2 border-white dark:border-slate-900 flex items-center justify-center">
+                  <Check className="w-2.5 h-2.5" aria-hidden="true" />
+                </span>
+              )}
+            </button>
+
+            {/* Linked Business Profile Icons */}
+            {businesses.map((biz) => {
+              const selected =
+                isBusinessMode && activeBusinessProfile?.id === biz.id;
+              return (
+                <button
+                  key={biz.id}
+                  type="button"
+                  data-testid={`switcher-option-business-${biz.id}`}
+                  aria-pressed={selected}
+                  aria-label={`Switch to ${biz.displayName}`}
+                  title={biz.displayName}
+                  onClick={() => {
+                    setSavedNotice(null);
+                    onSwitchToBusiness?.(biz.id);
+                  }}
+                  className={`relative rounded-full p-0.5 transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+                    selected
+                      ? 'ring-2 ring-blue-600 dark:ring-blue-400'
+                      : 'opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <Avatar src={biz.logoUrl} name={biz.displayName} size="md" />
+                  {selected && (
+                    <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-600 text-white border-2 border-white dark:border-slate-900 flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" aria-hidden="true" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {onCreateBusiness && (
+              <button
+                type="button"
+                onClick={onCreateBusiness}
+                aria-label="Create Business Storefront"
+                title="Create Business Storefront"
+                className="w-11 h-11 rounded-full border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Active Business Profile Direct Editor (shown when switched to a Business Storefront) */}
+      {isBusinessMode && activeBusinessProfile && (
+        <div
+          data-testid="active-business-settings-panel"
+          className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-5"
+        >
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+              01 · Business Identity · {activeBusinessRole || 'MEMBER'}
+            </p>
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5 inline-flex items-center gap-1.5">
+              <span>Edit {activeBusinessProfile.displayName}</span>
+              {activeBusinessProfile.verified && <VerifiedBadge size={14} />}
+            </h2>
+          </div>
+
+          {bizError && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
+            >
+              {bizError}
+            </p>
+          )}
+
+          {bizSavedNotice && (
+            <p
+              role="status"
+              className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2"
+            >
+              <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>{bizSavedNotice}</span>
+            </p>
+          )}
+
+          {canEditActiveBusiness ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-4">
+                <Avatar
+                  src={bizLogoUrl}
+                  name={bizDisplayName || activeBusinessProfile.displayName}
+                  size="lg"
+                />
+                <div className="space-y-1.5">
+                  <input
+                    ref={bizLogoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleBizLogoUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={bizUploadingLogo}
+                    onClick={() => bizLogoInputRef.current?.click()}
+                    className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    <Camera className="w-4 h-4" aria-hidden="true" />
+                    <span>{bizUploadingLogo ? 'Uploading...' : 'Upload Business Logo'}</span>
+                  </button>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Updates your Business Profile avatar across Marketplace and posts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="settings-biz-name"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Business Name
+                  </label>
+                  <input
+                    id="settings-biz-name"
+                    type="text"
+                    value={bizDisplayName}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizDisplayName(e.target.value);
+                      setBizSavedNotice(null);
+                    }}
+                    maxLength={80}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="settings-biz-slug"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Business Handle
+                  </label>
+                  <input
+                    id="settings-biz-slug"
+                    type="text"
+                    value={bizSlug}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizSlug(normalizeBusinessSlug(e.target.value));
+                      setBizSavedNotice(null);
+                    }}
+                    maxLength={64}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="settings-biz-category"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Category
+                  </label>
+                  <select
+                    id="settings-biz-category"
+                    value={bizCategory}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizCategory(e.target.value);
+                      setBizSavedNotice(null);
+                    }}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  >
+                    {BUSINESS_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="settings-biz-currency"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Storefront Currency
+                  </label>
+                  <select
+                    id="settings-biz-currency"
+                    value={bizCurrency}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizCurrency(e.target.value);
+                      setBizSavedNotice(null);
+                    }}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  >
+                    {BUSINESS_CURRENCIES.map((cur) => (
+                      <option key={cur} value={cur}>
+                        {cur}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="settings-biz-location"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    City or Studio Location
+                  </label>
+                  <input
+                    id="settings-biz-location"
+                    type="text"
+                    value={bizLocation}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizLocation(e.target.value);
+                      setBizSavedNotice(null);
+                    }}
+                    maxLength={80}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="settings-biz-website"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                  >
+                    Business Website (Optional)
+                  </label>
+                  <input
+                    id="settings-biz-website"
+                    type="url"
+                    value={bizWebsiteUrl}
+                    onChange={(e) => {
+                      isBizDirtyRef.current = true;
+                      setBizWebsiteUrl(e.target.value);
+                      setBizSavedNotice(null);
+                    }}
+                    placeholder="https://studio.example.com"
+                    maxLength={500}
+                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="settings-biz-bio"
+                    className="block text-xs font-medium text-slate-600 dark:text-slate-400"
+                  >
+                    Business Bio
+                  </label>
+                  <span className="text-xs text-slate-400 tabular-nums">
+                    {bizBio.trim().length}/280
+                  </span>
+                </div>
+                <textarea
+                  id="settings-biz-bio"
+                  rows={3}
+                  value={bizBio}
+                  onChange={(e) => {
+                    isBizDirtyRef.current = true;
+                    setBizBio(e.target.value);
+                    setBizSavedNotice(null);
+                  }}
+                  maxLength={280}
+                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  data-testid="save-business-details-btn"
+                  disabled={bizSaving || bizUploadingLogo}
+                  onClick={() => void handleSaveBusinessDetails()}
+                  className="min-h-[42px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {bizSaving ? 'Saving...' : 'Save Business Details'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Your role ({activeBusinessRole || 'MEMBER'}) does not include editing Business Profile details. Contact the Business Owner or Admin to update profile information.
+            </p>
+          )}
+        </div>
+      )}
 
       <form onSubmit={handleSave} className="space-y-5">
         {error && (
@@ -344,14 +1031,15 @@ export function ProfileSettingsView({
           </div>
         )}
 
-        {/* 01 · Identity & Public Profile */}
+        {/* 01 · Identity & Public Profile (Unified Normal or Business Profile) */}
+        {!isBusinessMode && (
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-5">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 tabular-nums">
               01 · Identity
             </p>
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-              Public Profile
+              {isUnifiedBusiness ? 'Business Profile Details' : 'Normal Profile Details'}
             </h2>
           </div>
 
@@ -445,6 +1133,61 @@ export function ProfileSettingsView({
               className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
             />
           </div>
+
+          {isUnifiedBusiness && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div>
+                <label
+                  htmlFor="settings-business-category"
+                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                >
+                  Business Category
+                </label>
+                <select
+                  id="settings-business-category"
+                  value={businessCategory}
+                  onChange={(e) => {
+                    isDirtyRef.current = true;
+                    setBusinessCategory(e.target.value);
+                    setSavedNotice(null);
+                  }}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                >
+                  {BUSINESS_ACCOUNT_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                  {businessCategory &&
+                    !BUSINESS_ACCOUNT_CATEGORIES.includes(businessCategory) && (
+                      <option value={businessCategory}>{businessCategory}</option>
+                    )}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="settings-business-website"
+                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
+                >
+                  Business Website (Optional)
+                </label>
+                <input
+                  id="settings-business-website"
+                  type="url"
+                  value={businessWebsiteUrl}
+                  onChange={(e) => {
+                    isDirtyRef.current = true;
+                    setBusinessWebsiteUrl(e.target.value);
+                    setSavedNotice(null);
+                  }}
+                  placeholder="https://studio.example.com"
+                  maxLength={200}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -551,6 +1294,7 @@ export function ProfileSettingsView({
             </div>
           </div>
         </div>
+        )}
 
         {/* 02 · Appearance & Display */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
@@ -601,6 +1345,8 @@ export function ProfileSettingsView({
         </div>
 
         {/* 03 · Notifications & Engagement */}
+        {!isBusinessMode && (
+        <>
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -761,6 +1507,8 @@ export function ProfileSettingsView({
             </div>
           </div>
         </div>
+        </>
+        )}
 
         {/* 05 · Account Session */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
@@ -930,15 +1678,17 @@ export function ProfileSettingsView({
         </div>
 
         {/* Bottom Action Bar */}
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={saving}
-            className="min-h-[44px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-60"
-          >
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
-        </div>
+        {!isBusinessMode && (
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={saving}
+              className="min-h-[44px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+        )}
       </form>
 
       <RequestVerificationModal

@@ -1,10 +1,12 @@
 import { Plus } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import type { StoryGroup, UserProfile } from '../types/social';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 
 interface StoriesStripProps {
   profile: UserProfile;
+  activeBusinessProfile?: BusinessProfile | null;
   storyGroups: StoryGroup[];
   onOpenStory: (group: StoryGroup) => void;
   onOpenAddStory: () => void;
@@ -12,12 +14,22 @@ interface StoriesStripProps {
 
 export function StoriesStrip({
   profile,
+  activeBusinessProfile = null,
   storyGroups,
   onOpenStory,
   onOpenAddStory,
 }: StoriesStripProps) {
   const myGroup = storyGroups.find((g) => g.authorId === profile.uid) || null;
   const otherGroups = storyGroups.filter((g) => g.authorId !== profile.uid);
+  const myAvatar = activeBusinessProfile
+    ? activeBusinessProfile.logoUrl
+    : profile.avatarUrl;
+  const myName = activeBusinessProfile
+    ? activeBusinessProfile.displayName
+    : profile.displayName;
+  const myVerified = activeBusinessProfile
+    ? activeBusinessProfile.verified
+    : profile.isVerified;
 
   return (
     <section
@@ -54,14 +66,14 @@ export function StoriesStrip({
               }`}
             >
               <Avatar
-                src={profile.avatarUrl}
-                name={profile.displayName}
+                src={myAvatar}
+                name={myName}
                 size="lg"
               />
             </div>
             <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full inline-flex items-center gap-0.5">
               <span className="truncate">Your Story</span>
-              {(myGroup.authorVerified || profile.isVerified) && (
+              {(myGroup.authorVerified || myVerified) && (
                 <VerifiedBadge size={11} />
               )}
             </span>

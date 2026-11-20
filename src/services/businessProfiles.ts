@@ -383,6 +383,26 @@ export async function getBusinessProfileBySlug(slug: string): Promise<BusinessPr
   }
 }
 
+export async function fetchActiveBusinessProfilesForOwner(
+  ownerUid: string
+): Promise<BusinessProfile[]> {
+  const cleanUid = (ownerUid || '').trim();
+  if (!cleanUid) return [];
+  try {
+    const q = query(
+      collection(db, 'businessProfiles'),
+      where('ownerUid', '==', cleanUid),
+      where('status', '==', 'ACTIVE')
+    );
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => mapBusinessProfile(d.id, d.data()))
+      .sort((a, b) => a.createdAtMs - b.createdAtMs);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `businessProfiles?ownerUid=${cleanUid}`);
+  }
+}
+
 export function subscribeUserBusinessMemberships(
   uid: string,
   onChange: (memberships: BusinessMembership[]) => void

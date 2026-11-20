@@ -28,6 +28,7 @@ export type ConnectionsTab = 'followers' | 'following' | 'friends';
 
 export type ProfileVisibility = 'public' | 'followers';
 export type MessagePrivacy = 'everyone' | 'following';
+export type AccountType = 'personal' | 'business';
 
 export interface UserProfile {
   uid: string;
@@ -41,6 +42,9 @@ export interface UserProfile {
   followingCount: number;
   onboardingCompleted: boolean;
   isVerified?: boolean;
+  accountType?: AccountType;
+  businessCategory?: string;
+  businessWebsiteUrl?: string;
   createdAtMs: number;
   updatedAtMs: number;
 }

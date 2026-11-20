@@ -361,7 +361,7 @@ export function ProductDetailPage({
   const totalCents = subtotalCents + shippingCents;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-5 pb-12">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5 pb-12">
       {/* Top Breadcrumb Bar */}
       <div className="flex items-center justify-between gap-3">
         <button

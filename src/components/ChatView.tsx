@@ -26,6 +26,7 @@ import {
   VideoOff,
   X,
 } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import type {
   ChatMessage,
   ChatReadReceipt,
@@ -62,6 +63,7 @@ import { VerifiedBadge } from './VerifiedBadge';
 
 interface ChatViewProps {
   profile: UserProfile;
+  activeBusinessProfile?: BusinessProfile | null;
   threads: ChatThread[];
   messagesByChat: Record<string, ChatMessage[]>;
   mutedChatIds: string[];
@@ -378,6 +380,7 @@ function ChatLinkCard({ url, mine }: { url: string; mine: boolean }) {
 
 export function ChatView({
   profile,
+  activeBusinessProfile = null,
   threads,
   messagesByChat,
   mutedChatIds,
@@ -899,9 +902,31 @@ export function ChatView({
           className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3"
         >
           <div className="flex items-center justify-between gap-2">
-            <h1 className="font-display text-base font-bold truncate">
-              Messages
-            </h1>
+            <div className="flex items-center gap-2 min-w-0">
+              <Avatar
+                src={
+                  activeBusinessProfile
+                    ? activeBusinessProfile.logoUrl
+                    : profile.avatarUrl
+                }
+                name={
+                  activeBusinessProfile
+                    ? activeBusinessProfile.displayName
+                    : profile.displayName
+                }
+                size="sm"
+              />
+              <div className="min-w-0">
+                <h1 className="font-display text-base font-bold truncate leading-tight">
+                  Messages
+                </h1>
+                {activeBusinessProfile && (
+                  <p className="text-[11px] text-blue-600 dark:text-blue-400 font-medium truncate">
+                    {activeBusinessProfile.displayName}
+                  </p>
+                )}
+              </div>
+            </div>
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
@@ -1086,46 +1111,53 @@ export function ChatView({
                 >
                   <ArrowLeft className="w-5 h-5" aria-hidden="true" />
                 </button>
-                <div className="relative shrink-0">
-                  <Avatar
-                    src={activeThread.partnerAvatar}
-                    name={activeThread.title}
-                    size="md"
-                    online={Boolean(activeStatus?.isOnline)}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="font-display text-sm font-semibold truncate flex items-center gap-1.5 min-w-0 text-slate-900 dark:text-slate-100">
-                    <span className="truncate">{activeThread.title}</span>
-                    {!activeThread.isGroup &&
-                      activeThread.partnerUid &&
-                      verifiedUidSet.has(activeThread.partnerUid) && (
-                        <VerifiedBadge size={14} />
+                <button
+                  type="button"
+                  onClick={() => setShowChatInfo(true)}
+                  aria-label={`View information for ${activeThread.title}`}
+                  className="flex items-center gap-3 min-w-0 text-left group cursor-pointer rounded-xl py-0.5 pr-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                >
+                  <div className="relative shrink-0">
+                    <Avatar
+                      src={activeThread.partnerAvatar}
+                      name={activeThread.title}
+                      size="md"
+                      online={Boolean(activeStatus?.isOnline)}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-sm font-semibold truncate flex items-center gap-1.5 min-w-0 text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                      <span className="truncate">{activeThread.title}</span>
+                      {!activeThread.isGroup &&
+                        activeThread.partnerUid &&
+                        verifiedUidSet.has(activeThread.partnerUid) && (
+                          <VerifiedBadge size={14} />
+                        )}
+                      {activeThreadMuted && (
+                        <BellOff
+                          className="w-3.5 h-3.5 text-slate-400 shrink-0"
+                          aria-label="Notifications muted"
+                        />
                       )}
-                    {activeThreadMuted && (
-                      <BellOff
-                        className="w-3.5 h-3.5 text-slate-400 shrink-0"
-                        aria-label="Notifications muted"
-                      />
-                    )}
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    {activeStatus?.isOnline ? (
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active now</span>
-                    ) : (
-                      <span>
-                        {activeStatus?.statusLabel ||
-                          (activeThread.isGroup
-                            ? `${activeThread.memberIds.length} members`
-                            : activeThread.partnerHandle
-                              ? `@${activeThread.partnerHandle}`
-                              : activeThread.isParticipantResolved === false
-                                ? 'Resolving profile...'
-                                : 'Direct conversation')}
-                      </span>
-                    )}
-                  </p>
-                </div>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                      {activeStatus?.isOnline ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active now</span>
+                      ) : (
+                        <span>
+                          {activeStatus?.statusLabel ||
+                            (activeThread.isGroup
+                              ? `${activeThread.memberIds.length} members`
+                              : activeThread.partnerHandle
+                                ? `@${activeThread.partnerHandle}`
+                                : activeThread.isParticipantResolved === false
+                                  ? 'Resolving profile...'
+                                  : 'Direct conversation')}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </button>
               </div>
 
               <div className="flex items-center gap-1 shrink-0">

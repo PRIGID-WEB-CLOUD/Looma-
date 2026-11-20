@@ -1,4 +1,5 @@
 import type {
+  AccountType,
   AppNotification,
   ChatMessage,
   ChatReadReceipt,
@@ -34,6 +35,64 @@ export const INTEREST_OPTIONS: string[] = [
   'Urbanism',
   'Studio Craft',
 ];
+
+export const BUSINESS_ACCOUNT_CATEGORIES: string[] = [
+  'Art & Design',
+  'Fashion & Apparel',
+  'Home & Living',
+  'Beauty & Wellness',
+  'Electronics & Tech',
+  'Food & Pantry',
+  'Studio & Services',
+  'Creator & Media',
+  'General Merchandise',
+];
+
+export function isSafeExternalHttpUrl(raw?: string): boolean {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizeSafeHttpUrl(raw?: string, maxLength = 200): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim().slice(0, maxLength);
+  if (!trimmed) return '';
+  return isSafeExternalHttpUrl(trimmed) ? trimmed : '';
+}
+
+export function validateBusinessAccountDetails(
+  category: string,
+  websiteUrl?: string
+): { valid: boolean; error?: string } {
+  const cleanCategory = (category || '').trim();
+  if (cleanCategory.length < 2 || cleanCategory.length > 60) {
+    return {
+      valid: false,
+      error: 'Choose a business category between 2 and 60 characters.',
+    };
+  }
+  const cleanUrl = (websiteUrl || '').trim();
+  if (cleanUrl.length > 200) {
+    return {
+      valid: false,
+      error: 'Business website URL must be 200 characters or fewer.',
+    };
+  }
+  if (cleanUrl && !isSafeExternalHttpUrl(cleanUrl)) {
+    return {
+      valid: false,
+      error: 'Business website URL must start with https:// or http://.',
+    };
+  }
+  return { valid: true };
+}
 
 export function sanitizeHandle(raw: string): string {
   const cleaned = raw
@@ -2435,6 +2494,28 @@ export function normalizeProfileUpdateFields(
     .filter(Boolean)
     .slice(0, 8);
 
+  const accountType: AccountType =
+    updates.accountType === 'business'
+      ? 'business'
+      : updates.accountType === 'personal'
+        ? 'personal'
+        : current.accountType === 'business'
+          ? 'business'
+          : 'personal';
+
+  const businessCategory = (
+    typeof updates.businessCategory === 'string'
+      ? updates.businessCategory
+      : current.businessCategory || ''
+  )
+    .trim()
+    .slice(0, 60);
+
+  const businessWebsiteUrl =
+    typeof updates.businessWebsiteUrl === 'string'
+      ? sanitizeSafeHttpUrl(updates.businessWebsiteUrl, 200)
+      : sanitizeSafeHttpUrl(current.businessWebsiteUrl, 200);
+
   return {
     ...current,
     ...updates,
@@ -2444,6 +2525,9 @@ export function normalizeProfileUpdateFields(
     location,
     avatarUrl,
     interests,
+    accountType,
+    businessCategory,
+    businessWebsiteUrl,
     followersCount: Math.max(0, Math.floor(Number(updates.followersCount ?? current.followersCount ?? 0))),
     followingCount: Math.max(0, Math.floor(Number(updates.followingCount ?? current.followingCount ?? 0))),
     onboardingCompleted:

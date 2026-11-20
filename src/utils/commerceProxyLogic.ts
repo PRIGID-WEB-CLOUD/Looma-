@@ -83,19 +83,20 @@ export function cleanCommerceEnvUrl(value: string | undefined): string {
   }
 }
 
-export function parseCommerceConfig(env: {
+export function parseCommerceConfig(env?: {
   COMMERCE_API_URL?: string;
   COMMERCE_DEFAULT_STORE_ID?: string;
   COMMERCE_PUBLISHABLE_KEY?: string;
   COMMERCE_ADMIN_DASHBOARD_URL?: string;
   COMMERCE_INTERNAL_SSO_SECRET?: string;
 }): CommerceEnvConfig {
+  const safeEnv = env || {};
   return {
-    apiUrl: cleanCommerceEnvUrl(env.COMMERCE_API_URL),
-    defaultStoreId: (env.COMMERCE_DEFAULT_STORE_ID || '').trim(),
-    publishableKey: (env.COMMERCE_PUBLISHABLE_KEY || '').trim(),
-    adminDashboardUrl: cleanCommerceEnvUrl(env.COMMERCE_ADMIN_DASHBOARD_URL),
-    internalSsoSecret: (env.COMMERCE_INTERNAL_SSO_SECRET || '').trim(),
+    apiUrl: cleanCommerceEnvUrl(safeEnv.COMMERCE_API_URL),
+    defaultStoreId: (safeEnv.COMMERCE_DEFAULT_STORE_ID || '').trim(),
+    publishableKey: (safeEnv.COMMERCE_PUBLISHABLE_KEY || '').trim(),
+    adminDashboardUrl: cleanCommerceEnvUrl(safeEnv.COMMERCE_ADMIN_DASHBOARD_URL),
+    internalSsoSecret: (safeEnv.COMMERCE_INTERNAL_SSO_SECRET || '').trim(),
   };
 }
 
