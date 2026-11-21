@@ -77,6 +77,7 @@ interface PublicProfileViewProps {
   onReportUser?: (creator: UserProfile, category: 'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other', reason: string) => Promise<void>;
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
+  onOpenComments?: (post: Post) => void;
 }
 
 export function PublicProfileView({
@@ -117,6 +118,7 @@ export function PublicProfileView({
   onReportUser,
   onSelectHashtag,
   onMentionClick,
+  onOpenComments,
 }: PublicProfileViewProps) {
   const [subTab, setSubTab] = useState<'posts' | 'media'>('posts');
   const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
@@ -572,6 +574,7 @@ export function PublicProfileView({
               onSelectHashtag={onSelectHashtag}
               onMentionClick={onMentionClick}
               onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
+              onOpenComments={onOpenComments}
             />
           ))
         )}

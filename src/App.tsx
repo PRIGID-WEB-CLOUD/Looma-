@@ -1,17 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  Bell,
+  ArrowLeft,
   Building2,
   LogOut,
   MessageSquare,
-  Moon,
-  Plus,
-  Settings,
   ShieldAlert,
-  ShoppingBag,
-  Sun,
-  Users,
   X,
 } from 'lucide-react';
 import { useSocialStore } from './hooks/useSocialStore';
@@ -19,12 +13,31 @@ import {
   ActiveIdentityProvider,
   useActiveIdentity,
 } from './contexts/ActiveIdentityContext';
-import type { BusinessProfile } from './types/business';
+import type {
+  BusinessMembership,
+  BusinessProfile,
+} from './types/business';
+import type { BusinessChatThread } from './types/businessChat';
+import type {
+  MarketplaceOrder,
+  MarketplaceProduct,
+} from './types/marketplace';
 import {
   fetchActiveBusinessProfilesForOwner,
+  launchCommerceDashboardSso,
   markAllBusinessNotificationsRead,
   markBusinessNotificationRead,
+  provisionCommerceStoreForBusiness,
+  subscribeBusinessMembers,
 } from './services/businessProfiles';
+import {
+  startOrOpenBusinessInquiry,
+  subscribeBusinessInboxChats,
+} from './services/businessChat';
+import {
+  subscribeSellerMarketplaceOrders,
+  subscribeStoreMarketplaceProducts,
+} from './services/commerce';
 import type {
   ChatThread,
   ConnectionsTab,
@@ -37,7 +50,6 @@ import {
   computeOtherUserConnections,
   countUnreadNotifications,
   extractAnnouncementIdFromNotificationId,
-  filterActiveAnnouncementsForMember,
   formatLastMessageSnippet,
   formatRelativeTime,
   formatSharedPostMessage,
@@ -63,20 +75,18 @@ import {
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
+import { BusinessPlatformLayout } from './components/BusinessPlatformLayout';
 import { BusinessProfileModal } from './components/BusinessProfileModal';
 import { BusinessSwitcherMenu } from './components/BusinessSwitcherMenu';
 import { CreatePostModal } from './components/CreatePostModal';
 import { FeedView } from './components/FeedView';
 import { IncomingCallModal } from './components/IncomingCallModal';
-import { MobileBottomNav } from './components/MobileBottomNav';
+import { NormalPlatformLayout } from './components/NormalPlatformLayout';
 import { NotificationsView } from './components/NotificationsView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { OnboardingFlow } from './components/OnboardingFlow';
 import { ProfileView } from './components/ProfileView';
-import { PushToast } from './components/PushToast';
-import { PWAInstallButton } from './components/PWAInstallButton';
 import { StoryViewerModal } from './components/StoryViewerModal';
-import { TopBar } from './components/TopBar';
 import { BrandLogoModal } from './components/BrandLogoModal';
 import { VerifiedBadge } from './components/VerifiedBadge';
 import { LoomaLogo } from './components/LoomaLogo';
@@ -129,6 +139,51 @@ const BusinessProfilePage = lazy(() =>
     default: m.BusinessProfilePage,
   }))
 );
+const SearchView = lazy(() =>
+  import('./components/SearchView').then((m) => ({
+    default: m.SearchView,
+  }))
+);
+const CommentThreadView = lazy(() =>
+  import('./components/CommentThreadView').then((m) => ({
+    default: m.CommentThreadView,
+  }))
+);
+const BusinessDashboardView = lazy(() =>
+  import('./components/business/BusinessDashboardView').then((m) => ({
+    default: m.BusinessDashboardView,
+  }))
+);
+const BusinessCatalogView = lazy(() =>
+  import('./components/business/BusinessCatalogView').then((m) => ({
+    default: m.BusinessCatalogView,
+  }))
+);
+const BusinessOrdersView = lazy(() =>
+  import('./components/business/BusinessOrdersView').then((m) => ({
+    default: m.BusinessOrdersView,
+  }))
+);
+const BusinessInboxView = lazy(() =>
+  import('./components/BusinessInboxView').then((m) => ({
+    default: m.BusinessInboxView,
+  }))
+);
+const BusinessBrandPostsView = lazy(() =>
+  import('./components/business/BusinessBrandPostsView').then((m) => ({
+    default: m.BusinessBrandPostsView,
+  }))
+);
+const BusinessTeamView = lazy(() =>
+  import('./components/business/BusinessTeamView').then((m) => ({
+    default: m.BusinessTeamView,
+  }))
+);
+const BusinessSettingsView = lazy(() =>
+  import('./components/business/BusinessSettingsView').then((m) => ({
+    default: m.BusinessSettingsView,
+  }))
+);
 const AdminApp = lazy(() => import('../admin/AdminApp'));
 const LandingPageApp = lazy(() => import('../landingpage/LandingPageApp'));
 import { isAllowlistedAdminEmail } from '../admin/adminLogic';
@@ -157,15 +212,14 @@ export default function App() {
 function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const { snapshot: initSnapshot } = useInitialization();
   const {
-    activeIdentity,
-    memberships,
-    businesses,
+    activeMembershipRole,
     activeBusinessProfile,
     businessNotifications,
     unreadBusinessNotifications,
+    businessSection,
+    setBusinessSection,
     isTransitioning,
     platformMode,
-    switchToPersonal,
     switchToBusiness,
   } = useActiveIdentity();
   const searchParams =
@@ -217,18 +271,27 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     'feed' | 'connections' | 'profile' | 'messages' | 'marketplace'
   >('feed');
   const [composerOpen, setComposerOpen] = useState(false);
-  const [composerInitialBusinessId, setComposerInitialBusinessId] = useState<string | null>(null);
   const [businessModalOpen, setBusinessModalOpen] = useState(false);
   const [businessModalMode, setBusinessModalMode] = useState<'create' | 'edit'>('create');
   const [editingBusinessProfile, setEditingBusinessProfile] = useState<BusinessProfile | null>(null);
   const [selectedBusinessSlug, setSelectedBusinessSlug] = useState<string | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [selectedCommentPostId, setSelectedCommentPostId] = useState<string | null>(null);
   const [addStoryOpen, setAddStoryOpen] = useState(false);
   const [brandModalOpen, setBrandModalOpen] = useState(false);
   const [activeStoryAuthorId, setActiveStoryAuthorId] = useState<string | null>(
     null
   );
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [chatInboxMode, setChatInboxMode] = useState<'personal' | 'business'>('personal');
+  const [activeBusinessChatId, setActiveBusinessChatId] = useState<string | null>(null);
+  const [businessInboxInitialThreadId, setBusinessInboxInitialThreadId] = useState<string | null>(null);
+  const [businessInboxThreads, setBusinessInboxThreads] = useState<BusinessChatThread[]>([]);
+  const [businessMembers, setBusinessMembers] = useState<BusinessMembership[]>([]);
+  const [businessCatalogProducts, setBusinessCatalogProducts] = useState<MarketplaceProduct[]>([]);
+  const [businessOrders, setBusinessOrders] = useState<MarketplaceOrder[]>([]);
+  const [portalBusy, setPortalBusy] = useState(false);
+
   const [selectedPublicProfile, setSelectedPublicProfile] =
     useState<UserProfile | null>(null);
   const [loadingPublicProfile, setLoadingPublicProfile] = useState(false);
@@ -269,9 +332,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     }
   };
 
-  const [dismissedAnnouncementIds, setDismissedAnnouncementIds] = useState<string[]>(() =>
-    readStoredUidList('looma_ann_dismissed_v1', store.profile.uid)
-  );
   const [readAnnouncementIds, setReadAnnouncementIds] = useState<string[]>(() =>
     readStoredUidList('looma_ann_read_v1', store.profile.uid)
   );
@@ -281,7 +341,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
 
   useEffect(() => {
     const uid = store.profile.uid;
-    setDismissedAnnouncementIds(readStoredUidList('looma_ann_dismissed_v1', uid));
     setReadAnnouncementIds(readStoredUidList('looma_ann_read_v1', uid));
     setDeletedAnnouncementIds(readStoredUidList('looma_ann_deleted_v1', uid));
   }, [store.profile.uid]);
@@ -291,25 +350,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const [submittingAppeal, setSubmittingAppeal] = useState(false);
   const [appealError, setAppealError] = useState<string | null>(null);
   const [appealSuccessNotice, setAppealSuccessNotice] = useState<string | null>(null);
-
-  const visibleAnnouncements = useMemo(
-    () =>
-      filterActiveAnnouncementsForMember(store.announcements, {
-        isVerified: Boolean(store.profile.isVerified),
-        isAdmin: isUserAdmin,
-        dismissedIds: dismissedAnnouncementIds,
-        readIds: readAnnouncementIds,
-        deletedIds: deletedAnnouncementIds,
-      }),
-    [
-      deletedAnnouncementIds,
-      dismissedAnnouncementIds,
-      isUserAdmin,
-      readAnnouncementIds,
-      store.announcements,
-      store.profile.isVerified,
-    ]
-  );
 
   const activityNotifications = useMemo(
     () =>
@@ -331,21 +371,12 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     ]
   );
 
-  const persistDismissedAnnouncements = (ids: string[]) => {
-    setDismissedAnnouncementIds((prev) => {
-      const merged = Array.from(new Set([...prev, ...ids]));
-      writeStoredUidList('looma_ann_dismissed_v1', store.profile.uid, merged);
-      return merged;
-    });
-  };
-
   const persistReadAnnouncements = (ids: string[]) => {
     setReadAnnouncementIds((prev) => {
       const merged = Array.from(new Set([...prev, ...ids]));
       writeStoredUidList('looma_ann_read_v1', store.profile.uid, merged);
       return merged;
     });
-    persistDismissedAnnouncements(ids);
   };
 
   const persistDeletedAnnouncements = (ids: string[]) => {
@@ -357,14 +388,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     persistReadAnnouncements(ids);
   };
 
-  // Once the member views the Activity page, dismiss active popup banners so they don't pop up again
   useEffect(() => {
-    if (activeTab !== 'notifications') return;
-    store.dismissToast();
-    if (visibleAnnouncements.length > 0) {
-      persistDismissedAnnouncements(visibleAnnouncements.map((a) => a.id));
+    if (activeTab === 'notifications') {
+      store.dismissToast();
     }
-  }, [activeTab, visibleAnnouncements]);
+  }, [activeTab]);
 
   const verifiedUidSet = useMemo(() => {
     const set = new Set<string>();
@@ -465,7 +493,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     store.isAuthorized,
   ]);
 
-  // Keep workspace activeTab aligned when navigating via URL (/feed, /messages, /business/:slug, etc.)
+  // Keep workspace activeTab & URL sub-params aligned when navigating via URL
   useEffect(() => {
     if (routeAccess.businessSlug) {
       setSelectedBusinessSlug(routeAccess.businessSlug);
@@ -473,10 +501,125 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     if (routeAccess.productId !== undefined) {
       setSelectedProductId(routeAccess.productId || null);
     }
+    if (routeAccess.postId !== undefined) {
+      setSelectedCommentPostId(routeAccess.postId || null);
+    }
+    if (routeAccess.tab === 'search') {
+      const q = new URLSearchParams(routeLocation.search || '').get('q');
+      if (q !== null) {
+        setFeedSearchQuery(q);
+      }
+    }
     if (routeAccess.surface === 'workspace' && routeAccess.tab) {
       setActiveTab(routeAccess.tab);
     }
-  }, [routeAccess.businessSlug, routeAccess.productId, routeAccess.surface, routeAccess.tab]);
+  }, [
+    routeAccess.businessSlug,
+    routeAccess.postId,
+    routeAccess.productId,
+    routeAccess.surface,
+    routeAccess.tab,
+    routeLocation.search,
+  ]);
+
+  // Synchronize whole-app platform workspace immediately when switching between Normal and Business Profiles
+  const prevPlatformKeyRef = useRef<string>(
+    `${platformMode}:${activeBusinessProfile?.id || ''}`
+  );
+  useEffect(() => {
+    const nextKey = `${platformMode}:${activeBusinessProfile?.id || ''}`;
+    if (prevPlatformKeyRef.current === nextKey) return;
+    prevPlatformKeyRef.current = nextKey;
+
+    if (platformMode === 'business' && activeBusinessProfile) {
+      setBusinessSection('dashboard');
+      setActiveTab('business-workspace');
+      navigateToPath('/business-workspace');
+    } else if (platformMode === 'normal') {
+      if (activeTab === 'business-workspace') {
+        setActiveTab('feed');
+        navigateToPath('/feed');
+      }
+    }
+  }, [activeBusinessProfile?.id, platformMode]);
+
+  // Subscribe to Business Platform inbox & team state while operating in Business mode
+  useEffect(() => {
+    if (
+      platformMode !== 'business' ||
+      !activeBusinessProfile?.id ||
+      !store.isAuthorized ||
+      store.isLocalAutostart
+    ) {
+      setBusinessInboxThreads([]);
+      setBusinessMembers([]);
+      return;
+    }
+    const unsubInbox = subscribeBusinessInboxChats(
+      activeBusinessProfile.id,
+      store.profile.uid,
+      setBusinessInboxThreads
+    );
+    const unsubMembers = subscribeBusinessMembers(
+      activeBusinessProfile.id,
+      setBusinessMembers
+    );
+    return () => {
+      unsubInbox();
+      unsubMembers();
+    };
+  }, [
+    activeBusinessProfile?.id,
+    platformMode,
+    store.isAuthorized,
+    store.isLocalAutostart,
+    store.profile.uid,
+  ]);
+
+  // Subscribe to catalog & orders for Business Inbox sharing & lookup
+  useEffect(() => {
+    if (
+      platformMode !== 'business' ||
+      !activeBusinessProfile?.id ||
+      businessSection !== 'inbox' ||
+      !store.isAuthorized ||
+      store.isLocalAutostart
+    ) {
+      setBusinessCatalogProducts([]);
+      setBusinessOrders([]);
+      return;
+    }
+    const unsubProducts = activeBusinessProfile.commerceStoreId
+      ? subscribeStoreMarketplaceProducts(
+          activeBusinessProfile.commerceStoreId,
+          activeBusinessProfile.ownerUid,
+          store.profile.uid,
+          setBusinessCatalogProducts
+        )
+      : () => {};
+    const unsubOrders =
+      activeBusinessProfile.commerceStoreId &&
+      activeBusinessProfile.ownerUid === store.profile.uid
+        ? subscribeSellerMarketplaceOrders(
+            store.profile.uid,
+            setBusinessOrders,
+            () => setBusinessOrders([])
+          )
+        : () => {};
+    return () => {
+      unsubProducts();
+      unsubOrders();
+    };
+  }, [
+    activeBusinessProfile?.commerceStoreId,
+    activeBusinessProfile?.id,
+    activeBusinessProfile?.ownerUid,
+    businessSection,
+    platformMode,
+    store.isAuthorized,
+    store.isLocalAutostart,
+    store.profile.uid,
+  ]);
 
   const openBusinessProfileRoute = (slug: string) => {
     const clean = slug.trim().toLowerCase();
@@ -492,6 +635,94 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     setSelectedProductId(clean);
     setActiveTab('product-detail');
     navigateToPath(`/marketplace/product/${clean}`);
+  };
+
+  const openSearchRoute = (query?: string) => {
+    const q = (query ?? '').trim();
+    if (query !== undefined) {
+      setFeedSearchQuery(query);
+    }
+    setActiveTab('search');
+    navigateToPath(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
+  };
+
+  const openPostCommentsRoute = (postId: string) => {
+    const clean = postId.trim();
+    if (!clean) return;
+    setSelectedCommentPostId(clean);
+    setActiveTab('post-comments');
+    navigateToPath(`/post/${clean}/comments`);
+  };
+
+  const handleMessageBusiness = async (
+    bp: BusinessProfile,
+    initialMessage?: string,
+    listingContext?: {
+      id: string;
+      title: string;
+      priceFormatted: string;
+      imageUrl?: string;
+      priceCents?: number;
+      currency?: string;
+      storeSlug?: string;
+    }
+  ) => {
+    if (!store.isAuthorized) {
+      navigateToPath('/auth');
+      return;
+    }
+    const thread = await startOrOpenBusinessInquiry({
+      businessProfileId: bp.id,
+      businessName: bp.displayName,
+      businessAvatar: bp.logoUrl,
+      businessSlug: bp.slug,
+      businessOwnerUid: bp.ownerUid,
+      customerUid: store.profile.uid,
+      customerName: store.profile.displayName,
+      customerAvatar: store.profile.avatarUrl,
+      customerHandle: store.profile.handle,
+      actorUid: store.profile.uid,
+      initialMessage,
+      linkedProduct: listingContext,
+    });
+    setChatInboxMode('business');
+    setActiveBusinessChatId(thread.id);
+    selectWorkspaceTab('messages');
+  };
+
+  const handleBusinessOrderMessageCustomer = async (order: MarketplaceOrder) => {
+    if (!activeBusinessProfile) return;
+    const customer =
+      store.allKnownChatUsers.find((u) => u.uid === order.buyerUid) ||
+      (await store.fetchPublicUserProfile(order.buyerUid).catch(() => null));
+    const thread = await startOrOpenBusinessInquiry({
+      businessProfileId: activeBusinessProfile.id,
+      businessName: activeBusinessProfile.displayName,
+      businessAvatar: activeBusinessProfile.logoUrl,
+      businessSlug: activeBusinessProfile.slug,
+      businessOwnerUid: activeBusinessProfile.ownerUid,
+      customerUid: order.buyerUid,
+      customerName: customer?.displayName || order.buyerName || 'Customer',
+      customerAvatar: customer?.avatarUrl || '',
+      customerHandle: customer?.handle || '',
+      actorUid: store.profile.uid,
+      linkedOrderId: order.id,
+    });
+    setBusinessInboxInitialThreadId(thread.id);
+    setBusinessSection('inbox');
+  };
+
+  const handleLaunchSellerPortal = async () => {
+    if (!activeBusinessProfile || portalBusy) return;
+    setPortalBusy(true);
+    try {
+      if (!activeBusinessProfile.commerceStoreId) {
+        await provisionCommerceStoreForBusiness(activeBusinessProfile.id);
+      }
+      await launchCommerceDashboardSso(activeBusinessProfile.id);
+    } finally {
+      setPortalBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -518,20 +749,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
       active = false;
     };
   }, [activeTab, selectedPublicProfile?.uid, store.isLocalAutostart]);
-
-  const publishableBusinesses = useMemo(
-    () =>
-      businesses.filter((biz) => {
-        const m = memberships.find((item) => item.businessProfileId === biz.id);
-        return m && (m.role === 'OWNER' || m.role === 'ADMIN' || m.role === 'EDITOR');
-      }),
-    [businesses, memberships]
-  );
-
-  const canManageBusinessIds = useMemo(
-    () => publishableBusinesses.map((b) => b.id),
-    [publishableBusinesses]
-  );
 
   const openLegalDocument = (docId: LegalDocId) => {
     if (typeof window !== 'undefined') {
@@ -644,8 +861,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
 
   const handleHashtagClick = (tag: string) => {
     const clean = normalizeHashtag(tag);
-    setFeedSearchQuery(clean ? `#${clean}` : '');
-    selectWorkspaceTab('feed');
+    openSearchRoute(clean ? `#${clean}` : '');
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -910,6 +1126,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onOpenSellerProfile={() => navigateToPath('/auth')}
                 onOpenBusinessProfile={openBusinessProfileRoute}
                 onOpenProductDetail={openProductDetailRoute}
+                allBusinesses={store.allActiveBusinesses}
                 onRequireAuth={() => navigateToPath('/auth')}
               />
             )}
@@ -1141,448 +1358,381 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     );
   }
 
-  const isMessagesFullScreen = activeTab === 'messages';
   const isMessageProfileFullScreen =
     activeTab === 'public-profile' && publicProfileReturnTab === 'messages';
-  const isMarketplaceFullScreen =
-    activeTab === 'marketplace' || activeTab === 'product-detail';
-  const hideWorkspaceRail =
-    isMessagesFullScreen || isMessageProfileFullScreen || isMarketplaceFullScreen;
 
-  return (
-    <div
-      className={
-        isMessagesFullScreen
-          ? 'h-[100dvh] overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors looma-stage-enter'
-          : 'min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-10 transition-colors looma-stage-enter'
-      }
+  const isSharedOverlayRoute =
+    activeTab === 'marketplace' ||
+    activeTab === 'product-detail' ||
+    activeTab === 'business-profile' ||
+    activeTab === 'search' ||
+    activeTab === 'post-comments' ||
+    activeTab === 'public-profile';
+
+  const isBusinessWorkspaceView =
+    platformMode === 'business' &&
+    Boolean(activeBusinessProfile) &&
+    !isSharedOverlayRoute;
+
+  const unreadBusinessInboxCount = useMemo(
+    () => businessInboxThreads.filter((t) => t.unreadByBusiness).length,
+    [businessInboxThreads]
+  );
+
+  const activeCommentPost = useMemo(
+    () =>
+      selectedCommentPostId
+        ? store.posts.find((p) => p.id === selectedCommentPostId) || null
+        : null,
+    [selectedCommentPostId, store.posts]
+  );
+
+  const normalRightRail = (
+    <aside
+      aria-label="Community creators and active conversations"
+      className="hidden xl:flex xl:w-80 shrink-0 flex-col gap-4 sticky top-23"
     >
-      <TopBar
-        activeTab={activeTab}
-        onSelectTab={selectWorkspaceTab}
-        unreadNotifications={
-          activeBusinessProfile ? unreadBusinessNotifications : unreadCount
-        }
-        onLogoClick={() => setBrandModalOpen(true)}
-        rightSlot={
-          <BusinessSwitcherMenu
-            profile={store.profile}
-            iconOnly
-            align="right"
-            onCreateBusiness={() => {
-              setBusinessModalMode('create');
-              setEditingBusinessProfile(null);
-              setBusinessModalOpen(true);
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-sm font-bold">Active Chats</h2>
+          <button
+            type="button"
+            onClick={() => {
+              setChatInboxMode('personal');
+              selectWorkspaceTab('messages');
             }}
-            onSwitchToUnifiedPersonal={async () => {
-              await store.updateProfile({ accountType: 'personal' });
-            }}
-          />
-        }
-        searchQuery={feedSearchQuery}
-        onSearchChange={(query) => {
-          setFeedSearchQuery(query);
-          if (activeTab !== 'feed' && query.trim()) {
-            selectWorkspaceTab('feed');
-          }
-        }}
-        onSearchSubmit={(query) => {
-          if (activeTab !== 'feed' && query.trim()) {
-            selectWorkspaceTab('feed');
-          }
-        }}
-      />
-
-      <PushToast
-        notification={store.activeToast}
-        onDismiss={store.dismissToast}
-        onOpenNotifications={() => selectWorkspaceTab('notifications')}
-      />
-
-      {(store.featureFlags.maintenanceMode ||
-        visibleAnnouncements.length > 0 ||
-        store.memberModeration?.status === 'restricted') && (
-        <div className="max-w-7xl w-full mx-auto px-4 md:px-6 pt-3.5 space-y-2 shrink-0">
-          {store.featureFlags.maintenanceMode && (
-            <div
-              role="status"
-              data-testid="workspace-maintenance-banner"
-              className="rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2.5"
-            >
-              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" aria-hidden="true" />
-              <span className="font-medium">
-                Scheduled maintenance mode is active. Posting and call availability may be limited.
-              </span>
-            </div>
-          )}
-
-          {store.memberModeration?.status === 'restricted' && (
-            <div
-              role="status"
-              data-testid="account-restricted-banner"
-              className="rounded-xl border border-rose-200 dark:border-rose-900/70 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs text-rose-900 dark:text-rose-200 flex flex-wrap items-center justify-between gap-3"
-            >
-              <div className="flex items-start gap-2.5 min-w-0">
-                <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
-                <div className="min-w-0">
-                  <p className="font-semibold">
-                    Account Restricted — posting, replies, and calls are paused
-                  </p>
-                  <p className="text-rose-700 dark:text-rose-300 mt-0.5">
-                    {store.memberModeration.reason || 'A moderator temporarily restricted posting actions on this account.'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {store.userAppeals[0] && (
-                  <span className="px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900 border border-rose-200 dark:border-rose-800 text-[11px] font-semibold capitalize">
-                    Appeal: {store.userAppeals[0].status}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAppealError(null);
-                    setAppealSuccessNotice(null);
-                    setAppealModalOpen(true);
-                  }}
-                  className="min-h-[36px] px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
-                >
-                  Submit Appeal
-                </button>
-              </div>
-            </div>
-          )}
-
-          {visibleAnnouncements.map((ann) => {
-            const toneClass =
-              ann.severity === 'maintenance'
-                ? 'border-rose-200 dark:border-rose-900/70 bg-rose-50/90 dark:bg-rose-950/30 text-rose-900 dark:text-rose-100'
-                : ann.severity === 'warning'
-                  ? 'border-amber-200 dark:border-amber-800/70 bg-amber-50/90 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100'
-                  : 'border-blue-200 dark:border-blue-900/70 bg-blue-50/90 dark:bg-blue-950/30 text-blue-900 dark:text-blue-100';
-            return (
-              <div
-                key={ann.id}
-                role="status"
-                data-testid={`platform-announcement-${ann.id}`}
-                className={`rounded-xl border px-4 py-3 text-xs flex items-start justify-between gap-3 ${toneClass}`}
-              >
-                <div className="min-w-0 space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md bg-white/70 dark:bg-slate-900/60 text-[10px] font-bold uppercase tracking-wider">
-                      {ann.severity}
-                    </span>
-                    <p className="font-bold text-sm">{ann.title}</p>
-                  </div>
-                  <p className="leading-relaxed opacity-90">{ann.body}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => persistReadAnnouncements([ann.id])}
-                  aria-label={`Dismiss announcement ${ann.title}`}
-                  className="min-h-[36px] min-w-[36px] rounded-lg flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 shrink-0 cursor-pointer"
-                >
-                  <X className="w-4 h-4" aria-hidden="true" />
-                </button>
-              </div>
-            );
-          })}
+            className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+          >
+            Open all
+          </button>
         </div>
-      )}
-
-      <main
-        className={
-          isMessagesFullScreen
-            ? 'flex-1 min-h-0 w-full flex flex-col overflow-hidden'
-            : isMarketplaceFullScreen || isMessageProfileFullScreen
-              ? 'w-full flex-1 min-w-0'
-              : 'max-w-7xl mx-auto px-4 md:px-6 pt-5 md:pt-7 flex items-start gap-6'
-        }
-      >
-        {/* Left Navigation & Account Rail (Desktop) */}
-        {!hideWorkspaceRail && (
-          <aside
-            aria-label="Account and appearance controls"
-            className="hidden lg:flex lg:w-64 shrink-0 flex-col gap-4 sticky top-23"
-          >
-          <div
-            data-testid="rail-profile-card"
-            className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4"
-          >
-            <div className="flex items-start justify-between gap-2">
+        {store.threads.length === 0 ? (
+          <p className="text-xs text-slate-500 dark:text-slate-400 py-2">
+            No active conversations yet.
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {store.threads.slice(0, 3).map((thread) => (
               <button
+                key={thread.id}
                 type="button"
-                onClick={() => selectWorkspaceTab('profile')}
-                className="flex items-center gap-3 text-left cursor-pointer group min-w-0 flex-1"
+                onClick={() => {
+                  setChatInboxMode('personal');
+                  setActiveChatId(thread.id);
+                  selectWorkspaceTab('messages');
+                }}
+                className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
               >
                 <Avatar
-                  src={
-                    activeBusinessProfile
-                      ? activeBusinessProfile.logoUrl
-                      : store.profile.avatarUrl
+                  src={thread.partnerAvatar}
+                  name={thread.title}
+                  size="sm"
+                  online={
+                    getThreadOnlineStatus(
+                      thread,
+                      store.profile.uid,
+                      store.onlineUserIds
+                    ).isOnline
                   }
-                  name={
-                    activeBusinessProfile
-                      ? activeBusinessProfile.displayName
-                      : store.profile.displayName
-                  }
-                  size="md"
                 />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 inline-flex items-center gap-1.5 max-w-full">
-                    <span className="truncate">
-                      {activeBusinessProfile
-                        ? activeBusinessProfile.displayName
-                        : store.profile.displayName}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold truncate">{thread.title}</p>
+                    <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
+                      {formatRelativeTime(thread.updatedAtMs)}
                     </span>
-                    {(activeBusinessProfile
-                      ? activeBusinessProfile.verified
-                      : store.profile.isVerified || isUserAdmin) && (
-                      <VerifiedBadge size={14} />
-                    )}
-                  </p>
+                  </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    {activeBusinessProfile
-                      ? `/business/${activeBusinessProfile.slug}`
-                      : `@${store.profile.handle}`}
+                    {formatLastMessageSnippet(thread.lastMessageText)}
                   </p>
                 </div>
               </button>
+            ))}
+          </div>
+        )}
+      </div>
 
-              <BusinessSwitcherMenu
-                profile={store.profile}
-                iconOnly
-                align="left"
-                onCreateBusiness={() => {
-                  setBusinessModalMode('create');
-                  setEditingBusinessProfile(null);
-                  setBusinessModalOpen(true);
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <h2 className="font-display text-sm font-bold">Community Members</h2>
+        {store.communityUsers.length === 0 ? (
+          <p className="text-xs text-slate-500 dark:text-slate-400 py-1">
+            No other members have joined yet.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {store.communityUsers.slice(0, 4).map((creator) => (
+              <div
+                key={creator.uid}
+                className="flex items-center justify-between gap-3"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleOpenPublicProfile(creator.uid)}
+                  aria-label={`View ${creator.displayName}'s profile`}
+                  className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
+                >
+                  <Avatar
+                    src={creator.avatarUrl}
+                    name={creator.displayName}
+                    size="sm"
+                    online={isUserOnline(creator.uid, store.onlineUserIds)}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1 max-w-full">
+                      <span className="truncate">{creator.displayName}</span>
+                      {creator.isVerified && <VerifiedBadge size={12} />}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      @{creator.handle}
+                      {creator.location ? ` · ${creator.location}` : ''}
+                    </p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenDm(creator)}
+                  aria-label={`Message ${creator.displayName}`}
+                  className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Chat</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+
+  return (
+    <>
+      {isBusinessWorkspaceView && activeBusinessProfile ? (
+        <BusinessPlatformLayout
+          personalProfile={store.profile}
+          businessProfile={activeBusinessProfile}
+          role={activeMembershipRole || 'VIEWER'}
+          section={businessSection}
+          onSelectSection={(next) => {
+            if (next !== 'inbox') {
+              setBusinessInboxInitialThreadId(null);
+            }
+            setBusinessSection(next);
+          }}
+          unreadInboxCount={unreadBusinessInboxCount}
+          businessNotifications={businessNotifications}
+          unreadBusinessNotifications={unreadBusinessNotifications}
+          onMarkBusinessNotificationRead={async (id) => {
+            await markBusinessNotificationRead(activeBusinessProfile.id, id);
+          }}
+          onMarkAllBusinessNotificationsRead={async () => {
+            const unreadIds = businessNotifications
+              .filter((n) => !n.read)
+              .map((n) => n.id);
+            await markAllBusinessNotificationsRead(activeBusinessProfile.id, unreadIds);
+          }}
+          theme={store.theme}
+          onToggleTheme={store.toggleTheme}
+          maintenanceMode={store.featureFlags.maintenanceMode}
+          memberModeration={store.memberModeration}
+          onOpenPublicBusinessPage={() =>
+            openBusinessProfileRoute(activeBusinessProfile.slug)
+          }
+          onOpenMarketplace={() => selectWorkspaceTab('marketplace')}
+          onLaunchSellerPortal={handleLaunchSellerPortal}
+          portalBusy={portalBusy}
+          onCreateBusiness={() => {
+            setBusinessModalMode('create');
+            setEditingBusinessProfile(null);
+            setBusinessModalOpen(true);
+          }}
+          onLogout={handleLogout}
+        >
+          <Suspense fallback={<RouteLoadingFallback />}>
+            {businessSection === 'dashboard' && (
+              <BusinessDashboardView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                viewerUid={store.profile.uid}
+                posts={store.posts}
+                inboxThreads={businessInboxThreads}
+                portalBusy={portalBusy}
+                onSelectSection={(nextSection, threadId) => {
+                  if (threadId) setBusinessInboxInitialThreadId(threadId);
+                  setBusinessSection(nextSection);
                 }}
-                onSwitchToUnifiedPersonal={async () => {
-                  await store.updateProfile({ accountType: 'personal' });
-                }}
+                onCreateBrandPost={() => setComposerOpen(true)}
+                onLaunchSellerPortal={handleLaunchSellerPortal}
+                onOpenPublicBusinessPage={() =>
+                  openBusinessProfileRoute(activeBusinessProfile.slug)
+                }
               />
-            </div>
-
-            {activeBusinessProfile ? (
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs tabular-nums">
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {activeBusinessProfile.followersCount}
-                  </span>{' '}
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Followers
-                  </span>
-                </div>
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {
-                      store.posts.filter(
-                        (p) => p.authorId === activeBusinessProfile.id
-                      ).length
-                    }
-                  </span>{' '}
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Posts
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs tabular-nums">
-                <button
-                  type="button"
-                  onClick={() => openConnections('followers')}
-                  className="text-left hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
-                >
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {store.profile.followersCount}
-                  </span>{' '}
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Followers
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openConnections('following')}
-                  className="text-left hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
-                >
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {store.profile.followingCount}
-                  </span>{' '}
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Following
-                  </span>
-                </button>
-              </div>
             )}
-          </div>
 
-          {activeTab !== 'profile' && activeTab !== 'notifications' && (
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-2">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Business Profiles
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setBusinessModalMode('create');
-                  setEditingBusinessProfile(null);
+            {businessSection === 'catalog' && (
+              <BusinessCatalogView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                viewerUid={store.profile.uid}
+                onOpenProduct={openProductDetailRoute}
+              />
+            )}
+
+            {businessSection === 'orders' && (
+              <BusinessOrdersView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                viewerUid={store.profile.uid}
+                onMessageCustomer={handleBusinessOrderMessageCustomer}
+                onActivateStorefront={() => setBusinessSection('settings')}
+              />
+            )}
+
+            {businessSection === 'inbox' && (
+              <BusinessInboxView
+                businessProfile={activeBusinessProfile}
+                activeRole={activeMembershipRole || 'VIEWER'}
+                currentProfile={store.profile}
+                members={businessMembers}
+                products={businessCatalogProducts}
+                orders={businessOrders}
+                initialThreadId={businessInboxInitialThreadId}
+                onOpenProduct={openProductDetailRoute}
+              />
+            )}
+
+            {businessSection === 'posts' && (
+              <BusinessBrandPostsView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                currentUserId={store.profile.uid}
+                posts={store.posts}
+                commentsByPost={store.commentsByPost}
+                likedPostIds={store.likedPostIds}
+                bookmarkedPostIds={store.bookmarkedPostIds}
+                shareThreads={store.threads}
+                categories={store.categories}
+                onCreateBrandPost={() => setComposerOpen(true)}
+                onToggleLike={store.toggleLike}
+                onToggleBookmark={store.toggleBookmark}
+                onAddComment={store.addComment}
+                onOpenComments={(post) => openPostCommentsRoute(post.id)}
+                onUpdatePost={store.updatePost}
+                onDeletePost={store.deletePost}
+                onDeleteComment={store.deleteComment}
+                onShareToStory={store.sharePostToStory}
+                onShareToChat={handleSharePostToChat}
+                onSelectHashtag={handleHashtagClick}
+                onMentionClick={handleOpenMention}
+              />
+            )}
+
+            {businessSection === 'team' && (
+              <BusinessTeamView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                viewerUid={store.profile.uid}
+              />
+            )}
+
+            {businessSection === 'settings' && (
+              <BusinessSettingsView
+                businessProfile={activeBusinessProfile}
+                role={activeMembershipRole || 'VIEWER'}
+                viewerUid={store.profile.uid}
+                theme={store.theme}
+                onEditBusinessProfile={(bp) => {
+                  setBusinessModalMode('edit');
+                  setEditingBusinessProfile(bp);
                   setBusinessModalOpen(true);
                 }}
-                className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-0.5 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" aria-hidden="true" />
-                <span>New</span>
-              </button>
-            </div>
-            {businesses.length === 0 ? (
+                onSubmitVerificationRequest={(bp, reason, links, documentUrls) =>
+                  store.submitVerificationRequest(reason, links, {
+                    targetType: 'business',
+                    businessProfile: bp,
+                    documentUrls,
+                  })
+                }
+                onResubmitVerificationRequest={(requestId, reason, links, documentUrls) =>
+                  store.resubmitVerificationRequest(requestId, {
+                    reason,
+                    links,
+                    documentUrls,
+                  })
+                }
+              />
+            )}
+          </Suspense>
+        </BusinessPlatformLayout>
+      ) : (
+        <NormalPlatformLayout
+          profile={store.profile}
+          isUserAdmin={isUserAdmin}
+          activeTab={activeTab}
+          publicProfileReturnTab={publicProfileReturnTab}
+          unreadNotifications={unreadCount}
+          friendsCount={store.connections.friends.length}
+          theme={store.theme}
+          searchQuery={feedSearchQuery}
+          maintenanceMode={store.featureFlags.maintenanceMode}
+          memberModeration={store.memberModeration}
+          userAppeals={store.userAppeals}
+          activeToast={store.activeToast}
+          onDismissToast={store.dismissToast}
+          onSelectTab={(tab) => {
+            if (tab === 'messages') {
+              setChatInboxMode('personal');
+            }
+            selectWorkspaceTab(tab);
+          }}
+          onLogoClick={() => setBrandModalOpen(true)}
+          onSearchChange={(query) => {
+            setFeedSearchQuery(query);
+          }}
+          onSearchSubmit={(query) => {
+            openSearchRoute(query);
+          }}
+          onOpenConnections={(tab) => openConnections(tab, null)}
+          onToggleTheme={store.toggleTheme}
+          onOpenAppealModal={() => {
+            setAppealError(null);
+            setAppealSuccessNotice(null);
+            setAppealModalOpen(true);
+          }}
+          onCreateBusiness={() => {
+            setBusinessModalMode('create');
+            setEditingBusinessProfile(null);
+            setBusinessModalOpen(true);
+          }}
+          onLogout={handleLogout}
+          rightRail={normalRightRail}
+        >
+          {platformMode === 'business' && activeBusinessProfile && (
+            <div className="mb-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs font-medium min-w-0">
+                <Building2 className="w-4 h-4 text-blue-400 shrink-0" aria-hidden="true" />
+                <span className="truncate">
+                  Business Mode · {activeBusinessProfile.displayName}
+                </span>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  setBusinessModalMode('create');
-                  setEditingBusinessProfile(null);
-                  setBusinessModalOpen(true);
-                }}
-                className="w-full min-h-[38px] px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => selectWorkspaceTab('business-workspace')}
+                className="min-h-[34px] px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
               >
-                <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Create Business Profile</span>
+                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Business Workspace</span>
               </button>
-            ) : (
-              <div className="space-y-1">
-                {businesses.map((biz) => (
-                  <button
-                    key={biz.id}
-                    type="button"
-                    onClick={() => openBusinessProfileRoute(biz.slug)}
-                    className={`w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 text-left text-xs transition-colors cursor-pointer ${
-                      activeTab === 'business-profile' && selectedBusinessSlug === biz.slug
-                        ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
-                        : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
-                    }`}
-                  >
-                    <Avatar src={biz.logoUrl} name={biz.displayName} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold">{biz.displayName}</p>
-                      <p className="text-[11px] text-slate-400 truncate">/business/{biz.slug}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+            </div>
           )}
 
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 space-y-1.5">
-            <button
-              type="button"
-              onClick={store.toggleTheme}
-              className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <span className="flex items-center gap-2.5">
-                {store.theme === 'dark' ? (
-                  <Sun className="w-4 h-4" aria-hidden="true" />
-                ) : (
-                  <Moon className="w-4 h-4" aria-hidden="true" />
-                )}
-                <span>{store.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-              </span>
-              <span className="text-slate-400 capitalize">{store.theme}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectWorkspaceTab('notifications')}
-              className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer tabular-nums"
-            >
-              <span className="flex items-center gap-2.5">
-                <Bell className="w-4 h-4" aria-hidden="true" />
-                <span>Push Alerts</span>
-              </span>
-              <span className="text-blue-600 dark:text-blue-400 font-semibold">
-                {unreadCount > 0 ? `${unreadCount} new` : 'Active'}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => openConnections('friends')}
-              className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer tabular-nums ${
-                activeTab === 'connections'
-                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Users className="w-4 h-4" aria-hidden="true" />
-                <span>Connections</span>
-              </span>
-              <span className="text-slate-400">
-                {store.connections.friends.length} friends
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectWorkspaceTab('marketplace')}
-              className="w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              <span className="flex items-center gap-2.5">
-                <ShoppingBag className="w-4 h-4" aria-hidden="true" />
-                <span>Marketplace</span>
-              </span>
-              <span className="text-slate-400">Shop</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectWorkspaceTab('settings')}
-              className={`w-full min-h-[42px] px-3 rounded-xl flex items-center justify-between text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === 'settings'
-                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Settings className="w-4 h-4" aria-hidden="true" />
-                <span>Profile Settings</span>
-              </span>
-            </button>
-
-            <PWAInstallButton />
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="w-full min-h-[42px] px-3 rounded-xl flex items-center gap-2.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-            >
-              <LogOut className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Log Out</span>
-            </button>
-          </div>
-        </aside>
-        )}
-
-        {/* Center Main Content */}
-        <div
-          className={
-            isMessagesFullScreen
-              ? 'w-full flex-1 min-h-0 flex flex-col pb-14 md:pb-0'
-              : isMarketplaceFullScreen
-                ? 'w-full flex-1 min-w-0'
-                : isMessageProfileFullScreen
-                  ? 'w-full flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-5 md:py-7'
-                  : 'flex-1 min-w-0 max-w-2xl mx-auto lg:mx-0'
-          }
-        >
           {activeTab === 'feed' && (
             <FeedView
               profile={store.profile}
-              activeBusinessProfile={activeBusinessProfile}
+              platformMode="normal"
+              activeBusinessProfile={null}
               posts={store.posts}
-              canManageBusinessIds={canManageBusinessIds}
+              canManageBusinessIds={[]}
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -1592,17 +1742,13 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
               categories={store.categories}
               searchQuery={feedSearchQuery}
               onSearchQueryChange={setFeedSearchQuery}
-              onOpenComposer={() => {
-                setComposerInitialBusinessId(
-                  activeIdentity.type === 'business' ? activeIdentity.businessProfileId : null
-                );
-                setComposerOpen(true);
-              }}
+              onOpenComposer={() => setComposerOpen(true)}
               onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
               onOpenAddStory={() => setAddStoryOpen(true)}
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onOpenComments={(post) => openPostCommentsRoute(post.id)}
               onUpdatePost={store.updatePost}
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
@@ -1631,20 +1777,111 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             />
           )}
 
+          {activeTab === 'search' && (
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <div className="max-w-4xl mx-auto px-4 md:px-6 py-5 md:py-7">
+                <SearchView
+                  initialQuery={feedSearchQuery}
+                  users={[store.profile, ...store.communityUsers]}
+                  businesses={store.allActiveBusinesses}
+                  posts={store.posts}
+                  savedHashtags={store.savedHashtags}
+                  likedPostIds={store.likedPostIds}
+                  bookmarkedPostIds={store.bookmarkedPostIds}
+                  commentsByPost={store.commentsByPost}
+                  shareThreads={store.threads}
+                  categories={store.categories}
+                  currentUserId={store.profile.uid}
+                  onBack={() =>
+                    selectWorkspaceTab(
+                      platformMode === 'business' && activeBusinessProfile
+                        ? 'business-workspace'
+                        : 'feed'
+                    )
+                  }
+                  onQueryChange={(nextQ) => setFeedSearchQuery(nextQ)}
+                  onOpenPublicProfile={(uid) => handleOpenPublicProfile(uid, undefined, 'feed')}
+                  onOpenBusinessProfile={openBusinessProfileRoute}
+                  onOpenProduct={openProductDetailRoute}
+                  onOpenComments={(post) => openPostCommentsRoute(post.id)}
+                  onSelectHashtag={handleHashtagClick}
+                  onToggleLike={store.toggleLike}
+                  onToggleBookmark={store.toggleBookmark}
+                  onAddComment={store.addComment}
+                  onUpdatePost={store.updatePost}
+                  onDeletePost={store.deletePost}
+                  onDeleteComment={store.deleteComment}
+                  onShareToStory={store.sharePostToStory}
+                  onShareToChat={handleSharePostToChat}
+                  onMentionClick={handleOpenMention}
+                />
+              </div>
+            </Suspense>
+          )}
+
+          {activeTab === 'post-comments' && (
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <div className="max-w-3xl mx-auto px-4 md:px-6 py-5 md:py-7">
+                <CommentThreadView
+                  post={activeCommentPost}
+                  comments={
+                    selectedCommentPostId
+                      ? store.commentsByPost[selectedCommentPostId] || []
+                      : []
+                  }
+                  currentProfile={store.profile}
+                  platformMode={platformMode}
+                  activeBusinessProfile={activeBusinessProfile}
+                  onBack={() => {
+                    if (typeof window !== 'undefined' && window.history.length > 1) {
+                      window.history.back();
+                    } else {
+                      selectWorkspaceTab(
+                        platformMode === 'business' && activeBusinessProfile
+                          ? 'business-workspace'
+                          : 'feed'
+                      );
+                    }
+                  }}
+                  onSubscribeComments={store.subscribePostComments}
+                  onAddComment={store.addComment}
+                  onUpdateComment={store.updateComment}
+                  onDeleteComment={store.deleteComment}
+                  onToggleCommentLike={store.toggleCommentLike}
+                  onOpenAuthor={(post) => {
+                    if (post.authorType === 'business' && post.authorHandle) {
+                      openBusinessProfileRoute(post.authorHandle);
+                    } else {
+                      handleOpenPublicProfile(post.authorId, post);
+                    }
+                  }}
+                  onSelectHashtag={handleHashtagClick}
+                  onMentionClick={handleOpenMention}
+                />
+              </div>
+            </Suspense>
+          )}
+
           {activeTab === 'business-profile' && selectedBusinessSlug && (
             <Suspense fallback={<RouteLoadingFallback />}>
               <BusinessProfilePage
                 slug={selectedBusinessSlug}
                 currentProfile={store.profile}
                 isAuthorized={store.isAuthorized}
-                memberships={memberships}
+                memberships={activeBusinessProfile?.slug === selectedBusinessSlug ? [{ businessProfileId: activeBusinessProfile.id, uid: store.profile.uid, role: activeMembershipRole || 'VIEWER', status: 'ACTIVE', id: `${activeBusinessProfile.id}_${store.profile.uid}`, invitedByUid: '', createdAtMs: 0, updatedAtMs: 0 }] : []}
                 posts={store.posts}
                 commentsByPost={store.commentsByPost}
                 likedPostIds={store.likedPostIds}
                 bookmarkedPostIds={store.bookmarkedPostIds}
                 shareThreads={store.threads}
                 categories={store.categories}
-                onBack={() => selectWorkspaceTab('feed')}
+                onBack={() =>
+                  selectWorkspaceTab(
+                    platformMode === 'business' && activeBusinessProfile
+                      ? 'business-workspace'
+                      : 'feed'
+                  )
+                }
                 onRequireAuth={() => navigateToPath('/auth')}
                 onEditBusiness={(bp) => {
                   setBusinessModalMode('edit');
@@ -1652,9 +1889,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   setBusinessModalOpen(true);
                 }}
                 onCreateBusinessPost={(bp) => {
-                  setComposerInitialBusinessId(bp.id);
+                  switchToBusiness(bp.id);
                   setComposerOpen(true);
                 }}
+                onMessageBusiness={(bp) => handleMessageBusiness(bp)}
                 onMessageOwner={async (ownerUid, businessName) => {
                   if (!ownerUid || ownerUid === store.profile.uid) return;
                   const target =
@@ -1662,6 +1900,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                     (await store.fetchPublicUserProfile(ownerUid));
                   if (target) {
                     const thread = await store.startDirectThread(target);
+                    setChatInboxMode('personal');
                     setActiveChatId(thread.id);
                     selectWorkspaceTab('messages');
                   } else {
@@ -1672,6 +1911,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onToggleLike={store.toggleLike}
                 onToggleBookmark={store.toggleBookmark}
                 onAddComment={store.addComment}
+                onOpenComments={(post) => openPostCommentsRoute(post.id)}
                 onUpdatePost={store.updatePost}
                 onDeletePost={store.deletePost}
                 onDeleteComment={store.deleteComment}
@@ -1699,6 +1939,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   searchParams?.get('store') || searchParams?.get('storeId') || null
                 }
                 marketplaceEnabled={store.featureFlags.marketplaceEnabled ?? true}
+                allBusinesses={store.allActiveBusinesses}
+                onMessageBusiness={handleMessageBusiness}
                 onMessageSeller={async (sellerUid, initialMessage, listingContext) => {
                   if (!sellerUid || sellerUid === store.profile.uid) return;
                   const cached = store.allKnownChatUsers.find(
@@ -1716,18 +1958,24 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                       ? `${initialMessage.trim()}\n[${listingContext.title} · ${listingContext.priceFormatted}]`
                       : initialMessage.trim();
                     await store.sendChatMessage(thread, formatted);
+                    setChatInboxMode('personal');
                     setActiveChatId(thread.id);
                     return;
                   }
+                  setChatInboxMode('personal');
                   setActiveChatId(thread.id);
                   selectWorkspaceTab('messages');
                 }}
                 onToggleFollowSeller={(sellerUid) => store.toggleFollowUser(sellerUid)}
-                onOpenInbox={() => selectWorkspaceTab('messages')}
+                onOpenInbox={() => {
+                  setChatInboxMode('personal');
+                  selectWorkspaceTab('messages');
+                }}
                 onOpenChatThread={(threadId) => {
                   if (threadId) {
                     setActiveChatId(threadId);
                   }
+                  setChatInboxMode('personal');
                   selectWorkspaceTab('messages');
                 }}
                 onOpenSellerProfile={(sellerUid) =>
@@ -1753,6 +2001,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onBack={() => selectWorkspaceTab('marketplace')}
                 onRequireAuth={() => navigateToPath('/auth')}
                 onOpenBusinessProfile={openBusinessProfileRoute}
+                onMessageBusiness={handleMessageBusiness}
                 onMessageSeller={async (sellerUid, initialMessage, listingContext) => {
                   if (!sellerUid || sellerUid === store.profile.uid) return;
                   const cached = store.allKnownChatUsers.find(
@@ -1771,6 +2020,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                       : initialMessage.trim();
                     await store.sendChatMessage(thread, formatted);
                   }
+                  setChatInboxMode('personal');
                   setActiveChatId(thread.id);
                   selectWorkspaceTab('messages');
                 }}
@@ -1829,6 +2079,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   onToggleLike={store.toggleLike}
                   onToggleBookmark={store.toggleBookmark}
                   onAddComment={store.addComment}
+                  onOpenComments={(post) => openPostCommentsRoute(post.id)}
                   onUpdatePost={store.updatePost}
                   onDeletePost={store.deletePost}
                   onDeleteComment={store.deleteComment}
@@ -1867,7 +2118,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             <Suspense fallback={<RouteLoadingFallback />}>
               <ChatView
                 profile={store.profile}
-                activeBusinessProfile={activeBusinessProfile}
+                platformMode={platformMode}
+                initialInboxMode={chatInboxMode}
+                initialBusinessChatId={activeBusinessChatId}
+                isAuthorized={store.isAuthorized}
+                activeBusinessProfile={null}
                 threads={store.threads}
                 messagesByChat={store.messagesByChat}
                 mutedChatIds={store.mutedChatIds}
@@ -1904,6 +2159,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onOpenPublicProfile={(uid) =>
                   handleOpenPublicProfile(uid, undefined, 'messages')
                 }
+                onOpenBusinessProfile={openBusinessProfileRoute}
+                onOpenProduct={openProductDetailRoute}
                 onStartCall={store.startCall}
                 onStartInstantCall={store.startInstantCall}
                 onReportChat={async (thread, category, reason) => {
@@ -1929,21 +2186,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             <NotificationsView
               profile={store.profile}
               notifications={activityNotifications}
-              activeBusinessProfile={activeBusinessProfile}
-              businessNotifications={businessNotifications}
-              onMarkBusinessNotificationRead={async (notifId) => {
-                if (activeBusinessProfile) {
-                  await markBusinessNotificationRead(activeBusinessProfile.id, notifId);
-                }
-              }}
-              onMarkAllBusinessNotificationsRead={async () => {
-                if (activeBusinessProfile) {
-                  const unreadIds = businessNotifications
-                    .filter((n) => !n.read)
-                    .map((n) => n.id);
-                  await markAllBusinessNotificationsRead(activeBusinessProfile.id, unreadIds);
-                }
-              }}
+              activeBusinessProfile={null}
+              businessNotifications={[]}
               verifiedAuthorIds={Array.from(verifiedUidSet)}
               pushPermission={store.pushPermission}
               onEnablePush={store.enablePushNotifications}
@@ -1987,23 +2231,14 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           {activeTab === 'profile' && (
             <ProfileView
               profile={store.profile}
-              activeBusinessProfile={activeBusinessProfile}
-              canManageActiveBusiness={Boolean(
-                activeBusinessProfile &&
-                  canManageBusinessIds.includes(activeBusinessProfile.id)
-              )}
               profileSwitcherSlot={
                 <BusinessSwitcherMenu
                   profile={store.profile}
-                  iconOnly
                   align="right"
                   onCreateBusiness={() => {
                     setBusinessModalMode('create');
                     setEditingBusinessProfile(null);
                     setBusinessModalOpen(true);
-                  }}
-                  onSwitchToUnifiedPersonal={async () => {
-                    await store.updateProfile({ accountType: 'personal' });
                   }}
                 />
               }
@@ -2019,15 +2254,12 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
+              onOpenComments={(post) => openPostCommentsRoute(post.id)}
               onUpdatePost={store.updatePost}
               onDeletePost={store.deletePost}
               onDeleteComment={store.deleteComment}
               onShareToStory={store.sharePostToStory}
               onShareToChat={handleSharePostToChat}
-              onCreateBusinessPost={(bp) => {
-                setComposerInitialBusinessId(bp.id);
-                setComposerOpen(true);
-              }}
               onOpenSettings={() => selectWorkspaceTab('settings')}
               onOpenConnections={(tab) => openConnections(tab, null)}
               onAuthorClick={(post) => {
@@ -2106,17 +2338,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 accountEmail={store.firebaseUser?.email || null}
                 theme={store.theme}
                 pushPermission={store.pushPermission}
-                activeIdentity={activeIdentity}
-                businesses={businesses}
-                memberships={memberships}
-                onSwitchToPersonal={switchToPersonal}
-                onSwitchToBusiness={switchToBusiness}
-                onOpenBusinessProfile={openBusinessProfileRoute}
-                onEditBusiness={(bp) => {
-                  setBusinessModalMode('edit');
-                  setEditingBusinessProfile(bp);
-                  setBusinessModalOpen(true);
-                }}
                 onSetTheme={store.setThemeExplicit}
                 onEnablePush={store.enablePushNotifications}
                 onLogout={handleLogout}
@@ -2137,183 +2358,42 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onUpdatePrivateSettings={store.updatePrivateSettings}
                 onBack={() => selectWorkspaceTab('profile')}
                 userVerificationRequest={store.currentUserVerificationRequest}
-                onSubmitVerificationRequest={store.submitVerificationRequest}
-                onCreateBusiness={() => {
-                  setBusinessModalMode('create');
-                  setEditingBusinessProfile(null);
-                  setBusinessModalOpen(true);
-                }}
+                onSubmitVerificationRequest={(reason, links, documentUrls) =>
+                  store.submitVerificationRequest(reason, links, {
+                    targetType: 'personal',
+                    documentUrls,
+                  })
+                }
+                onResubmitVerificationRequest={(requestId, reason, links, documentUrls) =>
+                  store.resubmitVerificationRequest(requestId, {
+                    reason,
+                    links,
+                    documentUrls,
+                  })
+                }
               />
             </Suspense>
           )}
-        </div>
-
-        {/* Right Discovery & Active Chats Sidebar (Desktop) */}
-        {activeTab !== 'messages' && activeTab !== 'marketplace' && (
-          <aside
-            aria-label="Community creators and active conversations"
-            className="hidden xl:flex xl:w-80 shrink-0 flex-col gap-4 sticky top-23"
-          >
-            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-sm font-bold">
-                  Active Chats
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => selectWorkspaceTab('messages')}
-                  className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                >
-                  Open all
-                </button>
-              </div>
-              {store.threads.length === 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 py-2">
-                  No active conversations yet.
-                </p>
-              ) : (
-                <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {store.threads.slice(0, 3).map((thread) => (
-                    <button
-                      key={thread.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveChatId(thread.id);
-                        selectWorkspaceTab('messages');
-                      }}
-                      className="w-full py-2.5 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl px-1.5 transition-colors cursor-pointer"
-                    >
-                      <Avatar
-                        src={thread.partnerAvatar}
-                        name={thread.title}
-                        size="sm"
-                        online={
-                          getThreadOnlineStatus(
-                            thread,
-                            store.profile.uid,
-                            store.onlineUserIds
-                          ).isOnline
-                        }
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold truncate">
-                            {thread.title}
-                          </p>
-                          <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
-                            {formatRelativeTime(thread.updatedAtMs)}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                          {formatLastMessageSnippet(thread.lastMessageText)}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-              <h2 className="font-display text-sm font-bold">
-                Community Members
-              </h2>
-              {store.communityUsers.length === 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 py-1">
-                  No other members have joined yet.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {store.communityUsers.slice(0, 4).map((creator) => (
-                    <div
-                      key={creator.uid}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPublicProfile(creator.uid)}
-                        aria-label={`View ${creator.displayName}'s profile`}
-                        className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
-                      >
-                        <Avatar
-                          src={creator.avatarUrl}
-                          name={creator.displayName}
-                          size="sm"
-                          online={isUserOnline(
-                            creator.uid,
-                            store.onlineUserIds
-                          )}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1 max-w-full">
-                            <span className="truncate">{creator.displayName}</span>
-                            {creator.isVerified && <VerifiedBadge size={12} />}
-                          </p>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                            @{creator.handle}
-                            {creator.location ? ` · ${creator.location}` : ''}
-                          </p>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDm(creator)}
-                        aria-label={`Message ${creator.displayName}`}
-                        className="min-h-[36px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Chat</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
-      </main>
-
-      <MobileBottomNav
-        activeTab={activeTab}
-        onSelectTab={selectWorkspaceTab}
-        unreadNotifications={
-          activeBusinessProfile ? unreadBusinessNotifications : unreadCount
-        }
-        activeAvatarUrl={
-          activeBusinessProfile
-            ? activeBusinessProfile.logoUrl
-            : store.profile.avatarUrl
-        }
-        activeDisplayName={
-          activeBusinessProfile
-            ? activeBusinessProfile.displayName
-            : store.profile.displayName
-        }
-      />
+        </NormalPlatformLayout>
+      )}
 
       <CreatePostModal
         open={composerOpen}
         profile={store.profile}
-        publishableBusinesses={publishableBusinesses}
-        initialBusinessProfileId={
-          composerInitialBusinessId ??
-          (activeIdentity.type === 'business'
-            ? activeIdentity.businessProfileId
-            : null)
+        activeBusinessProfile={
+          platformMode === 'business' ? activeBusinessProfile : null
         }
         communityUsers={store.communityUsers}
         savedHashtags={store.savedHashtags}
         categories={store.categories}
         voiceNotesEnabled={store.featureFlags.voiceNotesEnabled}
         onSaveHashtag={store.saveHashtag}
-        onClose={() => {
-          setComposerOpen(false);
-          setComposerInitialBusinessId(null);
-        }}
+        onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);
-          if (extra?.businessAuthor?.slug && activeTab === 'business-profile') {
-            openBusinessProfileRoute(extra.businessAuthor.slug);
+          if (platformMode === 'business' && activeBusinessProfile) {
+            setBusinessSection('posts');
+            selectWorkspaceTab('business-workspace');
           } else if (activeTab === 'profile') {
             selectWorkspaceTab('profile');
           } else {
@@ -2333,7 +2413,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
         }}
         onSaved={(savedProfile) => {
           switchToBusiness(savedProfile.id);
-          openBusinessProfileRoute(savedProfile.slug);
+          setBusinessSection('dashboard');
+          selectWorkspaceTab('business-workspace');
         }}
       />
 
@@ -2459,6 +2540,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
 
       <OfflineIndicator />
       {isTransitioning && <OrbitSyncOverlay />}
-    </div>
+    </>
   );
 }

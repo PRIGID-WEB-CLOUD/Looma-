@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, X } from 'lucide-react';
-import type { BusinessProfile } from '../types/business';
+import { ImagePlus } from 'lucide-react';
+import type { BusinessProfile, PlatformMode } from '../types/business';
 import type {
   ChatThread,
   FeedFilter,
@@ -25,6 +25,7 @@ import { StoriesStrip } from './StoriesStrip';
 
 interface FeedViewProps {
   profile: UserProfile;
+  platformMode?: PlatformMode;
   activeBusinessProfile?: BusinessProfile | null;
   posts: Post[];
   canManageBusinessIds?: string[];
@@ -43,6 +44,7 @@ interface FeedViewProps {
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
   onAddComment: (post: Post, text: string) => Promise<void>;
+  onOpenComments?: (post: Post) => void;
   onUpdatePost?: (
     post: Post,
     updates: { caption: string; category: PostCategory }
@@ -62,6 +64,7 @@ const PAGE_SIZE = 4;
 
 export function FeedView({
   profile,
+  platformMode = 'normal',
   activeBusinessProfile = null,
   posts,
   canManageBusinessIds = [],
@@ -80,6 +83,7 @@ export function FeedView({
   onToggleLike,
   onToggleBookmark,
   onAddComment,
+  onOpenComments,
   onUpdatePost,
   onDeletePost,
   onDeleteComment,
@@ -103,6 +107,7 @@ export function FeedView({
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const snapStreamRef = useRef<HTMLDivElement | null>(null);
 
   const { items, filteredTotal, hasMore } = filterAndSortFeed({
     posts,
@@ -124,6 +129,7 @@ export function FeedView({
   useEffect(() => {
     if (!hasMore || !sentinelRef.current) return;
     const node = sentinelRef.current;
+    const rootNode = snapStreamRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
@@ -134,11 +140,38 @@ export function FeedView({
           });
         }
       },
-      { rootMargin: '180px' }
+      { root: rootNode, rootMargin: '180px' }
     );
     observer.observe(node);
     return () => observer.disconnect();
   }, [hasMore, items.length]);
+
+  useEffect(() => {
+    const container = snapStreamRef.current;
+    if (!container || typeof IntersectionObserver === 'undefined') return;
+    const videos = Array.from(container.querySelectorAll('video'));
+    if (videos.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const video = entry.target as HTMLVideoElement;
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+            video.muted = true;
+            void video.play().catch(() => {});
+          } else if (!video.paused) {
+            video.pause();
+          }
+        }
+      },
+      { root: container, threshold: [0.25, 0.65] }
+    );
+
+    for (const v of videos) {
+      observer.observe(v);
+    }
+    return () => observer.disconnect();
+  }, [items]);
 
   const categoryList = useMemo(
     () => mergeCategoryNames(categories, POST_CATEGORIES),
@@ -162,25 +195,27 @@ export function FeedView({
     setFeedFilter('All');
     setSearchQuery(clean ? `#${clean}` : '');
     onSelectHashtag?.(clean || tag);
-    if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (snapStreamRef.current) {
+      snapStreamRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
-  const activeComposerAvatar = activeBusinessProfile
-    ? activeBusinessProfile.logoUrl
-    : profile.avatarUrl;
-  const activeComposerName = activeBusinessProfile
-    ? activeBusinessProfile.displayName
-    : profile.displayName;
+  const activeComposerAvatar =
+    platformMode === 'business' && activeBusinessProfile
+      ? activeBusinessProfile.logoUrl
+      : profile.avatarUrl;
+  const activeComposerName =
+    platformMode === 'business' && activeBusinessProfile
+      ? activeBusinessProfile.displayName
+      : profile.displayName;
 
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
-      {/* Homefeed Header Stories */}
-      {storiesEnabled && (
+      {/* Homefeed Header Stories (Personal social experience) */}
+      {storiesEnabled && platformMode === 'normal' && (
         <StoriesStrip
           profile={profile}
-          activeBusinessProfile={activeBusinessProfile}
+          activeBusinessProfile={null}
           storyGroups={storyGroups}
           onOpenStory={onOpenStory}
           onOpenAddStory={onOpenAddStory}
@@ -195,8 +230,8 @@ export function FeedView({
           onClick={onOpenComposer}
           className="flex-1 min-w-0 min-h-[44px] px-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-left text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer truncate"
         >
-          {activeBusinessProfile
-            ? `Share a note or photo as ${activeBusinessProfile.displayName}...`
+          {platformMode === 'business' && activeBusinessProfile
+            ? `Share a brand update, product launch, or note as ${activeBusinessProfile.displayName}...`
             : `Share a note or photo, ${profile.displayName.split(' ')[0]}...`}
         </button>
         <button
@@ -297,7 +332,7 @@ export function FeedView({
         )}
       </div>
 
-      {/* Feed Cards */}
+      {/* One-post-per-screen Vertical Snap Feed Container */}
       {items.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
           <p className="text-sm font-semibold">
@@ -336,61 +371,70 @@ export function FeedView({
           ) : null}
         </div>
       ) : (
-        <div className="space-y-4">
+        <div
+          ref={snapStreamRef}
+          data-testid="snap-feed-container"
+          className="h-[calc(100dvh-14.5rem)] overflow-y-auto snap-y snap-mandatory space-y-4 pr-0.5 motion-reduce:snap-none"
+        >
           {items.map((post) => (
-            <PostCard
+            <div
               key={post.id}
-              post={post}
-              currentUserId={profile.uid}
-              canManagePost={
-                post.authorId === profile.uid ||
-                (post.authorType === 'business' &&
-                  Boolean(post.businessProfileId) &&
-                  canManageBusinessIds.includes(post.businessProfileId!))
-              }
-              categories={categoryList}
-              isLiked={likedPostIds.includes(post.id)}
-              isBookmarked={bookmarkedPostIds.includes(post.id)}
-              comments={commentsByPost[post.id] || []}
-              shareThreads={shareThreads}
-              onToggleLike={onToggleLike}
-              onToggleBookmark={onToggleBookmark}
-              onAddComment={onAddComment}
-              onUpdatePost={onUpdatePost}
-              onDeletePost={onDeletePost}
-              onDeleteComment={onDeleteComment}
-              onShareToStory={storiesEnabled ? onShareToStory : undefined}
-              onShareToChat={onShareToChat}
-              onReportPost={onReportPost}
-              onAuthorClick={onAuthorClick}
-              onSelectHashtag={applyHashtagFilter}
-              onMentionClick={onMentionClick}
-              onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
-            />
+              className="snap-start snap-always min-h-[calc(100dvh-15.5rem)] flex flex-col justify-center"
+            >
+              <PostCard
+                post={post}
+                currentUserId={profile.uid}
+                canManagePost={
+                  post.authorId === profile.uid ||
+                  (post.authorType === 'business' &&
+                    Boolean(post.businessProfileId) &&
+                    canManageBusinessIds.includes(post.businessProfileId!))
+                }
+                categories={categoryList}
+                isLiked={likedPostIds.includes(post.id)}
+                isBookmarked={bookmarkedPostIds.includes(post.id)}
+                comments={commentsByPost[post.id] || []}
+                shareThreads={shareThreads}
+                onToggleLike={onToggleLike}
+                onToggleBookmark={onToggleBookmark}
+                onAddComment={onAddComment}
+                onOpenComments={onOpenComments}
+                onUpdatePost={onUpdatePost}
+                onDeletePost={onDeletePost}
+                onDeleteComment={onDeleteComment}
+                onShareToStory={storiesEnabled && platformMode === 'normal' ? onShareToStory : undefined}
+                onShareToChat={onShareToChat}
+                onReportPost={onReportPost}
+                onAuthorClick={onAuthorClick}
+                onSelectHashtag={applyHashtagFilter}
+                onMentionClick={onMentionClick}
+                onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
+              />
+            </div>
           ))}
+
+          {/* Infinite Scroll Sentinel inside Snap Stream */}
+          <div ref={sentinelRef} className="snap-start py-6 text-center">
+            {hasMore ? (
+              <button
+                type="button"
+                onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+                className="min-h-[42px] px-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer tabular-nums"
+              >
+                {loadingMore
+                  ? 'Loading more posts...'
+                  : `Load more (${items.length} of ${filteredTotal})`}
+              </button>
+            ) : (
+              filteredTotal > 0 && (
+                <p className="text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                  Showing all {filteredTotal} posts
+                </p>
+              )
+            )}
+          </div>
         </div>
       )}
-
-      {/* Infinite Scroll Sentinel */}
-      <div ref={sentinelRef} className="py-4 text-center">
-        {hasMore ? (
-          <button
-            type="button"
-            onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
-            className="min-h-[42px] px-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer tabular-nums"
-          >
-            {loadingMore
-              ? 'Loading more posts...'
-              : `Load more (${items.length} of ${filteredTotal})`}
-          </button>
-        ) : (
-          filteredTotal > 0 && (
-            <p className="text-xs text-slate-400 dark:text-slate-500 tabular-nums">
-              Showing all {filteredTotal} posts
-            </p>
-          )
-        )}
-      </div>
 
       <MediaViewerModal
         open={Boolean(activeMediaPostId)}
@@ -403,7 +447,7 @@ export function FeedView({
         onSelectPostId={(postId) => setActiveMediaPostId(postId)}
         onToggleLike={onToggleLike}
         onToggleBookmark={onToggleBookmark}
-        onShareToStory={onShareToStory}
+        onShareToStory={storiesEnabled && platformMode === 'normal' ? onShareToStory : undefined}
         onAuthorClick={onAuthorClick}
         onSelectHashtag={applyHashtagFilter}
         onMentionClick={onMentionClick}

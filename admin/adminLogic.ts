@@ -1043,16 +1043,30 @@ export function formatStorageBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-export type VerificationRequestStatus = 'pending' | 'approved' | 'rejected';
+export type VerificationRequestStatus =
+  | 'pending'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'more_info_required';
+
+export type VerificationDecision =
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'more_info_required';
 
 export interface VerificationRequest {
   id: string;
   uid: string;
+  targetType?: 'personal' | 'business';
+  businessProfileId?: string;
   displayName: string;
   handle: string;
   avatarUrl: string;
   reason: string;
   links: string[];
+  documentUrls?: string[];
   status: VerificationRequestStatus;
   reviewerUid?: string;
   reviewerNote?: string;
@@ -1111,12 +1125,19 @@ export function validateVerificationRequestInput(
   return { valid: true, cleanReason, cleanLinks };
 }
 
+function getVerificationSortWeight(status: VerificationRequestStatus): number {
+  if (status === 'pending' || status === 'under_review') return 0;
+  if (status === 'more_info_required') return 1;
+  return 2;
+}
+
 export function sortVerificationRequests(
   requests: VerificationRequest[]
 ): VerificationRequest[] {
   return [...requests].sort((a, b) => {
-    if (a.status === 'pending' && b.status !== 'pending') return -1;
-    if (a.status !== 'pending' && b.status === 'pending') return 1;
+    const wa = getVerificationSortWeight(a.status);
+    const wb = getVerificationSortWeight(b.status);
+    if (wa !== wb) return wa - wb;
     return (b.updatedAtMs || b.createdAtMs) - (a.updatedAtMs || a.createdAtMs);
   });
 }
@@ -1124,7 +1145,7 @@ export function sortVerificationRequests(
 export function reviewVerificationRequestDecision(
   requests: VerificationRequest[],
   requestId: string,
-  decision: 'approved' | 'rejected',
+  decision: VerificationDecision,
   reviewerUid: string,
   note: string = '',
   nowMs: number = Date.now()
@@ -1135,7 +1156,7 @@ export function reviewVerificationRequestDecision(
   if (!target) {
     return { ok: false, error: 'Verification request not found.' };
   }
-  if (target.status !== 'pending') {
+  if (target.status === 'approved' || target.status === 'rejected') {
     return {
       ok: false,
       error: `This request has already been ${target.status}.`,

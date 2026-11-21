@@ -66,6 +66,7 @@ import {
   type R2MediaObjectItem,
   type ReportStatus,
   type SystemHealthProbe,
+  type VerificationDecision,
   type VerificationRequest,
 } from './adminLogic';
 import { OverviewAnalyticsSection } from './components/OverviewAnalyticsSection';
@@ -265,7 +266,7 @@ interface AdminViewProps {
   onReviewVerificationRequest: (
     requestId: string,
     targetUid: string,
-    decision: 'approved' | 'rejected',
+    decision: VerificationDecision,
     note?: string
   ) => Promise<{ ok: boolean; error?: string }>;
   marketplaceStores?: MarketplaceStore[];
@@ -1006,7 +1007,7 @@ export function AdminView({
             {SECTION_NAV.map((item) => {
               const isActive = item.id === section;
               const pendingVerifications = verificationRequests.filter(
-                (r) => r.status === 'pending'
+                (r) => r.status === 'pending' || r.status === 'under_review'
               ).length;
               const pendingOrders = marketplaceOrders.filter(
                 (o) => o.status === 'PENDING'

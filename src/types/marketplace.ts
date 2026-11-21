@@ -104,6 +104,7 @@ export interface MarketplaceOrder {
   storeId: string;
   storeName: string;
   storeOwnerUid?: string;
+  storeBusinessProfileId?: string;
   items: OrderLineItem[];
   subtotalCents: number;
   shippingCents: number;

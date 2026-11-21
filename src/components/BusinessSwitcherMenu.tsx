@@ -16,29 +16,24 @@ interface BusinessSwitcherMenuProps {
   profile: UserProfile;
   onCreateBusiness: () => void;
   onOpenBusinessProfile?: (slug: string) => void;
-  onSwitchToUnifiedPersonal?: () => Promise<void> | void;
-  iconOnly?: boolean;
   align?: 'left' | 'right';
 }
 
 export function BusinessSwitcherMenu({
   profile,
   onCreateBusiness,
-  onSwitchToUnifiedPersonal,
-  iconOnly = true,
   align = 'right',
 }: BusinessSwitcherMenuProps) {
   const {
     activeIdentity,
     businesses,
     pendingInvites,
-    switchToPersonal,
+    switchToNormal,
     switchToBusiness,
   } = useActiveIdentity();
 
   const [open, setOpen] = useState(false);
   const [acceptingInviteId, setAcceptingInviteId] = useState<string | null>(null);
-  const [switchingUnified, setSwitchingUnified] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -71,24 +66,9 @@ export function BusinessSwitcherMenu({
       ? activeIdentity.businessProfile.logoUrl
       : profile.avatarUrl;
 
-  const isUnifiedBusiness =
-    activeIdentity.type === 'personal' && profile.accountType === 'business';
-
-  const handleSelectPersonal = async () => {
+  const handleSelectNormal = () => {
     setStatusError(null);
-    if (isUnifiedBusiness && onSwitchToUnifiedPersonal) {
-      setSwitchingUnified(true);
-      try {
-        await onSwitchToUnifiedPersonal();
-      } catch (err) {
-        setStatusError(
-          err instanceof Error ? err.message : 'Unable to switch profile.'
-        );
-      } finally {
-        setSwitchingUnified(false);
-      }
-    }
-    switchToPersonal();
+    switchToNormal();
     setOpen(false);
   };
 
@@ -102,11 +82,7 @@ export function BusinessSwitcherMenu({
         aria-label={`Switch profile (active: ${activeName})`}
         title={`Switch profile (${activeName})`}
         data-testid="identity-switcher-trigger"
-        className={
-          iconOnly
-            ? 'relative inline-flex items-center justify-center rounded-full p-0.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600'
-            : 'relative inline-flex items-center justify-center rounded-full p-0.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer'
-        }
+        className="relative inline-flex items-center justify-center rounded-full p-0.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
       >
         <Avatar src={activeAvatar} name={activeName} size="sm" />
         <span
@@ -128,10 +104,10 @@ export function BusinessSwitcherMenu({
         >
           <div className="px-2.5 pt-1 pb-1.5 border-b border-slate-100 dark:border-slate-800">
             <p className="text-xs font-bold text-slate-900 dark:text-white">
-              Switch Profile
+              Switch Platform Profile
             </p>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Select a profile to switch the app into that identity.
+              Switch between your personal network and business workspaces.
             </p>
           </div>
 
@@ -141,14 +117,13 @@ export function BusinessSwitcherMenu({
             </div>
           )}
 
-          {/* Personal / Unified Account */}
+          {/* Normal Personal Profile */}
           <button
             type="button"
             role="menuitemradio"
             aria-checked={activeIdentity.type === 'personal'}
-            disabled={switchingUnified}
-            onClick={() => void handleSelectPersonal()}
-            className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2.5 text-left transition-colors cursor-pointer disabled:opacity-60 ${
+            onClick={handleSelectNormal}
+            className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2.5 text-left transition-colors cursor-pointer ${
               activeIdentity.type === 'personal'
                 ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                 : 'hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -162,12 +137,8 @@ export function BusinessSwitcherMenu({
                   {profile.isVerified && <VerifiedBadge size={12} />}
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
-                  {profile.accountType === 'business' ? (
-                    <Building2 className="w-3 h-3 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  ) : (
-                    <User className="w-3 h-3 shrink-0" aria-hidden="true" />
-                  )}
-                  <span className="truncate">@{profile.handle}</span>
+                  <User className="w-3 h-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">@{profile.handle} · Personal</span>
                 </p>
               </div>
             </div>
@@ -210,7 +181,7 @@ export function BusinessSwitcherMenu({
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
                           <Building2 className="w-3 h-3 shrink-0" aria-hidden="true" />
-                          <span className="truncate">/{biz.slug}</span>
+                          <span className="truncate">@{biz.slug}</span>
                         </p>
                       </div>
                     </div>

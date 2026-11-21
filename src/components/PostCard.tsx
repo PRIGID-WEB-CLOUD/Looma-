@@ -73,6 +73,7 @@ interface PostCardProps {
   onSelectHashtag?: (tag: string) => void;
   onMentionClick?: (handle: string) => void;
   onOpenMedia?: (post: Post) => void;
+  onOpenComments?: (post: Post) => void;
   onReportPost?: (
     post: Post,
     category: 'spam' | 'harassment' | 'misinformation' | 'nudity' | 'copyright' | 'other',
@@ -101,6 +102,7 @@ export function PostCard({
   onSelectHashtag,
   onMentionClick,
   onOpenMedia,
+  onOpenComments,
   onReportPost,
 }: PostCardProps) {
   const editCategoryOptions = useMemo(
@@ -413,16 +415,9 @@ export function PostCard({
             <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1.5">
               <span>{post.authorName}</span>
               {post.authorVerified && <VerifiedBadge size={14} />}
-              {post.authorType === 'business' && (
-                <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[10px] font-bold uppercase tracking-wider">
-                  Business
-                </span>
-              )}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-              <span>
-                {post.authorType === 'business' ? `/business/${post.authorHandle}` : `@${post.authorHandle}`}
-              </span>
+              <span>@{post.authorHandle}</span>
               <span className="mx-1" aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAtMs)}</span>
               <span className="mx-1" aria-hidden="true">·</span>
@@ -682,6 +677,8 @@ export function PostCard({
                   ref={videoRef}
                   src={parsedVideo.url}
                   controls
+                  muted
+                  loop
                   playsInline
                   preload="metadata"
                   onError={() => setVideoFailed(true)}
@@ -913,8 +910,14 @@ export function PostCard({
 
           <button
             type="button"
-            onClick={() => setCommentsOpen((prev) => !prev)}
-            aria-expanded={commentsOpen}
+            onClick={() => {
+              if (onOpenComments) {
+                onOpenComments(post);
+              } else {
+                setCommentsOpen((prev) => !prev);
+              }
+            }}
+            aria-expanded={onOpenComments ? undefined : commentsOpen}
             aria-label={`Comments on ${post.authorName}'s post (${comments.length || post.commentsCount})`}
             className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >

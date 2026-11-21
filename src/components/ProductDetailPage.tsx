@@ -20,6 +20,7 @@ import type {
   PaymentMethod,
   ProductVariant,
 } from '../types/marketplace';
+import type { BusinessProfile } from '../types/business';
 import type { UserProfile } from '../types/social';
 import {
   createMarketplaceOrderRecord,
@@ -46,6 +47,19 @@ interface ProductDetailPageProps {
     initialMessage?: string,
     listingContext?: { id: string; title: string; priceFormatted: string }
   ) => Promise<void> | void;
+  onMessageBusiness?: (
+    businessProfile: BusinessProfile,
+    initialMessage?: string,
+    listingContext?: {
+      id: string;
+      title: string;
+      priceFormatted: string;
+      imageUrl?: string;
+      priceCents?: number;
+      currency?: string;
+      storeSlug?: string;
+    }
+  ) => Promise<void> | void;
 }
 
 export function ProductDetailPage({
@@ -58,6 +72,7 @@ export function ProductDetailPage({
   onRequireAuth,
   onOpenBusinessProfile,
   onMessageSeller,
+  onMessageBusiness,
 }: ProductDetailPageProps) {
   const [detail, setDetail] = useState<PublicProductDetailResult | null>(null);
   const [proxyStatus, setProxyStatus] = useState<CommerceProxyStatus | null>(null);
@@ -183,19 +198,38 @@ export function ProductDetailPage({
       onRequireAuth();
       return;
     }
-    const targetUid =
-      detail.businessProfile?.ownerUid || detail.store.ownerUid || detail.product.ownerUid;
-    if (!targetUid) return;
     const priceFormatted = formatCurrencyCents(effectivePriceCents, detail.product.currency);
-    void onMessageSeller(
-      targetUid,
-      `Hi, is "${detail.product.title}" still available?`,
-      {
+    const defaultQuestion = `Hi, is "${detail.product.title}" still available?`;
+    if (detail.businessProfile && onMessageBusiness) {
+      const fullBp: BusinessProfile = {
+        ...detail.businessProfile,
+        bio: detail.store.tagline || '',
+        bannerUrl: detail.store.bannerUrl || '',
+        currency: detail.store.currency || detail.product.currency || 'USD',
+        status: 'ACTIVE',
+        followersCount: 0,
+        createdAtMs: detail.store.createdAtMs || 0,
+        updatedAtMs: detail.store.updatedAtMs || 0,
+      };
+      void onMessageBusiness(fullBp, defaultQuestion, {
         id: detail.product.id,
         title: detail.product.title,
         priceFormatted,
-      }
-    );
+        imageUrl: gallery[0] || detail.product.imageUrl,
+        priceCents: effectivePriceCents,
+        currency: detail.product.currency,
+        storeSlug: detail.store.slug || detail.product.storeSlug,
+      });
+      return;
+    }
+    const targetUid =
+      detail.businessProfile?.ownerUid || detail.store.ownerUid || detail.product.ownerUid;
+    if (!targetUid) return;
+    void onMessageSeller(targetUid, defaultQuestion, {
+      id: detail.product.id,
+      title: detail.product.title,
+      priceFormatted,
+    });
   };
 
   const handleSubmitOrder = async (e: FormEvent) => {

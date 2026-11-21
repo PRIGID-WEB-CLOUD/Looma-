@@ -64,7 +64,8 @@ interface BusinessProfilePageProps {
   onRequireAuth: () => void;
   onEditBusiness: (bp: BusinessProfile) => void;
   onCreateBusinessPost: (bp: BusinessProfile) => void;
-  onMessageOwner: (ownerUid: string, businessName: string) => void;
+  onMessageOwner?: (ownerUid: string, businessName: string) => void;
+  onMessageBusiness?: (bp: BusinessProfile) => Promise<void> | void;
   onOpenProduct: (productId: string) => void;
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
@@ -79,6 +80,7 @@ interface BusinessProfilePageProps {
   onShareToChat: (thread: ChatThread, post: Post) => Promise<void>;
   onMentionClick: (handle: string) => void;
   onSelectHashtag: (tag: string) => void;
+  onOpenComments?: (post: Post) => void;
 }
 
 export function BusinessProfilePage({
@@ -97,6 +99,7 @@ export function BusinessProfilePage({
   onEditBusiness,
   onCreateBusinessPost,
   onMessageOwner,
+  onMessageBusiness,
   onOpenProduct,
   onToggleLike,
   onToggleBookmark,
@@ -108,6 +111,7 @@ export function BusinessProfilePage({
   onShareToChat,
   onMentionClick,
   onSelectHashtag,
+  onOpenComments,
 }: BusinessProfilePageProps) {
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -353,7 +357,7 @@ export function BusinessProfilePage({
           <Building2 className="w-8 h-8 text-slate-400 mx-auto" aria-hidden="true" />
           <p className="text-base font-bold">Business Profile not found</p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            {loadError || `No active business matches /business/${slug}.`}
+            {loadError || `No active business matches @${slug}.`}
           </p>
         </div>
       </div>
@@ -423,7 +427,7 @@ export function BusinessProfilePage({
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  /business/{businessProfile.slug} · {businessProfile.category}
+                  @{businessProfile.slug} · {businessProfile.category}
                 </p>
                 {businessProfile.bio && (
                   <p className="text-sm text-slate-700 dark:text-slate-300 mt-2.5 max-w-2xl leading-relaxed">
@@ -512,7 +516,11 @@ export function BusinessProfilePage({
                         onRequireAuth();
                         return;
                       }
-                      onMessageOwner(businessProfile.ownerUid, businessProfile.displayName);
+                      if (onMessageBusiness) {
+                        void onMessageBusiness(businessProfile);
+                        return;
+                      }
+                      onMessageOwner?.(businessProfile.ownerUid, businessProfile.displayName);
                     }}
                     className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
                   >
@@ -628,6 +636,7 @@ export function BusinessProfilePage({
                 onShareToChat={onShareToChat}
                 onMentionClick={onMentionClick}
                 onSelectHashtag={onSelectHashtag}
+                onOpenComments={onOpenComments}
               />
             ))}
           </div>

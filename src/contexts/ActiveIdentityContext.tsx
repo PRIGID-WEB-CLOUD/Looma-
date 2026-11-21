@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -16,14 +17,21 @@ import type {
   BusinessMembershipRole,
   BusinessNotification,
   BusinessProfile,
+  BusinessWorkspaceSection,
   PlatformMode,
 } from '../types/business';
 import {
+  markAllBusinessNotificationsRead as markAllBusinessNotificationsReadService,
+  markBusinessNotificationRead as markBusinessNotificationReadService,
   subscribeBusinessNotifications,
   subscribeBusinessProfilesByIds,
   subscribePendingInvitesForEmail,
   subscribeUserBusinessMemberships,
 } from '../services/businessProfiles';
+
+import { buildScopedCacheKey } from '../utils/cacheIsolation';
+
+export { buildScopedCacheKey };
 
 const STORAGE_KEY_PREF = 'looma_active_business_id_pref_v1';
 
@@ -38,12 +46,19 @@ export interface ActiveIdentityContextValue {
   activeBusinessMembership: BusinessMembership | null;
   activeMembershipRole: BusinessMembershipRole | null;
   canManageActiveBusiness: boolean;
+  canAdminActiveBusiness: boolean;
   businessNotifications: BusinessNotification[];
   unreadBusinessNotifications: number;
+  businessSection: BusinessWorkspaceSection;
+  setBusinessSection: (section: BusinessWorkspaceSection) => void;
   isTransitioning: boolean;
+  switchEpoch: number;
+  getScopedCacheKey: (namespace: string, key: string) => string;
+  markBusinessNotificationRead: (notificationId: string) => Promise<void>;
+  markAllBusinessNotificationsRead: () => Promise<void>;
   switchToNormal: () => void;
   switchToPersonal: () => void;
-  switchToBusiness: (businessProfileId: string) => void;
+  switchToBusiness: (businessProfileId: string, initialSection?: BusinessWorkspaceSection) => void;
   switchProfile: (profileId: string) => void;
 }
 
@@ -65,6 +80,10 @@ export function ActiveIdentityProvider({
   const [pendingInvites, setPendingInvites] = useState<BusinessInvite[]>([]);
   const [businessNotifications, setBusinessNotifications] = useState<BusinessNotification[]>([]);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
+  const [switchEpoch, setSwitchEpoch] = useState<number>(0);
+  const [businessSection, setBusinessSection] = useState<BusinessWorkspaceSection>('dashboard');
+
+  const transitionTimerRef = useRef<number | null>(null);
 
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -75,6 +94,14 @@ export function ActiveIdentityProvider({
       return null;
     }
   });
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(transitionTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!firebaseUser || isLocalAutostart || !firebaseUser.emailVerified) {
@@ -135,6 +162,12 @@ export function ActiveIdentityProvider({
     return role === 'OWNER' || role === 'ADMIN' || role === 'EDITOR';
   }, [activeBusinessMembership]);
 
+  const canAdminActiveBusiness: boolean = useMemo(() => {
+    if (!activeBusinessMembership) return false;
+    const role = activeBusinessMembership.role;
+    return role === 'OWNER' || role === 'ADMIN';
+  }, [activeBusinessMembership]);
+
   const platformMode: PlatformMode = useMemo(() => {
     return activeBusinessProfile && activeBusinessMembership ? 'business' : 'normal';
   }, [activeBusinessMembership, activeBusinessProfile]);
@@ -152,14 +185,25 @@ export function ActiveIdentityProvider({
   }, [activeBusinessProfile, firebaseUser, isLocalAutostart]);
 
   const triggerTransition = useCallback(() => {
+    setSwitchEpoch((prev) => prev + 1);
     setIsTransitioning(true);
-    setTimeout(() => {
+    if (transitionTimerRef.current !== null && typeof window !== 'undefined') {
+      window.clearTimeout(transitionTimerRef.current);
+    }
+    if (typeof window !== 'undefined') {
+      transitionTimerRef.current = window.setTimeout(() => {
+        transitionTimerRef.current = null;
+        setIsTransitioning(false);
+      }, 280);
+    } else {
       setIsTransitioning(false);
-    }, 280);
+    }
   }, []);
 
   const switchToPersonal = useCallback(() => {
     triggerTransition();
+    setBusinessNotifications([]);
+    setBusinessSection('dashboard');
     setSelectedBusinessId(null);
     if (typeof window !== 'undefined') {
       try {
@@ -173,8 +217,10 @@ export function ActiveIdentityProvider({
   const switchToNormal = switchToPersonal;
 
   const switchToBusiness = useCallback(
-    (businessProfileId: string) => {
+    (businessProfileId: string, initialSection: BusinessWorkspaceSection = 'dashboard') => {
       triggerTransition();
+      setBusinessNotifications([]);
+      setBusinessSection(initialSection);
       setSelectedBusinessId(businessProfileId);
       if (typeof window !== 'undefined') {
         try {
@@ -197,6 +243,27 @@ export function ActiveIdentityProvider({
     },
     [profile.uid, switchToBusiness, switchToPersonal]
   );
+
+  const getScopedCacheKey = useCallback(
+    (namespace: string, key: string) =>
+      buildScopedCacheKey(platformMode, activeProfileId, namespace, key),
+    [activeProfileId, platformMode]
+  );
+
+  const markBusinessNotificationRead = useCallback(
+    async (notificationId: string) => {
+      if (!activeBusinessProfile) return;
+      await markBusinessNotificationReadService(activeBusinessProfile.id, notificationId);
+    },
+    [activeBusinessProfile]
+  );
+
+  const markAllBusinessNotificationsRead = useCallback(async () => {
+    if (!activeBusinessProfile) return;
+    const unreadIds = businessNotifications.filter((n) => !n.read).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+    await markAllBusinessNotificationsReadService(activeBusinessProfile.id, unreadIds);
+  }, [activeBusinessProfile, businessNotifications]);
 
   const activeIdentity: ActiveIdentity = useMemo(() => {
     if (activeBusinessProfile && activeBusinessMembership) {
@@ -243,9 +310,16 @@ export function ActiveIdentityProvider({
       activeBusinessMembership,
       activeMembershipRole,
       canManageActiveBusiness,
+      canAdminActiveBusiness,
       businessNotifications,
       unreadBusinessNotifications,
+      businessSection,
+      setBusinessSection,
       isTransitioning,
+      switchEpoch,
+      getScopedCacheKey,
+      markBusinessNotificationRead,
+      markAllBusinessNotificationsRead,
       switchToNormal,
       switchToPersonal,
       switchToBusiness,
@@ -258,12 +332,18 @@ export function ActiveIdentityProvider({
       activeMembershipRole,
       activeProfileId,
       businessNotifications,
+      businessSection,
       businesses,
+      canAdminActiveBusiness,
       canManageActiveBusiness,
+      getScopedCacheKey,
       isTransitioning,
+      markAllBusinessNotificationsRead,
+      markBusinessNotificationRead,
       memberships,
       pendingInvites,
       platformMode,
+      switchEpoch,
       switchProfile,
       switchToBusiness,
       switchToNormal,

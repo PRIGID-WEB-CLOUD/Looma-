@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Building2, Check, Globe, MapPin, Sparkles, Store, X } from 'lucide-react';
+import { Check, Globe, MapPin, Sparkles, Store, X } from 'lucide-react';
 import type { BusinessProfile } from '../types/business';
 import type { UserProfile } from '../types/social';
 import {
@@ -12,6 +12,10 @@ import {
   updateBusinessProfile,
   validateBusinessProfileInput,
 } from '../services/businessProfiles';
+import {
+  generateBusinessHandleFromName,
+  suggestAlternativeBusinessHandles,
+} from '../utils/businessProfileValidation';
 import { uploadMediaToCloudflareR2 } from '../services/storage';
 
 interface BusinessProfileModalProps {
@@ -44,6 +48,7 @@ export function BusinessProfileModal({
   const [enableCommerceNow, setEnableCommerceNow] = useState(true);
 
   const [slugStatus, setSlugStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const [suggestedHandles, setSuggestedHandles] = useState<string[]>([]);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +83,7 @@ export function BusinessProfileModal({
       setEnableCommerceNow(true);
     }
     setSlugStatus('idle');
+    setSuggestedHandles([]);
   }, [open, mode, initialProfile, personalProfile.location]);
 
   useEffect(() => {
@@ -85,21 +91,45 @@ export function BusinessProfileModal({
     const clean = normalizeBusinessSlug(slug);
     if (clean.length < 2) {
       setSlugStatus('idle');
+      setSuggestedHandles([]);
       return;
     }
     if (mode === 'edit' && initialProfile && clean === initialProfile.slug) {
       setSlugStatus('available');
+      setSuggestedHandles([]);
       return;
     }
     let active = true;
     setSlugStatus('checking');
+    setSuggestedHandles([]);
     const timer = window.setTimeout(() => {
-      void checkBusinessSlugAvailable(clean, mode === 'edit' ? initialProfile?.id : undefined)
-        .then((ok) => {
-          if (active) setSlugStatus(ok ? 'available' : 'taken');
+      const ignoreId = mode === 'edit' ? initialProfile?.id : undefined;
+      void checkBusinessSlugAvailable(clean, ignoreId)
+        .then(async (ok) => {
+          if (!active) return;
+          if (ok) {
+            setSlugStatus('available');
+            setSuggestedHandles([]);
+            return;
+          }
+          setSlugStatus('taken');
+          const candidates = suggestAlternativeBusinessHandles(clean);
+          const checks = await Promise.all(
+            candidates.map(async (candidate) => ({
+              candidate,
+              available: await checkBusinessSlugAvailable(candidate, ignoreId).catch(() => false),
+            }))
+          );
+          if (!active) return;
+          setSuggestedHandles(
+            checks.filter((c) => c.available).slice(0, 3).map((c) => c.candidate)
+          );
         })
         .catch(() => {
-          if (active) setSlugStatus('idle');
+          if (active) {
+            setSlugStatus('idle');
+            setSuggestedHandles([]);
+          }
         });
     }, 300);
     return () => {
@@ -283,10 +313,10 @@ export function BusinessProfileModal({
                   const val = e.target.value;
                   setDisplayName(val);
                   if (!slugManuallyEdited && mode === 'create') {
-                    setSlug(normalizeBusinessSlug(val));
+                    setSlug(generateBusinessHandleFromName(val));
                   }
                 }}
-                placeholder="e.g., Atelier Sol Studio"
+                placeholder="e.g., Prigid Web Cloud"
                 className="w-full min-h-[42px] px-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
@@ -297,7 +327,7 @@ export function BusinessProfileModal({
                   htmlFor="bp-slug"
                   className="block text-xs font-semibold text-slate-700 dark:text-slate-300"
                 >
-                  Public Business URL Handle *
+                  Business @handle *
                 </label>
                 {slugStatus === 'checking' && (
                   <span className="text-[11px] text-slate-400">Checking handle...</span>
@@ -309,13 +339,13 @@ export function BusinessProfileModal({
                 )}
                 {slugStatus === 'taken' && (
                   <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
-                    Handle already taken
+                    @handle already taken
                   </span>
                 )}
               </div>
               <div className="flex items-center rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 overflow-hidden focus-within:ring-2 focus-within:ring-blue-600">
-                <span className="px-3 text-xs text-slate-400 border-r border-slate-200 dark:border-slate-800 shrink-0">
-                  /business/
+                <span className="px-3 text-sm font-semibold text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800 shrink-0">
+                  @
                 </span>
                 <input
                   id="bp-slug"
@@ -327,10 +357,30 @@ export function BusinessProfileModal({
                     setSlugManuallyEdited(true);
                     setSlug(normalizeBusinessSlug(e.target.value));
                   }}
-                  placeholder="atelier-sol"
+                  placeholder="prigidwebcloud"
                   className="w-full min-h-[42px] px-3 bg-transparent text-sm focus:outline-none"
                 />
               </div>
+              {slugStatus === 'taken' && suggestedHandles.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="handle-suggestions">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Suggested available:
+                  </span>
+                  {suggestedHandles.map((candidate) => (
+                    <button
+                      key={candidate}
+                      type="button"
+                      onClick={() => {
+                        setSlugManuallyEdited(true);
+                        setSlug(candidate);
+                      }}
+                      className="min-h-[30px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-500 text-xs font-medium text-blue-600 dark:text-blue-400 cursor-pointer transition-colors"
+                    >
+                      @{candidate}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div>

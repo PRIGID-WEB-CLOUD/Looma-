@@ -25,11 +25,41 @@ export interface BusinessProfile {
   updatedAtMs: number;
 }
 
+export type BusinessWorkspaceSection =
+  | 'dashboard'
+  | 'catalog'
+  | 'orders'
+  | 'inbox'
+  | 'posts'
+  | 'team'
+  | 'settings';
+
 export interface BusinessHandle {
   slug: string;
   businessProfileId: string;
   ownerUid: string;
+  isAlias?: boolean;
+  targetSlug?: string;
   createdAtMs: number;
+  updatedAtMs?: number;
+}
+
+export interface BusinessQuickReply {
+  id: string;
+  title: string;
+  shortcut: string;
+  text: string;
+}
+
+export interface BusinessMessagingSettings {
+  businessProfileId: string;
+  welcomeEnabled: boolean;
+  welcomeMessage: string;
+  awayEnabled: boolean;
+  awayMessage: string;
+  quickReplies: BusinessQuickReply[];
+  updatedByUid: string;
+  updatedAtMs: number;
 }
 
 export interface BusinessMembership {

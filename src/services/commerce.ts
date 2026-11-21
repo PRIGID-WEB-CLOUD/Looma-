@@ -613,6 +613,42 @@ export function subscribeActiveMarketplaceProducts(
   );
 }
 
+export function subscribeStoreMarketplaceProducts(
+  storeId: string,
+  ownerUid: string,
+  viewerUid: string,
+  onData: (products: MarketplaceProduct[]) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe {
+  const cleanStoreId = storeId.trim();
+  if (!cleanStoreId) {
+    onData([]);
+    return () => {};
+  }
+  const isOwnerViewer = Boolean(viewerUid && ownerUid && viewerUid === ownerUid);
+  const q = isOwnerViewer
+    ? query(collection(db, 'marketplaceProducts'), where('ownerUid', '==', ownerUid))
+    : query(
+        collection(db, 'marketplaceProducts'),
+        where('storeId', '==', cleanStoreId),
+        where('status', '==', 'ACTIVE')
+      );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs
+        .map((d) => mapProductDoc(d.id, d.data() as Record<string, unknown>))
+        .filter((p) => p.storeId === cleanStoreId)
+        .sort((a, b) => Number(b.featured) - Number(a.featured) || b.updatedAtMs - a.updatedAtMs);
+      onData(items);
+    },
+    (err) => {
+      if (onError) onError(err);
+      handleFirestoreError(err, OperationType.LIST, 'marketplaceProducts');
+    }
+  );
+}
+
 export function subscribeAllMarketplaceProductsAdmin(
   onData: (products: MarketplaceProduct[]) => void,
   onError?: (err: unknown) => void
@@ -712,6 +748,7 @@ export async function saveMarketplaceStoreRecord(input: {
   currency: string;
   publishStatus: StorePublishStatus;
   externalStoreId?: string;
+  businessProfileId?: string;
   verified: boolean;
   featured: boolean;
   isCreate: boolean;
@@ -735,6 +772,9 @@ export async function saveMarketplaceStoreRecord(input: {
   };
   if (input.externalStoreId && input.externalStoreId.trim()) {
     payload.externalStoreId = input.externalStoreId.trim().slice(0, 128);
+  }
+  if (input.businessProfileId && input.businessProfileId.trim()) {
+    payload.businessProfileId = input.businessProfileId.trim().slice(0, 128);
   }
   try {
     const ref = doc(db, 'marketplaceStores', id);
@@ -761,6 +801,7 @@ export async function saveMarketplaceProductRecord(input: {
   storeName: string;
   storeSlug: string;
   ownerUid: string;
+  businessProfileId?: string;
   title: string;
   description: string;
   category: string;
@@ -784,6 +825,9 @@ export async function saveMarketplaceProductRecord(input: {
     storeName: input.storeName.trim().slice(0, 80),
     storeSlug: slugifyStoreHandle(input.storeSlug),
     ownerUid: input.ownerUid.trim(),
+    ...(input.businessProfileId && input.businessProfileId.trim()
+      ? { businessProfileId: input.businessProfileId.trim().slice(0, 128) }
+      : {}),
     title: input.title.trim().slice(0, 100),
     description: input.description.trim().slice(0, 1000),
     category: input.category.trim().slice(0, 40) || 'General',

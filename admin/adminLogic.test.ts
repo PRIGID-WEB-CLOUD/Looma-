@@ -800,4 +800,96 @@ test('verification request validation, queue sorting, and terminal review decisi
   }
 });
 
+test('five-status verification workflow supports under_review, more_info_required, business targetType, and terminal locks', () => {
+  const queue: VerificationRequest[] = [
+    {
+      id: 'vr_rejected',
+      uid: 'u_1',
+      targetType: 'personal',
+      displayName: 'Personal User',
+      handle: 'personaluser',
+      avatarUrl: '',
+      reason: 'Personal profile verification.',
+      links: ['https://personal.example.com'],
+      status: 'rejected',
+      createdAtMs: 9000,
+      updatedAtMs: 9000,
+    },
+    {
+      id: 'vr_more_info',
+      uid: 'u_2',
+      targetType: 'business',
+      businessProfileId: 'bp_cloud',
+      displayName: 'Prigid Web Cloud',
+      handle: 'prigidwebcloud',
+      avatarUrl: '',
+      reason: 'Official company storefront and engineering cloud.',
+      links: ['https://prigid.example.com'],
+      documentUrls: ['https://cdn.example.com/incorporation.pdf'],
+      status: 'more_info_required',
+      createdAtMs: 8000,
+      updatedAtMs: 8000,
+    },
+    {
+      id: 'vr_under_review',
+      uid: 'u_3',
+      targetType: 'business',
+      businessProfileId: 'bp_atelier',
+      displayName: 'Luxe Atelier',
+      handle: 'luxeatelier',
+      avatarUrl: '',
+      reason: 'Registered studio storefront with catalog items.',
+      links: ['https://atelier.example.com'],
+      status: 'under_review',
+      createdAtMs: 6000,
+      updatedAtMs: 6000,
+    },
+  ];
+
+  // under_review sorts with active pending tier, ahead of more_info_required, ahead of terminal rejected
+  const sorted = sortVerificationRequests(queue);
+  assert.deepEqual(
+    sorted.map((item) => item.id),
+    ['vr_under_review', 'vr_more_info', 'vr_rejected']
+  );
+
+  // Move more_info_required -> under_review -> approved
+  const step1 = reviewVerificationRequestDecision(
+    queue,
+    'vr_more_info',
+    'under_review',
+    'u_admin',
+    'Inspecting incorporation PDF.',
+    10000
+  );
+  assert.equal(step1.ok, true);
+  if (step1.ok) {
+    assert.equal(step1.updated.status, 'under_review');
+    assert.equal(step1.updated.targetType, 'business');
+    assert.equal(step1.updated.businessProfileId, 'bp_cloud');
+
+    const step2 = reviewVerificationRequestDecision(
+      step1.requests,
+      'vr_more_info',
+      'approved',
+      'u_admin',
+      'Business documents verified.',
+      11000
+    );
+    assert.equal(step2.ok, true);
+    if (step2.ok) {
+      assert.equal(step2.updated.status, 'approved');
+      // Approved becomes terminal
+      const locked = reviewVerificationRequestDecision(
+        step2.requests,
+        'vr_more_info',
+        'more_info_required',
+        'u_admin'
+      );
+      assert.equal(locked.ok, false);
+    }
+  }
+});
+
+
 

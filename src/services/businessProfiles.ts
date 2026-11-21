@@ -29,18 +29,24 @@ import type {
   BusinessNotificationType,
   BusinessProfile,
 } from '../types/business';
+import type { BusinessMessagingSettings, QuickReplyItem } from '../types/businessChat';
+import type { VerificationRequest } from '../types/social';
 
 import {
   BUSINESS_CATEGORIES,
   BUSINESS_CURRENCIES,
+  generateBusinessHandleFromName,
   normalizeBusinessSlug,
+  suggestAlternativeBusinessHandles,
   validateBusinessProfileInput,
 } from '../utils/businessProfileValidation';
 
 export {
   BUSINESS_CATEGORIES,
   BUSINESS_CURRENCIES,
+  generateBusinessHandleFromName,
   normalizeBusinessSlug,
+  suggestAlternativeBusinessHandles,
   validateBusinessProfileInput,
 };
 
@@ -202,7 +208,7 @@ export async function createBusinessProfile(input: {
     await runTransaction(db, async (tx) => {
       const existingHandle = await tx.get(handleRef);
       if (existingHandle.exists()) {
-        throw new Error(`The business handle "${clean.slug}" is already taken.`);
+        throw new Error(`The business handle "@${clean.slug}" is already taken.`);
       }
 
       tx.set(bpRef, {
@@ -228,6 +234,7 @@ export async function createBusinessProfile(input: {
         slug: clean.slug,
         businessProfileId: bpId,
         ownerUid: input.ownerUid,
+        isAlias: false,
         createdAt: serverTimestamp(),
       });
 
@@ -301,19 +308,43 @@ export async function updateBusinessProfile(
   try {
     if (clean.slug !== previousSlug) {
       const nextHandleRef = doc(db, 'businessHandles', clean.slug);
-      const prevHandleRef = doc(db, 'businessHandles', previousSlug);
+      const prevHandleRef = previousSlug ? doc(db, 'businessHandles', previousSlug) : null;
       await runTransaction(db, async (tx) => {
         const nextHandleSnap = await tx.get(nextHandleRef);
-        if (nextHandleSnap.exists() && nextHandleSnap.data()?.businessProfileId !== bpId) {
-          throw new Error(`The business handle "${clean.slug}" is already taken.`);
+        const prevHandleSnap = prevHandleRef ? await tx.get(prevHandleRef) : null;
+
+        if (nextHandleSnap.exists()) {
+          if (nextHandleSnap.data()?.businessProfileId !== bpId) {
+            throw new Error(`The business handle "@${clean.slug}" is already taken.`);
+          }
+          tx.update(nextHandleRef, {
+            isAlias: false,
+            targetSlug: clean.slug,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          tx.set(nextHandleRef, {
+            slug: clean.slug,
+            businessProfileId: bpId,
+            ownerUid: updates.ownerUid,
+            isAlias: false,
+            createdAt: serverTimestamp(),
+          });
         }
-        tx.set(nextHandleRef, {
-          slug: clean.slug,
-          businessProfileId: bpId,
-          ownerUid: updates.ownerUid,
-          createdAt: serverTimestamp(),
-        });
-        tx.delete(prevHandleRef);
+
+        if (
+          prevHandleRef &&
+          prevHandleSnap &&
+          prevHandleSnap.exists() &&
+          prevHandleSnap.data()?.businessProfileId === bpId
+        ) {
+          tx.update(prevHandleRef, {
+            isAlias: true,
+            targetSlug: clean.slug,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
         tx.update(bpRef, {
           slug: clean.slug,
           displayName: clean.displayName,
@@ -364,9 +395,14 @@ export async function getBusinessProfileBySlug(slug: string): Promise<BusinessPr
   try {
     const handleSnap = await getDoc(doc(db, 'businessHandles', clean));
     if (handleSnap.exists()) {
-      const bpId = String(handleSnap.data()?.businessProfileId || '');
+      const data = handleSnap.data();
+      const bpId = String(data?.businessProfileId || '');
       if (bpId) {
         return getBusinessProfileById(bpId);
+      }
+      const targetSlug = typeof data?.targetSlug === 'string' ? normalizeBusinessSlug(data.targetSlug) : '';
+      if (targetSlug && targetSlug !== clean) {
+        return getBusinessProfileBySlug(targetSlug);
       }
     }
     const q = query(
@@ -895,3 +931,183 @@ export async function launchCommerceDashboardSso(businessProfileId: string): Pro
   }
   window.location.assign(data.redirectUrl);
 }
+
+export function subscribeAllActiveBusinessProfiles(
+  onChange: (profiles: BusinessProfile[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, 'businessProfiles'),
+    where('status', '==', 'ACTIVE')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(
+        snap.docs
+          .map((d) => mapBusinessProfile(d.id, d.data()))
+          .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      );
+    },
+    (err) => {
+      console.warn('Unable to subscribe to active businessProfiles:', err);
+      onChange([]);
+    }
+  );
+}
+
+const DEFAULT_MESSAGING_SETTINGS = (bpId: string): BusinessMessagingSettings => ({
+  businessProfileId: bpId,
+  welcomeEnabled: false,
+  welcomeMessage: 'Thanks for contacting us. Share your question and our team will respond shortly.',
+  awayEnabled: false,
+  awayMessage: 'Our team is currently away. We have received your message and will reply soon.',
+  quickReplies: [],
+  updatedByUid: '',
+  updatedAtMs: Date.now(),
+});
+
+function mapMessagingSettings(bpId: string, d: Record<string, unknown>): BusinessMessagingSettings {
+  const rawReplies = Array.isArray(d.quickReplies) ? d.quickReplies : [];
+  const quickReplies: QuickReplyItem[] = rawReplies
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item, index) => ({
+      id: String(item.id || `qr_${index}`),
+      label: String(item.label || 'Reply').slice(0, 60),
+      text: String(item.text || '').slice(0, 500),
+    }))
+    .filter((item) => item.text.length > 0);
+  return {
+    businessProfileId: String(d.businessProfileId || bpId),
+    welcomeEnabled: Boolean(d.welcomeEnabled),
+    welcomeMessage: String(d.welcomeMessage || ''),
+    awayEnabled: Boolean(d.awayEnabled),
+    awayMessage: String(d.awayMessage || ''),
+    quickReplies,
+    updatedByUid: String(d.updatedByUid || ''),
+    updatedAtMs: timestampToMs(d.updatedAt),
+  };
+}
+
+export function subscribeBusinessMessagingSettings(
+  bpId: string,
+  onChange: (settings: BusinessMessagingSettings) => void
+): Unsubscribe {
+  if (!bpId) {
+    onChange(DEFAULT_MESSAGING_SETTINGS(''));
+    return () => {};
+  }
+  return onSnapshot(
+    doc(db, 'businessProfiles', bpId, 'messagingSettings', 'config'),
+    (snap) => {
+      if (!snap.exists()) {
+        onChange(DEFAULT_MESSAGING_SETTINGS(bpId));
+        return;
+      }
+      onChange(mapMessagingSettings(bpId, snap.data()));
+    },
+    () => onChange(DEFAULT_MESSAGING_SETTINGS(bpId))
+  );
+}
+
+export async function getBusinessMessagingSettings(bpId: string): Promise<BusinessMessagingSettings> {
+  if (!bpId) return DEFAULT_MESSAGING_SETTINGS('');
+  try {
+    const snap = await getDoc(doc(db, 'businessProfiles', bpId, 'messagingSettings', 'config'));
+    if (!snap.exists()) return DEFAULT_MESSAGING_SETTINGS(bpId);
+    return mapMessagingSettings(bpId, snap.data());
+  } catch {
+    return DEFAULT_MESSAGING_SETTINGS(bpId);
+  }
+}
+
+export async function saveBusinessMessagingSettings(
+  bpId: string,
+  uid: string,
+  input: {
+    welcomeEnabled: boolean;
+    welcomeMessage: string;
+    awayEnabled: boolean;
+    awayMessage: string;
+    quickReplies: QuickReplyItem[];
+  }
+): Promise<void> {
+  const cleanReplies = input.quickReplies
+    .filter((item) => item.label.trim() && item.text.trim())
+    .slice(0, 20)
+    .map((item) => ({
+      id: item.id || makeId('qr'),
+      label: item.label.trim().slice(0, 60),
+      text: item.text.trim().slice(0, 500),
+    }));
+  try {
+    await setDoc(doc(db, 'businessProfiles', bpId, 'messagingSettings', 'config'), {
+      businessProfileId: bpId,
+      welcomeEnabled: Boolean(input.welcomeEnabled),
+      welcomeMessage: input.welcomeMessage.trim().slice(0, 500),
+      awayEnabled: Boolean(input.awayEnabled),
+      awayMessage: input.awayMessage.trim().slice(0, 500),
+      quickReplies: cleanReplies,
+      updatedByUid: uid,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `businessProfiles/${bpId}/messagingSettings/config`);
+  }
+}
+
+export function subscribeBusinessVerificationRequests(
+  bpId: string,
+  uid: string,
+  onChange: (requests: VerificationRequest[]) => void
+): Unsubscribe {
+  if (!bpId || !uid) {
+    onChange([]);
+    return () => {};
+  }
+  const q = query(
+    collection(db, 'verificationRequests'),
+    where('uid', '==', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs
+        .map((docSnap) => {
+          const d = docSnap.data();
+          const targetType = d.targetType === 'business' ? 'business' : 'personal';
+          const statusRaw = String(d.status || 'pending');
+          const status =
+            statusRaw === 'under_review' ||
+            statusRaw === 'approved' ||
+            statusRaw === 'rejected' ||
+            statusRaw === 'more_info_required'
+              ? statusRaw
+              : 'pending';
+          return {
+            id: String(d.id || docSnap.id),
+            uid: String(d.uid || ''),
+            targetType,
+            ...(typeof d.businessProfileId === 'string' && d.businessProfileId
+              ? { businessProfileId: d.businessProfileId }
+              : {}),
+            displayName: String(d.displayName || ''),
+            handle: String(d.handle || ''),
+            avatarUrl: String(d.avatarUrl || ''),
+            reason: String(d.reason || ''),
+            links: Array.isArray(d.links) ? d.links.map(String) : [],
+            ...(Array.isArray(d.documentUrls) ? { documentUrls: d.documentUrls.map(String) } : {}),
+            status,
+            reviewerUid: String(d.reviewerUid || ''),
+            reviewerNote: String(d.reviewerNote || ''),
+            createdAtMs: timestampToMs(d.createdAt),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          } satisfies VerificationRequest;
+        })
+        .filter((req) => req.targetType === 'business' && req.businessProfileId === bpId)
+        .sort((a, b) => b.createdAtMs - a.createdAtMs);
+      onChange(list);
+    },
+    () => onChange([])
+  );
+}
+

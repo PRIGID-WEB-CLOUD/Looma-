@@ -63,8 +63,7 @@ export interface CreatePostExtra {
 interface CreatePostModalProps {
   open: boolean;
   profile: UserProfile;
-  publishableBusinesses?: BusinessProfile[];
-  initialBusinessProfileId?: string | null;
+  activeBusinessProfile?: BusinessProfile | null;
   communityUsers?: UserProfile[];
   savedHashtags?: string[];
   categories?: string[];
@@ -82,8 +81,7 @@ interface CreatePostModalProps {
 export function CreatePostModal({
   open,
   profile,
-  publishableBusinesses = [],
-  initialBusinessProfileId = null,
+  activeBusinessProfile = null,
   communityUsers = [],
   savedHashtags = [],
   categories = POST_CATEGORIES,
@@ -110,25 +108,28 @@ export function CreatePostModal({
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
-  const [selectedBusinessId, setSelectedBusinessId] = useState<string>('');
+  const [identitySwitchWarning, setIdentitySwitchWarning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const prevAuthorKeyRef = useRef<string>('');
+
+  const currentAuthorKey = activeBusinessProfile ? `biz:${activeBusinessProfile.id}` : `user:${profile.uid}`;
 
   useEffect(() => {
-    if (!open) return;
-    if (
-      initialBusinessProfileId &&
-      publishableBusinesses.some((b) => b.id === initialBusinessProfileId)
-    ) {
-      setSelectedBusinessId(initialBusinessProfileId);
-    } else {
-      setSelectedBusinessId('');
+    if (!open) {
+      prevAuthorKeyRef.current = currentAuthorKey;
+      setIdentitySwitchWarning(false);
+      return;
     }
-  }, [initialBusinessProfileId, open, publishableBusinesses]);
+    if (prevAuthorKeyRef.current && prevAuthorKeyRef.current !== currentAuthorKey) {
+      const isDirty = Boolean(caption.trim() || imageUrl || videoUrl || audioUrl);
+      if (isDirty) {
+        setIdentitySwitchWarning(true);
+      }
+    }
+    prevAuthorKeyRef.current = currentAuthorKey;
+  }, [audioUrl, caption, currentAuthorKey, imageUrl, open, videoUrl]);
 
-  const activeBusinessAuthor = useMemo(
-    () => publishableBusinesses.find((b) => b.id === selectedBusinessId) || null,
-    [publishableBusinesses, selectedBusinessId]
-  );
+  const activeBusinessAuthor = activeBusinessProfile;
 
   const handleSelectGif = (gif: CuratedGif) => {
     setImageUrl(gif.url);
@@ -546,33 +547,44 @@ export function CreatePostModal({
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                       {activeBusinessAuthor
-                        ? `/business/${activeBusinessAuthor.slug} · Publishing as Business`
+                        ? `@${activeBusinessAuthor.slug}`
                         : `@${profile.handle} · Public to Looma feed`}
                     </p>
                   </div>
                 </div>
-
-                {publishableBusinesses.length > 0 && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    <label htmlFor="post-as-select" className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                      Post as
-                    </label>
-                    <select
-                      id="post-as-select"
-                      value={selectedBusinessId}
-                      onChange={(e) => setSelectedBusinessId(e.target.value)}
-                      className="min-h-[36px] px-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
-                    >
-                      <option value="">Personal (@{profile.handle})</option>
-                      {publishableBusinesses.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          Business: {b.displayName}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
               </div>
+
+              {identitySwitchWarning && (
+                <div
+                  role="alert"
+                  className="p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/80 dark:bg-amber-950/30 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-300"
+                >
+                  <span>
+                    Active profile switched while composing. Publishing will post as{' '}
+                    <strong>{activeBusinessAuthor ? activeBusinessAuthor.displayName : profile.displayName}</strong>.
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIdentitySwitchWarning(false)}
+                      className="font-semibold underline cursor-pointer"
+                    >
+                      Continue as current
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearAllMedia();
+                        setCaption('');
+                        setIdentitySwitchWarning(false);
+                      }}
+                      className="font-semibold text-rose-700 dark:text-rose-300 underline cursor-pointer"
+                    >
+                      Discard draft
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Topic Category Picker */}
               <div>

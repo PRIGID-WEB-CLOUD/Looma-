@@ -278,7 +278,7 @@
     },
     "PostComment": {
       "title": "PostComment",
-      "description": "Comment on a social post.",
+      "description": "Threaded comment on a social or business post with likes and edit state.",
       "type": "object",
       "properties": {
         "id": {
@@ -293,7 +293,29 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "parentCommentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorType": {
+          "type": "string",
+          "enum": ["personal", "business"]
+        },
+        "businessProfileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorUid": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
@@ -302,13 +324,13 @@
         "authorName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 60
+          "maxLength": 80
         },
         "authorHandle": {
           "type": "string",
           "minLength": 2,
-          "maxLength": 32,
-          "pattern": "^[a-zA-Z0-9_.]+$"
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_.\\-]+$"
         },
         "authorAvatar": {
           "type": "string",
@@ -322,7 +344,17 @@
           "minLength": 1,
           "maxLength": 500
         },
+        "likesCount": {
+          "type": "number"
+        },
+        "edited": {
+          "type": "boolean"
+        },
         "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
           "type": "string",
           "format": "date-time"
         }
@@ -337,6 +369,24 @@
         "text",
         "createdAt"
       ]
+    },
+    "PostCommentLike": {
+      "title": "PostCommentLike",
+      "description": "User like record on a comment.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "createdAt"]
     },
     "Bookmark": {
       "title": "Bookmark",
@@ -1055,17 +1105,20 @@
     },
     "VerificationRequest": {
       "title": "VerificationRequest",
-      "description": "Member verification badge request submitted for administrator review.",
+      "description": "Personal or Business verification badge request submitted for administrator review.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 60 },
-        "handle": { "type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-zA-Z0-9_.]+$" },
+        "targetType": { "type": "string", "enum": ["personal", "business"] },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "handle": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_.\\-]+$" },
         "avatarUrl": { "type": "string", "maxLength": 250000 },
         "reason": { "type": "string", "minLength": 10, "maxLength": 500 },
         "links": { "type": "array", "description": "Reference links (1-2 http/https URLs)" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "documentUrls": { "type": "array", "description": "Optional supporting verification document URLs (max 5)" },
+        "status": { "type": "string", "enum": ["pending", "under_review", "approved", "rejected", "more_info_required"] },
         "reviewerUid": { "type": "string", "maxLength": 128 },
         "reviewerNote": { "type": "string", "maxLength": 400 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -1104,6 +1157,7 @@
         "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
         "publishStatus": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "SUSPENDED"] },
         "externalStoreId": { "type": "string", "maxLength": 128 },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "verified": { "type": "boolean" },
         "featured": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -1125,6 +1179,7 @@
         "storeName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "storeSlug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "title": { "type": "string", "minLength": 1, "maxLength": 100 },
         "description": { "type": "string", "maxLength": 1000 },
         "category": { "type": "string", "minLength": 1, "maxLength": 40 },
@@ -1160,6 +1215,7 @@
         "storeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "storeName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "storeOwnerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storeBusinessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "items": { "type": "array", "description": "Bounded line items (1-25)" },
         "subtotalCents": { "type": "number" },
         "shippingCents": { "type": "number" },
@@ -1214,13 +1270,16 @@
     },
     "BusinessHandle": {
       "title": "BusinessHandle",
-      "description": "Atomic slug reservation mapping a unique business slug to a BusinessProfile ID.",
+      "description": "Atomic slug reservation mapping a unique business slug (or alias) to a BusinessProfile ID.",
       "type": "object",
       "properties": {
         "slug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
         "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "isAlias": { "type": "boolean" },
+        "targetSlug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["slug", "businessProfileId", "ownerUid", "createdAt"]
     },
@@ -1300,6 +1359,90 @@
         "id", "businessProfileId", "actorId", "actorName", "actorAvatar",
         "type", "title", "body", "targetId", "read", "createdAt"
       ]
+    },
+    "BusinessMessagingSettings": {
+      "title": "BusinessMessagingSettings",
+      "description": "Welcome/away automation and quick replies configuration scoped to a BusinessProfile.",
+      "type": "object",
+      "properties": {
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "welcomeEnabled": { "type": "boolean" },
+        "welcomeMessage": { "type": "string", "maxLength": 500 },
+        "awayEnabled": { "type": "boolean" },
+        "awayMessage": { "type": "string", "maxLength": 500 },
+        "quickReplies": { "type": "array", "description": "Up to 20 saved quick reply templates" },
+        "updatedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "businessProfileId", "welcomeEnabled", "welcomeMessage",
+        "awayEnabled", "awayMessage", "quickReplies", "updatedByUid", "updatedAt"
+      ]
+    },
+    "BusinessChatThread": {
+      "title": "BusinessChatThread",
+      "description": "Independent customer-to-business inquiry conversation belonging to a BusinessProfile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "businessAvatar": { "type": "string", "maxLength": 250000 },
+        "businessSlug": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "customerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "customerAvatar": { "type": "string", "maxLength": 250000 },
+        "customerHandle": { "type": "string", "maxLength": 64 },
+        "participantIds": { "type": "array", "description": "Customer UID + authorized business staff UIDs (max 50)" },
+        "status": { "type": "string", "enum": ["open", "pending", "resolved"] },
+        "labels": { "type": "array", "description": "Conversation labels (max 8)" },
+        "assignedUid": { "type": "string", "maxLength": 128 },
+        "linkedProductId": { "type": "string", "maxLength": 128 },
+        "linkedProductTitle": { "type": "string", "maxLength": 120 },
+        "linkedProductPrice": { "type": "string", "maxLength": 40 },
+        "linkedProductImage": { "type": "string", "maxLength": 600000 },
+        "linkedOrderId": { "type": "string", "maxLength": 128 },
+        "lastMessageText": { "type": "string", "maxLength": 500 },
+        "lastMessageSenderId": { "type": "string", "maxLength": 128 },
+        "lastMessageSenderType": { "type": "string", "enum": ["customer", "business", "system"] },
+        "unreadByBusiness": { "type": "boolean" },
+        "unreadByCustomer": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "businessProfileId", "businessName", "businessAvatar", "businessSlug",
+        "customerUid", "customerName", "customerAvatar", "customerHandle",
+        "participantIds", "status", "labels", "assignedUid",
+        "lastMessageText", "lastMessageSenderId", "lastMessageSenderType",
+        "unreadByBusiness", "unreadByCustomer", "createdAt", "updatedAt"
+      ]
+    },
+    "BusinessChatMessage": {
+      "title": "BusinessChatMessage",
+      "description": "Message inside a BusinessChatThread.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chatId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessProfileId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderType": { "type": "string", "enum": ["customer", "business", "system"] },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "senderAvatar": { "type": "string", "maxLength": 250000 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "messageType": { "type": "string", "enum": ["text", "product", "order", "auto_welcome", "auto_away"] },
+        "productAttachment": { "type": "object", "description": "Optional shared product card metadata" },
+        "orderId": { "type": "string", "maxLength": 128 },
+        "participantIds": { "type": "array", "description": "Bounded participant UIDs matching parent thread" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "chatId", "businessProfileId", "customerUid", "senderUid",
+        "senderType", "senderName", "senderAvatar", "text", "messageType",
+        "participantIds", "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -1329,7 +1472,11 @@
     },
     "/posts/{postId}/comments/{commentId}": {
       "schema": { "$ref": "#/entities/PostComment" },
-      "description": "Comments belonging to a post."
+      "description": "Threaded comments belonging to a post."
+    },
+    "/posts/{postId}/comments/{commentId}/likes/{userId}": {
+      "schema": { "$ref": "#/entities/PostCommentLike" },
+      "description": "Per-user like document for a comment."
     },
     "/chats/{chatId}": {
       "schema": { "$ref": "#/entities/ChatThread" },
@@ -1450,6 +1597,18 @@
     "/businessProfiles/{bpId}/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/BusinessNotification" },
       "description": "Activity notifications scoped to a BusinessProfile."
+    },
+    "/businessProfiles/{bpId}/messagingSettings/{docId}": {
+      "schema": { "$ref": "#/entities/BusinessMessagingSettings" },
+      "description": "Business messaging automation and quick replies config doc."
+    },
+    "/businessChats/{chatId}": {
+      "schema": { "$ref": "#/entities/BusinessChatThread" },
+      "description": "Independent Business Profile customer inquiry threads."
+    },
+    "/businessChats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/BusinessChatMessage" },
+      "description": "Messages belonging to a BusinessChatThread."
     }
   }
 }

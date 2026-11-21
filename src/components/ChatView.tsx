@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowLeft,
   BellOff,
+  Building2,
   Check,
   CheckCheck,
   ExternalLink,
@@ -19,6 +20,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  ShoppingBag,
   Trash2,
   UserPlus,
   Users,
@@ -27,6 +29,10 @@ import {
   X,
 } from 'lucide-react';
 import type { BusinessProfile } from '../types/business';
+import type {
+  BusinessChatMessage,
+  BusinessChatThread,
+} from '../types/businessChat';
 import type {
   ChatMessage,
   ChatReadReceipt,
@@ -55,6 +61,13 @@ import {
   type CuratedGif,
 } from '../utils/socialLogic';
 import { uploadMediaToCloudflareR2 } from '../services/storage';
+import {
+  markBusinessChatRead,
+  sendBusinessChatMessage,
+  subscribeBusinessChatMessages,
+  subscribeCustomerBusinessInquiries,
+} from '../services/businessChat';
+import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
 import type { ReportCategory } from '../../admin/adminLogic';
 import { Avatar } from './Avatar';
 import { ChatInfoModal } from './ChatInfoModal';
@@ -103,6 +116,12 @@ interface ChatViewProps {
   ) => Promise<void>;
   callsEnabled?: boolean;
   voiceNotesEnabled?: boolean;
+  platformMode?: 'normal' | 'business';
+  initialInboxMode?: 'personal' | 'business';
+  initialBusinessChatId?: string | null;
+  isAuthorized?: boolean;
+  onOpenBusinessProfile?: (slug: string) => void;
+  onOpenProduct?: (productId: string) => void;
 }
 
 function VoiceNoteBubble({
@@ -410,12 +429,31 @@ export function ChatView({
   onReportChat,
   callsEnabled = true,
   voiceNotesEnabled = true,
+  platformMode = 'normal',
+  initialInboxMode = 'personal',
+  initialBusinessChatId = null,
+  isAuthorized = true,
+  onOpenBusinessProfile,
+  onOpenProduct,
 }: ChatViewProps) {
+  const [inboxMode, setInboxMode] = useState<'personal' | 'business'>(
+    initialBusinessChatId ? 'business' : initialInboxMode
+  );
+  const [bizThreads, setBizThreads] = useState<BusinessChatThread[]>([]);
+  const [selectedBizChatId, setSelectedBizChatId] = useState<string | null>(
+    initialBusinessChatId
+  );
+  const [bizMessages, setBizMessages] = useState<BusinessChatMessage[]>([]);
+  const [bizDraft, setBizDraft] = useState('');
+  const [sendingBizMessage, setSendingBizMessage] = useState(false);
+  const [bizError, setBizError] = useState<string | null>(null);
+  const bizEndRef = useRef<HTMLDivElement | null>(null);
+
   const [selectedId, setSelectedId] = useState<string | null>(
     initialThreadId || threads[0]?.id || null
   );
   const [mobileShowThread, setMobileShowThread] = useState(
-    Boolean(initialThreadId)
+    Boolean(initialThreadId || initialBusinessChatId)
   );
   const [draft, setDraft] = useState('');
   const [threadSearch, setThreadSearch] = useState('');
@@ -527,22 +565,84 @@ export function ChatView({
     );
   }, [threads, threadSearch]);
 
+  const activeBizThread = useMemo(
+    () =>
+      bizThreads.find((t) => t.id === selectedBizChatId) ||
+      bizThreads[0] ||
+      null,
+    [bizThreads, selectedBizChatId]
+  );
+
+  const filteredBizThreads = useMemo(() => {
+    const q = threadSearch.trim().toLowerCase();
+    if (!q) return bizThreads;
+    return bizThreads.filter(
+      (t) =>
+        t.businessName.toLowerCase().includes(q) ||
+        t.businessSlug.toLowerCase().includes(q) ||
+        (t.linkedProductTitle || '').toLowerCase().includes(q) ||
+        (t.lastMessageText || '').toLowerCase().includes(q)
+    );
+  }, [bizThreads, threadSearch]);
+
+  const bizUnreadCount = useMemo(
+    () => bizThreads.filter((t) => t.unreadByCustomer).length,
+    [bizThreads]
+  );
+
   const filteredDirectoryUsers = useMemo(() => {
     const base = onlineOnlyFilter ? onlineCreators : otherCreators;
     return filterUsersByQuery(base, directorySearch);
   }, [onlineOnlyFilter, onlineCreators, otherCreators, directorySearch]);
 
   useEffect(() => {
+    if (!isAuthorized || !isFirebaseBacked || !profile.uid) {
+      setBizThreads([]);
+      return;
+    }
+    return subscribeCustomerBusinessInquiries(profile.uid, setBizThreads);
+  }, [isAuthorized, isFirebaseBacked, profile.uid]);
+
+  useEffect(() => {
+    if (initialBusinessChatId) {
+      setInboxMode('business');
+      setSelectedBizChatId(initialBusinessChatId);
+      setMobileShowThread(true);
+    }
+  }, [initialBusinessChatId]);
+
+  useEffect(() => {
+    if (inboxMode !== 'business' || !activeBizThread || !profile.uid || !isFirebaseBacked) {
+      setBizMessages([]);
+      return;
+    }
+    return subscribeBusinessChatMessages(activeBizThread.id, profile.uid, setBizMessages);
+  }, [inboxMode, activeBizThread, profile.uid, isFirebaseBacked]);
+
+  useEffect(() => {
+    if (inboxMode === 'business' && activeBizThread?.unreadByCustomer && isFirebaseBacked) {
+      void markBusinessChatRead(activeBizThread.id, 'customer');
+    }
+  }, [inboxMode, activeBizThread, isFirebaseBacked]);
+
+  useEffect(() => {
+    if (inboxMode === 'business') {
+      bizEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [inboxMode, bizMessages.length, activeBizThread?.id]);
+
+  useEffect(() => {
     if (initialThreadId) {
+      setInboxMode('personal');
       setSelectedId(initialThreadId);
       setMobileShowThread(true);
     }
   }, [initialThreadId]);
 
   useEffect(() => {
-    if (!activeThread) return;
+    if (!activeThread || inboxMode !== 'personal') return;
     return onSubscribeThread(activeThread.id);
-  }, [activeThread, onSubscribeThread]);
+  }, [activeThread, onSubscribeThread, inboxMode]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -928,17 +1028,65 @@ export function ChatView({
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => openFullUserDirectory('group')}
-                aria-label="New group chat"
-                className="min-h-[38px] px-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
-              >
-                <Users className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Group</span>
-              </button>
+              {inboxMode === 'personal' && (
+                <button
+                  type="button"
+                  onClick={() => openFullUserDirectory('group')}
+                  aria-label="New group chat"
+                  className="min-h-[38px] px-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
+                >
+                  <Users className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Group</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {platformMode === 'normal' && (
+            <div
+              role="tablist"
+              aria-label="Messaging environment switcher"
+              className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-800"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={inboxMode === 'personal'}
+                onClick={() => {
+                  setInboxMode('personal');
+                  setMobileShowThread(false);
+                }}
+                className={`min-h-[36px] px-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  inboxMode === 'personal'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Personal Chats
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={inboxMode === 'business'}
+                onClick={() => {
+                  setInboxMode('business');
+                  setMobileShowThread(false);
+                }}
+                className={`min-h-[36px] px-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                  inboxMode === 'business'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <span>Business Inquiries</span>
+                {bizUnreadCount > 0 && (
+                  <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center tabular-nums">
+                    {bizUnreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
 
           {/* Conversation Search */}
           <div className="relative">
@@ -950,13 +1098,17 @@ export function ChatView({
               type="search"
               value={threadSearch}
               onChange={(e) => setThreadSearch(e.target.value)}
-              placeholder="Filter conversations..."
+              placeholder={
+                inboxMode === 'business'
+                  ? 'Search business inquiries...'
+                  : 'Filter conversations...'
+              }
               aria-label="Filter conversations"
               className="w-full min-h-[40px] pl-9 pr-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
           </div>
 
-          {onlineCreators.length > 0 && (
+          {inboxMode === 'personal' && onlineCreators.length > 0 && (
             <div className="pt-0.5">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -999,6 +1151,74 @@ export function ChatView({
           )}
         </div>
 
+        {inboxMode === 'business' ? (
+          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70">
+            {filteredBizThreads.length === 0 ? (
+              <div className="p-6 text-center space-y-2">
+                <Building2
+                  className="w-7 h-7 text-slate-400 mx-auto"
+                  aria-hidden="true"
+                />
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  No business inquiries yet
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Messages you send to storefronts and Business Profiles stay here, separated from your personal chats.
+                </p>
+              </div>
+            ) : (
+              filteredBizThreads.map((bThread) => {
+                const active = activeBizThread?.id === bThread.id;
+                return (
+                  <button
+                    key={bThread.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedBizChatId(bThread.id);
+                      setMobileShowThread(true);
+                    }}
+                    className={`w-full min-h-[72px] p-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-blue-50/70 dark:bg-blue-950/30'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Avatar
+                      src={bThread.businessAvatar}
+                      name={bThread.businessName}
+                      size="md"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold truncate flex items-center gap-1.5 min-w-0">
+                          <span className="truncate">{bThread.businessName}</span>
+                          {bThread.unreadByCustomer && (
+                            <span
+                              className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                              aria-label="Unread reply"
+                            />
+                          )}
+                        </p>
+                        <span className="text-[11px] text-slate-400 shrink-0 tabular-nums">
+                          {formatRelativeTime(bThread.updatedAtMs)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        @{bThread.businessSlug}
+                        {bThread.linkedProductTitle
+                          ? ` · ${bThread.linkedProductTitle}`
+                          : ''}
+                      </p>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 truncate mt-0.5">
+                        {bThread.lastMessageText}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : (
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70">
           {filteredThreads.length === 0 ? (
             <div className="p-6 text-center space-y-3">
@@ -1088,6 +1308,7 @@ export function ChatView({
             );
           })}
         </div>
+        )}
       </div>
 
       {/* Active Message Thread */}
@@ -1096,7 +1317,237 @@ export function ChatView({
           mobileShowThread ? 'flex' : 'hidden md:flex'
         }`}
       >
-        {activeThread ? (
+        {inboxMode === 'business' ? (
+          activeBizThread ? (
+            <>
+              <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900">
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setMobileShowThread(false)}
+                    aria-label="Back to business inquiries"
+                    className="md:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+                  </button>
+                  <Avatar
+                    src={activeBizThread.businessAvatar}
+                    name={activeBizThread.businessName}
+                    size="md"
+                  />
+                  <div className="min-w-0">
+                    <h2 className="font-display text-sm font-semibold truncate text-slate-900 dark:text-white">
+                      {activeBizThread.businessName}
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                      @{activeBizThread.businessSlug} · Business Inquiry ({activeBizThread.status})
+                    </p>
+                  </div>
+                </div>
+                {onOpenBusinessProfile && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenBusinessProfile(activeBizThread.businessSlug)}
+                    className="min-h-[36px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>View Business</span>
+                  </button>
+                )}
+              </div>
+
+              {activeBizThread.linkedProductTitle && (
+                <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {activeBizThread.linkedProductImage ? (
+                      <img
+                        src={activeBizThread.linkedProductImage}
+                        alt={activeBizThread.linkedProductTitle}
+                        className="w-9 h-9 rounded-lg object-cover border border-slate-200 dark:border-slate-800 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-lg bg-slate-200 dark:bg-slate-800 flex items-center justify-center shrink-0">
+                        <ShoppingBag className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                        {activeBizThread.linkedProductTitle}
+                      </p>
+                      {activeBizThread.linkedProductPrice && (
+                        <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 tabular-nums">
+                          {activeBizThread.linkedProductPrice}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {activeBizThread.linkedProductId && onOpenProduct && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenProduct(activeBizThread.linkedProductId!)}
+                      className="min-h-[32px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 cursor-pointer shrink-0"
+                    >
+                      View Product
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-2.5 bg-white dark:bg-slate-900">
+                {bizMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-xs text-slate-400 gap-2">
+                    <Building2 className="w-7 h-7" aria-hidden="true" />
+                    <p>Send an inquiry to {activeBizThread.businessName}.</p>
+                  </div>
+                ) : (
+                  bizMessages.map((msg) => {
+                    const isCustomer = msg.senderType === 'customer';
+                    const isSystem = msg.senderType === 'system';
+                    if (isSystem) {
+                      return (
+                        <div key={msg.id} className="flex justify-center my-2">
+                          <div className="max-w-md rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs text-slate-600 dark:text-slate-300 text-center">
+                            {msg.text}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${isCustomer ? 'items-end' : 'items-start'}`}
+                      >
+                        <div
+                          className={`max-w-[82%] sm:max-w-[70%] rounded-2xl px-3.5 py-2 text-sm space-y-1.5 ${
+                            isCustomer
+                              ? 'bg-blue-600 text-white rounded-br-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-xs'
+                          }`}
+                        >
+                          {!isCustomer && (
+                            <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                              {msg.senderName}
+                            </p>
+                          )}
+                          <p className="leading-relaxed break-words whitespace-pre-wrap">
+                            {msg.text}
+                          </p>
+                          {msg.productAttachment && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onOpenProduct?.(msg.productAttachment!.productId)
+                              }
+                              className={`w-full rounded-xl p-2 border flex items-center gap-2.5 text-left transition cursor-pointer ${
+                                isCustomer
+                                  ? 'bg-blue-700/60 border-blue-500/40 text-white hover:bg-blue-700'
+                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white'
+                              }`}
+                            >
+                              {msg.productAttachment.imageUrl && (
+                                <img
+                                  src={msg.productAttachment.imageUrl}
+                                  alt={msg.productAttachment.title}
+                                  className="w-10 h-10 rounded-lg object-cover shrink-0"
+                                />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-semibold truncate">
+                                  {msg.productAttachment.title}
+                                </p>
+                                <p className="text-[11px] opacity-80 tabular-nums">
+                                  {formatCurrencyCents(
+                                    msg.productAttachment.priceCents,
+                                    msg.productAttachment.currency
+                                  )}
+                                </p>
+                              </div>
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-1 px-1 tabular-nums">
+                          {formatRelativeTime(msg.createdAtMs)}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={bizEndRef} />
+              </div>
+
+              {bizError && (
+                <div
+                  role="alert"
+                  className="px-4 py-2 border-t border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-xs text-rose-700 dark:text-rose-300"
+                >
+                  {bizError}
+                </div>
+              )}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!bizDraft.trim() || sendingBizMessage) return;
+                  const text = bizDraft.trim();
+                  setBizDraft('');
+                  setBizError(null);
+                  setSendingBizMessage(true);
+                  try {
+                    await sendBusinessChatMessage({
+                      thread: activeBizThread,
+                      senderUid: profile.uid,
+                      senderType: 'customer',
+                      senderName: profile.displayName,
+                      senderAvatar: profile.avatarUrl,
+                      text,
+                    });
+                  } catch (err) {
+                    setBizError(
+                      err instanceof Error ? err.message : 'Unable to send message.'
+                    );
+                    setBizDraft(text);
+                  } finally {
+                    setSendingBizMessage(false);
+                  }
+                }}
+                className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-white dark:bg-slate-900"
+              >
+                <label htmlFor="biz-customer-input" className="sr-only">
+                  Reply to {activeBizThread.businessName}
+                </label>
+                <input
+                  id="biz-customer-input"
+                  type="text"
+                  value={bizDraft}
+                  onChange={(e) => setBizDraft(e.target.value)}
+                  placeholder={`Message ${activeBizThread.businessName}...`}
+                  maxLength={2000}
+                  className="flex-1 min-h-[40px] px-4 rounded-full bg-slate-100 dark:bg-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                />
+                <button
+                  type="submit"
+                  disabled={!bizDraft.trim() || sendingBizMessage}
+                  aria-label="Send inquiry reply"
+                  className="min-h-[40px] min-w-[40px] rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white flex items-center justify-center cursor-pointer transition"
+                >
+                  <Send className="w-4 h-4 ml-0.5" aria-hidden="true" />
+                </button>
+              </form>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center text-slate-500">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                <Building2 className="w-6 h-6" aria-hidden="true" />
+              </div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                Customer Business Inquiries
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">
+                Select a conversation with a business or message any storefront from Marketplace to track product questions and orders separately from your personal DMs.
+              </p>
+            </div>
+          )
+        ) : activeThread ? (
           <>
             <div
               data-testid="active-thread-header"

@@ -38,7 +38,18 @@ import {
   updateAuthUserProfile,
 } from '../services/firebase';
 import { deleteUploadedMedia } from '../services/storage';
-import { emitBusinessNotification } from '../services/businessProfiles';
+import {
+  emitBusinessNotification,
+  subscribeAllActiveBusinessProfiles,
+} from '../services/businessProfiles';
+import type { BusinessProfile } from '../types/business';
+import {
+  buildIdentityMaps,
+  resolveCommentIdentity,
+  resolveNotificationIdentity,
+  resolvePostIdentity,
+  resolveStoryGroupsIdentity,
+} from '../utils/identityResolver';
 import {
   buildFallbackPrivateSettings,
   buildFallbackUserProfile,
@@ -609,6 +620,8 @@ export function useSocialStore() {
     )
   );
 
+  const [allActiveBusinesses, setAllActiveBusinesses] = useState<BusinessProfile[]>([]);
+
   const verificationRequests = useMemo(
     () =>
       rawVerificationRequests.map((req) =>
@@ -620,7 +633,9 @@ export function useSocialStore() {
   const currentUserVerificationRequest = useMemo(() => {
     const activeUid = firebaseUser?.uid || profile.uid;
     const sorted = sortVerificationRequests(
-      verificationRequests.filter((r) => r.uid === activeUid)
+      verificationRequests.filter(
+        (r) => r.uid === activeUid && (!r.targetType || r.targetType === 'personal')
+      )
     );
     return sorted[0] || null;
   }, [verificationRequests, firebaseUser, profile.uid]);
@@ -628,7 +643,12 @@ export function useSocialStore() {
   const submitVerificationRequest = useCallback(
     async (
       reason: string,
-      links: string[]
+      links: string[],
+      options?: {
+        targetType?: 'personal' | 'business';
+        businessProfile?: BusinessProfile | null;
+        documentUrls?: string[];
+      }
     ): Promise<{ ok: boolean; error?: string }> => {
       if (!firebaseUser && !autostart) {
         return { ok: false, error: 'Please sign in to submit a verification request.' };
@@ -636,7 +656,7 @@ export function useSocialStore() {
       if (firebaseUser && !firebaseUser.emailVerified && !autostart) {
         return {
           ok: false,
-          error: 'Please verify your email address before requesting a badge.',
+          error: 'Please verify your email address before requesting verification.',
         };
       }
       const check = validateVerificationRequestInput(reason, links);
@@ -647,17 +667,29 @@ export function useSocialStore() {
         };
       }
 
+      const targetType = options?.targetType === 'business' && options.businessProfile ? 'business' : 'personal';
+      const biz = targetType === 'business' ? options?.businessProfile || null : null;
+      const cleanDocUrls = Array.isArray(options?.documentUrls)
+        ? options!.documentUrls
+            .map((u) => u.trim())
+            .filter((u) => u.startsWith('https://') || u.startsWith('http://') || u.startsWith('/api/storage/'))
+            .slice(0, 5)
+        : [];
+
       const activeUid = firebaseUser?.uid || profile.uid;
       const reqId = makeSafeId('vr');
       const now = Date.now();
       const newReq: VerificationRequest = {
         id: reqId,
         uid: activeUid,
-        displayName: profile.displayName,
-        handle: profile.handle,
-        avatarUrl: profile.avatarUrl,
+        targetType,
+        ...(biz ? { businessProfileId: biz.id } : {}),
+        displayName: biz ? biz.displayName : profile.displayName,
+        handle: biz ? biz.slug : profile.handle,
+        avatarUrl: biz ? biz.logoUrl : profile.avatarUrl,
         reason: check.cleanReason,
         links: check.cleanLinks,
+        ...(cleanDocUrls.length > 0 ? { documentUrls: cleanDocUrls } : {}),
         status: 'pending',
         reviewerUid: '',
         reviewerNote: '',
@@ -670,11 +702,14 @@ export function useSocialStore() {
           await setDoc(doc(db, 'verificationRequests', reqId), {
             id: reqId,
             uid: firebaseUser.uid,
+            targetType,
+            ...(biz ? { businessProfileId: biz.id } : {}),
             displayName: newReq.displayName,
             handle: newReq.handle,
             avatarUrl: newReq.avatarUrl,
             reason: newReq.reason,
             links: newReq.links,
+            ...(cleanDocUrls.length > 0 ? { documentUrls: cleanDocUrls } : {}),
             status: 'pending',
             reviewerUid: '',
             reviewerNote: '',
@@ -704,6 +739,74 @@ export function useSocialStore() {
       return { ok: true };
     },
     [autostart, firebaseUser, profile]
+  );
+
+  const resubmitVerificationRequest = useCallback(
+    async (
+      requestId: string,
+      input: {
+        reason: string;
+        links: string[];
+        documentUrls?: string[];
+      }
+    ): Promise<{ ok: boolean; error?: string }> => {
+      if (!firebaseUser && !autostart) {
+        return { ok: false, error: 'Please sign in to resubmit verification.' };
+      }
+      const check = validateVerificationRequestInput(input.reason, input.links);
+      if (!check.valid || !check.cleanReason || !check.cleanLinks) {
+        return {
+          ok: false,
+          error: check.error || 'Please review your verification details.',
+        };
+      }
+      const cleanDocUrls = Array.isArray(input.documentUrls)
+        ? input.documentUrls
+            .map((u) => u.trim())
+            .filter((u) => u.startsWith('https://') || u.startsWith('http://') || u.startsWith('/api/storage/'))
+            .slice(0, 5)
+        : [];
+
+      if (firebaseUser) {
+        try {
+          await updateDoc(doc(db, 'verificationRequests', requestId), {
+            reason: check.cleanReason,
+            links: check.cleanLinks,
+            documentUrls: cleanDocUrls,
+            status: 'pending',
+            reviewerUid: '',
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Unable to resubmit verification request.',
+          };
+        }
+      }
+
+      setRawVerificationRequests((prev) => {
+        const next = sortVerificationRequests(
+          prev.map((r) =>
+            r.id === requestId
+              ? {
+                  ...r,
+                  reason: check.cleanReason!,
+                  links: check.cleanLinks!,
+                  documentUrls: cleanDocUrls,
+                  status: 'pending',
+                  reviewerUid: '',
+                  updatedAtMs: Date.now(),
+                }
+              : r
+          )
+        );
+        writeStorage(STORAGE_KEYS.VERIFICATION_REQUESTS, next);
+        return next;
+      });
+      return { ok: true };
+    },
+    [autostart, firebaseUser]
   );
 
   const [savedHashtags, setSavedHashtags] = useState<string[]>(() =>
@@ -805,12 +908,20 @@ export function useSocialStore() {
     return Array.from(byUid.values());
   }, [communityUsers, fetchedChatUsers, profile.uid]);
 
+  const identityMaps = useMemo(
+    () => buildIdentityMaps(communityUsers, profile, allActiveBusinesses),
+    [allActiveBusinesses, communityUsers, profile]
+  );
+
   const notifications = useMemo(
     () =>
       rawNotifications.map((notif) =>
-        enrichNotificationWithAuthor(notif, allKnownChatUsers, profile)
+        resolveNotificationIdentity(
+          enrichNotificationWithAuthor(notif, allKnownChatUsers, profile),
+          identityMaps
+        )
       ),
-    [allKnownChatUsers, profile, rawNotifications]
+    [allKnownChatUsers, identityMaps, profile, rawNotifications]
   );
 
   const threads = useMemo(
@@ -2042,9 +2153,21 @@ export function useSocialStore() {
         const list: VerificationRequest[] = [];
         snapshot.forEach((docSnap) => {
           const d = docSnap.data();
+          const statusRaw = String(d.status || 'pending');
+          const mappedStatus =
+            statusRaw === 'under_review' ||
+            statusRaw === 'approved' ||
+            statusRaw === 'rejected' ||
+            statusRaw === 'more_info_required'
+              ? statusRaw
+              : 'pending';
           list.push({
             id: String(d.id || docSnap.id),
             uid: String(d.uid || ''),
+            targetType: d.targetType === 'business' ? 'business' : 'personal',
+            ...(typeof d.businessProfileId === 'string' && d.businessProfileId
+              ? { businessProfileId: d.businessProfileId }
+              : {}),
             displayName: String(d.displayName || ''),
             handle: String(d.handle || ''),
             avatarUrl: String(d.avatarUrl || ''),
@@ -2052,10 +2175,14 @@ export function useSocialStore() {
             links: Array.isArray(d.links)
               ? d.links.filter((l): l is string => typeof l === 'string')
               : [],
-            status:
-              d.status === 'approved' || d.status === 'rejected'
-                ? d.status
-                : 'pending',
+            ...(Array.isArray(d.documentUrls)
+              ? {
+                  documentUrls: d.documentUrls.filter(
+                    (l): l is string => typeof l === 'string'
+                  ),
+                }
+              : {}),
+            status: mappedStatus,
             reviewerUid: typeof d.reviewerUid === 'string' ? d.reviewerUid : '',
             reviewerNote: typeof d.reviewerNote === 'string' ? d.reviewerNote : '',
             createdAtMs: timestampToMs(d.createdAt),
@@ -2099,6 +2226,16 @@ export function useSocialStore() {
       unsubVerify();
     };
   }, [authReady, firebaseUser]);
+
+  // Subscribe to all active Business Profiles so live identity overlays stay fresh across feeds, comments, and search
+  useEffect(() => {
+    const unsubBusinesses = subscribeAllActiveBusinessProfiles((list) => {
+      setAllActiveBusinesses(list);
+    });
+    return () => {
+      unsubBusinesses();
+    };
+  }, []);
 
   // Public adminConfig subscriptions (readable before sign-in per firestore.rules)
   useEffect(() => {
@@ -2345,15 +2482,28 @@ export function useSocialStore() {
                 (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email) && d.authorId === firebaseUser.uid)
               );
               return {
-                id: d.id || docSnap.id,
-                postId: d.postId || post.id,
-                authorId: d.authorId,
-                authorName: d.authorName,
-                authorHandle: d.authorHandle,
-                authorAvatar: d.authorAvatar,
+                id: String(d.id || docSnap.id),
+                postId: String(d.postId || post.id),
+                ...(typeof d.parentCommentId === 'string' && d.parentCommentId
+                  ? { parentCommentId: d.parentCommentId }
+                  : {}),
+                authorId: String(d.authorId || ''),
+                ...(d.authorType === 'business' ? { authorType: 'business' as const } : { authorType: 'personal' as const }),
+                ...(typeof d.businessProfileId === 'string' && d.businessProfileId
+                  ? { businessProfileId: d.businessProfileId }
+                  : {}),
+                ...(typeof d.actorUid === 'string' && d.actorUid
+                  ? { actorUid: d.actorUid }
+                  : {}),
+                authorName: String(d.authorName || ''),
+                authorHandle: String(d.authorHandle || ''),
+                authorAvatar: String(d.authorAvatar || ''),
                 authorVerified: Boolean(d.authorVerified || isCommentAdmin),
-                text: d.text,
+                text: String(d.text || ''),
+                likesCount: Number(d.likesCount || 0),
+                edited: Boolean(d.edited),
                 createdAtMs: timestampToMs(d.createdAt),
+                ...(d.updatedAt ? { updatedAtMs: timestampToMs(d.updatedAt) } : {}),
               };
             })
             .sort((a, b) => a.createdAtMs - b.createdAtMs);
@@ -2380,18 +2530,26 @@ export function useSocialStore() {
     const hiddenSet = new Set(hiddenPostIds);
     return raw
       .filter((p) => !hiddenSet.has(p.id))
-      .map((p) => enrichPostWithVerifiedAuthor(p, communityUsers, profile));
-  }, [communityUsers, firebaseUser, hiddenPostIds, localPosts, profile, remotePosts]);
+      .map((p) =>
+        resolvePostIdentity(
+          enrichPostWithVerifiedAuthor(p, communityUsers, profile),
+          identityMaps
+        )
+      );
+  }, [communityUsers, firebaseUser, hiddenPostIds, identityMaps, localPosts, profile, remotePosts]);
 
   const commentsByPost: Record<string, PostComment[]> = useMemo(() => {
     const enriched: Record<string, PostComment[]> = {};
     for (const [postId, list] of Object.entries(rawCommentsByPost)) {
       enriched[postId] = list.map((c) =>
-        enrichCommentWithVerifiedAuthor(c, communityUsers, profile)
+        resolveCommentIdentity(
+          enrichCommentWithVerifiedAuthor(c, communityUsers, profile),
+          identityMaps
+        )
       );
     }
     return enriched;
-  }, [communityUsers, profile, rawCommentsByPost]);
+  }, [communityUsers, identityMaps, profile, rawCommentsByPost]);
 
   const nowMs = Date.now();
   const stories: StoryItem[] = (firebaseUser ? remoteStories : localStories).filter(
@@ -3520,24 +3678,45 @@ export function useSocialStore() {
   );
 
   const addComment = useCallback(
-    async (post: Post, text: string) => {
+    async (
+      post: Post,
+      text: string,
+      options?: {
+        parentCommentId?: string;
+        asBusinessProfile?: BusinessProfile | null;
+      }
+    ) => {
       requireAuthorized();
       requireModerationAllowed('comment');
+      const cleanText = text.trim();
+      if (!cleanText) return;
+
       const commentId = makeSafeId('cmt');
       const now = Date.now();
-      const isCommentAuthorVerified = Boolean(
-        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
-        profile.isVerified
-      );
+      const biz = options?.asBusinessProfile || null;
+      const parentCommentId = options?.parentCommentId?.trim() || undefined;
+      const isCommentAuthorVerified = biz
+        ? Boolean(biz.verified)
+        : Boolean(
+            (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+            profile.isVerified
+          );
+
       const newComment: PostComment = {
         id: commentId,
         postId: post.id,
-        authorId: profile.uid,
-        authorName: profile.displayName,
-        authorHandle: profile.handle,
-        authorAvatar: profile.avatarUrl,
+        ...(parentCommentId ? { parentCommentId } : {}),
+        authorId: biz ? biz.id : profile.uid,
+        authorType: biz ? 'business' : 'personal',
+        ...(biz ? { businessProfileId: biz.id, actorUid: profile.uid } : {}),
+        authorName: biz ? biz.displayName : profile.displayName,
+        authorHandle: biz ? biz.slug : profile.handle,
+        authorAvatar: biz ? biz.logoUrl : profile.avatarUrl,
         authorVerified: isCommentAuthorVerified,
-        text: text.trim(),
+        text: cleanText,
+        likesCount: 0,
+        likedByCurrentUser: false,
+        edited: false,
         createdAtMs: now,
       };
 
@@ -3552,13 +3731,19 @@ export function useSocialStore() {
         batch.set(doc(db, 'posts', post.id, 'comments', commentId), {
           id: commentId,
           postId: post.id,
-          authorId: firebaseUser.uid,
-          authorName: profile.displayName,
-          authorHandle: profile.handle,
-          authorAvatar: profile.avatarUrl,
+          ...(parentCommentId ? { parentCommentId } : {}),
+          authorId: biz ? biz.id : firebaseUser.uid,
+          authorType: biz ? 'business' : 'personal',
+          ...(biz ? { businessProfileId: biz.id, actorUid: firebaseUser.uid } : {}),
+          authorName: newComment.authorName,
+          authorHandle: newComment.authorHandle,
+          authorAvatar: newComment.authorAvatar,
           authorVerified: isCommentAuthorVerified,
           text: newComment.text,
+          likesCount: 0,
+          edited: false,
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
         batch.update(doc(db, 'posts', post.id), {
           commentsCount: increment(1),
@@ -3596,10 +3781,10 @@ export function useSocialStore() {
         void emitBusinessNotification({
           bpId: post.businessProfileId,
           actorId: firebaseUser.uid,
-          actorName: profile.displayName,
-          actorAvatar: profile.avatarUrl,
+          actorName: biz ? biz.displayName : profile.displayName,
+          actorAvatar: biz ? biz.logoUrl : profile.avatarUrl,
           type: 'comment',
-          title: `${profile.displayName} commented on your business post`,
+          title: `${biz ? biz.displayName : profile.displayName} commented on your business post`,
           body: newComment.text,
           targetId: post.id,
         }).catch(() => {});
@@ -3607,8 +3792,8 @@ export function useSocialStore() {
 
       await triggerNotification({
         actorId: profile.uid,
-        actorName: profile.displayName,
-        actorAvatar: profile.avatarUrl,
+        actorName: biz ? biz.displayName : profile.displayName,
+        actorAvatar: biz ? biz.logoUrl : profile.avatarUrl,
         type: 'comment',
         title: `Commented on ${post.authorName}'s post`,
         body: newComment.text,
@@ -3620,17 +3805,187 @@ export function useSocialStore() {
         if (handle !== profile.handle.toLowerCase()) {
           await triggerNotification({
             actorId: profile.uid,
-            actorName: profile.displayName,
-            actorAvatar: profile.avatarUrl,
+            actorName: biz ? biz.displayName : profile.displayName,
+            actorAvatar: biz ? biz.logoUrl : profile.avatarUrl,
             type: 'mention',
-            title: `${profile.displayName} mentioned you in a comment`,
+            title: `${biz ? biz.displayName : profile.displayName} mentioned you in a comment`,
             body: newComment.text.slice(0, 90),
             targetPostId: post.id,
           });
         }
       }
     },
-    [firebaseUser, profile, remotePosts, requireAuthorized, triggerNotification]
+    [firebaseUser, profile, remotePosts, requireAuthorized, requireModerationAllowed, triggerNotification]
+  );
+
+  const updateComment = useCallback(
+    async (postId: string, commentId: string, nextText: string) => {
+      requireAuthorized();
+      const clean = nextText.trim().slice(0, 500);
+      if (!clean) {
+        throw new Error('Comment cannot be empty.');
+      }
+      const prevComments = rawCommentsByPost[postId] || [];
+      setCommentsByPost((prev) => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map((c) =>
+          c.id === commentId
+            ? { ...c, text: clean, edited: true, updatedAtMs: Date.now() }
+            : c
+        ),
+      }));
+
+      const isRemotePost = remotePosts.some((rp) => rp.id === postId);
+      if (firebaseUser && isRemotePost) {
+        try {
+          await updateDoc(doc(db, 'posts', postId, 'comments', commentId), {
+            text: clean,
+            edited: true,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [postId]: prevComments,
+          }));
+          handleFirestoreError(
+            err,
+            OperationType.UPDATE,
+            `posts/${postId}/comments/${commentId}`
+          );
+        }
+      }
+    },
+    [firebaseUser, rawCommentsByPost, remotePosts, requireAuthorized]
+  );
+
+  const toggleCommentLike = useCallback(
+    async (postId: string, commentId: string) => {
+      requireAuthorized();
+      const activeUid = firebaseUser?.uid || profile.uid;
+      const prevList = rawCommentsByPost[postId] || [];
+      const target = prevList.find((c) => c.id === commentId);
+      if (!target) return;
+
+      const currentlyLiked = Boolean(target.likedByCurrentUser);
+      const nextLiked = !currentlyLiked;
+      const currentLikesCount = Number(target.likesCount || 0);
+      const nextCount = nextLiked
+        ? currentLikesCount + 1
+        : Math.max(0, currentLikesCount - 1);
+
+      setCommentsByPost((prev) => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map((c) =>
+          c.id === commentId
+            ? { ...c, likedByCurrentUser: nextLiked, likesCount: nextCount }
+            : c
+        ),
+      }));
+
+      const isRemotePost = remotePosts.some((rp) => rp.id === postId);
+      if (firebaseUser && isRemotePost) {
+        const batch = writeBatch(db);
+        const likeRef = doc(db, 'posts', postId, 'comments', commentId, 'likes', activeUid);
+        const commentRef = doc(db, 'posts', postId, 'comments', commentId);
+        if (nextLiked) {
+          batch.set(likeRef, {
+            userId: activeUid,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          batch.delete(likeRef);
+        }
+        batch.update(commentRef, {
+          likesCount: nextCount,
+          updatedAt: serverTimestamp(),
+        });
+        try {
+          await batch.commit();
+        } catch (err) {
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [postId]: prevList,
+          }));
+          handleFirestoreError(
+            err,
+            OperationType.WRITE,
+            `posts/${postId}/comments/${commentId}/likes/${activeUid}`
+          );
+        }
+      }
+    },
+    [firebaseUser, profile.uid, rawCommentsByPost, remotePosts, requireAuthorized]
+  );
+
+  const subscribePostComments = useCallback(
+    (postId: string) => {
+      if (!firebaseUser || !postId) return () => {};
+      const q = query(
+        collection(db, 'posts', postId, 'comments'),
+        where('postId', '==', postId)
+      );
+      return onSnapshot(
+        q,
+        async (snap) => {
+          const baseList: PostComment[] = snap.docs
+            .map((docSnap) => {
+              const d = docSnap.data();
+              return {
+                id: String(d.id || docSnap.id),
+                postId: String(d.postId || postId),
+                ...(typeof d.parentCommentId === 'string' && d.parentCommentId
+                  ? { parentCommentId: d.parentCommentId }
+                  : {}),
+                authorId: String(d.authorId || ''),
+                ...(d.authorType === 'business'
+                  ? { authorType: 'business' as const }
+                  : { authorType: 'personal' as const }),
+                ...(typeof d.businessProfileId === 'string' && d.businessProfileId
+                  ? { businessProfileId: d.businessProfileId }
+                  : {}),
+                ...(typeof d.actorUid === 'string' && d.actorUid
+                  ? { actorUid: d.actorUid }
+                  : {}),
+                authorName: String(d.authorName || ''),
+                authorHandle: String(d.authorHandle || ''),
+                authorAvatar: String(d.authorAvatar || ''),
+                authorVerified: Boolean(d.authorVerified),
+                text: String(d.text || ''),
+                likesCount: Number(d.likesCount || 0),
+                edited: Boolean(d.edited),
+                createdAtMs: timestampToMs(d.createdAt),
+                ...(d.updatedAt ? { updatedAtMs: timestampToMs(d.updatedAt) } : {}),
+              } satisfies PostComment;
+            })
+            .sort((a, b) => a.createdAtMs - b.createdAtMs);
+
+          const likedEntries = await Promise.all(
+            baseList.map(async (c) => {
+              try {
+                const likeSnap = await getDoc(
+                  doc(db, 'posts', postId, 'comments', c.id, 'likes', firebaseUser.uid)
+                );
+                return [c.id, likeSnap.exists()] as const;
+              } catch {
+                return [c.id, false] as const;
+              }
+            })
+          );
+          const likedMap = new Map(likedEntries);
+          const merged = baseList.map((c) => ({
+            ...c,
+            likedByCurrentUser: likedMap.get(c.id) ?? false,
+          }));
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [postId]: merged,
+          }));
+        },
+        () => {}
+      );
+    },
+    [firebaseUser]
   );
 
   const deletePost = useCallback(
@@ -3684,7 +4039,10 @@ export function useSocialStore() {
       if (
         targetComment &&
         targetComment.authorId !== profile.uid &&
-        post.authorId !== profile.uid
+        targetComment.actorUid !== profile.uid &&
+        targetComment.authorType !== 'business' &&
+        post.authorId !== profile.uid &&
+        post.authorType !== 'business'
       ) {
         throw new Error('You can only delete your own comments or comments on your posts.');
       }
@@ -5480,10 +5838,13 @@ export function useSocialStore() {
     followerUserIds,
     followedUserIds
   );
-  const storyGroups = enrichStoryGroupsWithVerifiedAuthors(
-    groupStoriesByAuthor(stories, profile.uid, viewedStoryIds),
-    communityUsers,
-    profile
+  const storyGroups = resolveStoryGroupsIdentity(
+    enrichStoryGroupsWithVerifiedAuthors(
+      groupStoriesByAuthor(stories, profile.uid, viewedStoryIds),
+      communityUsers,
+      profile
+    ),
+    identityMaps
   );
 
   const normalizedProfile: UserProfile = {
@@ -5548,7 +5909,11 @@ export function useSocialStore() {
     toggleLike,
     toggleBookmark,
     addComment,
+    updateComment,
+    toggleCommentLike,
+    subscribePostComments,
     deleteComment,
+    allActiveBusinesses,
     threads,
     messagesByChat,
     mutedChatIds,
@@ -5602,5 +5967,6 @@ export function useSocialStore() {
     submitModerationAppeal,
     currentUserVerificationRequest,
     submitVerificationRequest,
+    resubmitVerificationRequest,
   };
 }

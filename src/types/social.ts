@@ -22,6 +22,9 @@ export type TabId =
   | 'public-profile'
   | 'business-profile'
   | 'product-detail'
+  | 'search'
+  | 'post-comments'
+  | 'business-workspace'
   | 'auth';
 
 export type ConnectionsTab = 'followers' | 'following' | 'friends';
@@ -67,12 +70,20 @@ export interface PostComment {
   id: string;
   postId: string;
   authorId: string;
+  parentCommentId?: string;
+  authorType?: 'personal' | 'business';
+  businessProfileId?: string;
+  actorUid?: string;
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
   authorVerified?: boolean;
   text: string;
+  likesCount?: number;
+  likedByCurrentUser?: boolean;
+  edited?: boolean;
   createdAtMs: number;
+  updatedAtMs?: number;
 }
 
 export interface Post {
@@ -245,16 +256,26 @@ export interface StoryGroup {
   latestCreatedAtMs: number;
 }
 
-export type VerificationRequestStatus = 'pending' | 'approved' | 'rejected';
+export type VerificationRequestStatus =
+  | 'pending'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'more_info_required';
+
+export type VerificationTargetType = 'personal' | 'business';
 
 export interface VerificationRequest {
   id: string;
   uid: string;
+  targetType?: VerificationTargetType;
+  businessProfileId?: string;
   displayName: string;
   handle: string;
   avatarUrl: string;
   reason: string;
   links: string[];
+  documentUrls?: string[];
   status: VerificationRequestStatus;
   reviewerUid?: string;
   reviewerNote?: string;

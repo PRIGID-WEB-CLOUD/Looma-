@@ -21,6 +21,7 @@ export interface RouteAccessResolution {
   legalDocId?: LegalDocId;
   businessSlug?: string | null;
   productId?: string | null;
+  postId?: string | null;
   blockedPath?: string | null;
   blockedResourceLabel?: string | null;
   protectedNotice?: string | null;
@@ -37,6 +38,9 @@ const TAB_PATH_MAP: Record<ProtectedWorkspaceTab, string> = {
   settings: '/settings',
   'business-profile': '/business',
   'product-detail': '/marketplace',
+  search: '/search',
+  'post-comments': '/feed',
+  'business-workspace': '/business-workspace',
 };
 
 const PROTECTED_TAB_BY_PATH: Record<string, { tab: ProtectedWorkspaceTab; label: string }> = {
@@ -46,6 +50,8 @@ const PROTECTED_TAB_BY_PATH: Record<string, { tab: ProtectedWorkspaceTab; label:
   '/notifications': { tab: 'notifications', label: 'Notifications' },
   '/profile': { tab: 'profile', label: 'Member profile' },
   '/settings': { tab: 'settings', label: 'Profile settings' },
+  '/search': { tab: 'search', label: 'Search' },
+  '/business-workspace': { tab: 'business-workspace', label: 'Business workspace' },
 };
 
 export function normalizeAppPathname(pathname: string): string {
@@ -69,6 +75,12 @@ export function parseBusinessSlugFromPath(pathname: string): string | null {
   return slug || null;
 }
 
+export function parsePostCommentsRoute(pathname: string): string | null {
+  const rawClean = (pathname || '/').split('?')[0].trim().replace(/\/+$/, '') || '/';
+  const match = rawClean.match(/^\/post\/([a-zA-Z0-9_-]+)\/comments$/i);
+  return match?.[1] || null;
+}
+
 export function parseMarketplaceRoute(pathname: string): {
   isMarketplace: boolean;
   productId: string | null;
@@ -89,6 +101,14 @@ export function parseProtectedWorkspacePath(
   pathname: string
 ): { tab: ProtectedWorkspaceTab; label: string; canonicalPath: string } | null {
   const normalized = normalizeAppPathname(pathname);
+  const postCommentId = parsePostCommentsRoute(pathname);
+  if (postCommentId) {
+    return {
+      tab: 'post-comments',
+      label: 'Post comments',
+      canonicalPath: `/post/${postCommentId}/comments`,
+    };
+  }
   const match = PROTECTED_TAB_BY_PATH[normalized];
   if (!match) return null;
   return {
@@ -113,7 +133,7 @@ export function resolveAuthModeFromUrl(pathname: string, search: string): AuthMo
 }
 
 export function buildProtectedRedirectNotice(resourceLabel: string): string {
-  const isSingular = resourceLabel === 'Member profile';
+  const isSingular = resourceLabel === 'Member profile' || resourceLabel === 'Search' || resourceLabel === 'Business workspace';
   const verb = isSingular ? 'is' : 'are';
   return `Protected Workspace Access: ${resourceLabel} ${verb} restricted to authenticated members from the auth page.`;
 }
@@ -154,12 +174,13 @@ export function resolveRouteAccess(input: {
 
   const businessSlug = parseBusinessSlugFromPath(pathname);
   const marketplaceRoute = parseMarketplaceRoute(input.pathname);
+  const postCommentsId = parsePostCommentsRoute(input.pathname);
 
   if (!input.authReady) {
     return { surface: 'auth', authMode: resolveAuthModeFromUrl(pathname, search) };
   }
 
-  const protectedTab = parseProtectedWorkspacePath(pathname);
+  const protectedTab = parseProtectedWorkspacePath(input.pathname);
   const requestingAuth = isAuthPath(pathname);
   const authModeFromUrl = resolveAuthModeFromUrl(pathname, search);
 
@@ -228,6 +249,14 @@ export function resolveRouteAccess(input: {
     };
   }
 
+  if (postCommentsId) {
+    return {
+      surface: 'workspace',
+      tab: 'post-comments',
+      postId: postCommentsId,
+    };
+  }
+
   if (protectedTab) {
     return {
       surface: 'workspace',
@@ -256,6 +285,7 @@ export function getCanonicalPathForSurface(
     legalDocId?: LegalDocId;
     businessSlug?: string;
     productId?: string;
+    postId?: string;
   }
 ): string {
   if (surface === 'admin') return '/admin';
@@ -273,6 +303,9 @@ export function getCanonicalPathForSurface(
     return options?.authMode === 'signup' ? '/auth?mode=signup' : '/auth';
   }
   if (surface === 'workspace') {
+    if (options?.tab === 'post-comments' && options?.postId) {
+      return `/post/${options.postId}/comments`;
+    }
     return getTabRoutePath(options?.tab || 'feed');
   }
   return '/auth';

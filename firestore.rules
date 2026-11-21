@@ -159,24 +159,41 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidPostCommentLike(data, userId) {
+      return data.keys().hasAll(['userId', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'createdAt'])
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.createdAt is timestamp;
+    }
+
     function isValidPostComment(data, postId) {
       return data.keys().hasAll([
           'id', 'postId', 'authorId', 'authorName', 'authorHandle',
           'authorAvatar', 'text', 'createdAt'
         ])
         && data.keys().hasOnly([
-          'id', 'postId', 'authorId', 'authorName', 'authorHandle',
-          'authorAvatar', 'authorVerified', 'text', 'createdAt'
+          'id', 'postId', 'parentCommentId', 'authorId', 'authorType',
+          'businessProfileId', 'actorUid', 'authorName', 'authorHandle',
+          'authorAvatar', 'authorVerified', 'text', 'likesCount', 'edited',
+          'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidId(data.postId) && data.postId == postId
-        && isValidId(data.authorId) && data.authorId == request.auth.uid
-        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
-        && isValidHandle(data.authorHandle)
+        && (!('parentCommentId' in data) || isValidId(data.parentCommentId))
+        && isValidId(data.authorId)
+        && (!('authorType' in data) || data.authorType in ['personal', 'business'])
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
+        && (!('actorUid' in data) || isValidId(data.actorUid))
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && (isValidHandle(data.authorHandle) || isValidMarketplaceSlug(data.authorHandle))
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
         && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 500
-        && data.createdAt is timestamp;
+        && (!('likesCount' in data) || (data.likesCount is int && data.likesCount >= 0))
+        && (!('edited' in data) || data.edited is bool)
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidBookmark(data) {
@@ -544,6 +561,11 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidDocumentUrl(url) {
+      return url is string && url.size() >= 1 && url.size() <= 1000
+        && (url.matches('^https?://.*$') || url.matches('^/api/storage/.*$'));
+    }
+
     function isValidVerificationRequest(data) {
       return data.keys().hasAll([
           'id', 'uid', 'displayName', 'handle', 'avatarUrl',
@@ -551,14 +573,16 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'uid', 'displayName', 'handle', 'avatarUrl',
-          'reason', 'links', 'status', 'reviewerUid', 'reviewerNote',
-          'createdAt', 'updatedAt'
+          'id', 'uid', 'targetType', 'businessProfileId', 'displayName',
+          'handle', 'avatarUrl', 'reason', 'links', 'documentUrls',
+          'status', 'reviewerUid', 'reviewerNote', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidId(data.uid)
-        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
-        && isValidHandle(data.handle)
+        && (!('targetType' in data) || data.targetType in ['personal', 'business'])
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (isValidHandle(data.handle) || isValidMarketplaceSlug(data.handle))
         && data.avatarUrl is string && data.avatarUrl.size() <= 250000
         && data.reason is string && data.reason.size() >= 10 && data.reason.size() <= 500
         && data.links is list && data.links.size() >= 1 && data.links.size() <= 2
@@ -573,7 +597,12 @@ service cloud.firestore {
             && data.links[1].matches('^https?://.*$')
           )
         )
-        && data.status in ['pending', 'approved', 'rejected']
+        && (!('documentUrls' in data) || (
+          data.documentUrls is list
+          && data.documentUrls.size() <= 5
+          && (data.documentUrls.size() == 0 || isValidDocumentUrl(data.documentUrls[0]))
+        ))
+        && data.status in ['pending', 'under_review', 'approved', 'rejected', 'more_info_required']
         && data.reviewerUid is string && data.reviewerUid.size() <= 128
         && data.reviewerNote is string && data.reviewerNote.size() <= 400
         && data.createdAt is timestamp
@@ -608,20 +637,21 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'slug', 'name', 'tagline', 'ownerUid', 'ownerHandle',
           'logoUrl', 'bannerUrl', 'category', 'currency', 'publishStatus',
-          'externalStoreId', 'verified', 'featured', 'createdAt', 'updatedAt'
+          'externalStoreId', 'businessProfileId', 'verified', 'featured', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidMarketplaceSlug(data.slug)
         && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
         && data.tagline is string && data.tagline.size() <= 180
         && isValidId(data.ownerUid)
-        && isValidHandle(data.ownerHandle)
+        && (isValidHandle(data.ownerHandle) || isValidMarketplaceSlug(data.ownerHandle))
         && data.logoUrl is string && data.logoUrl.size() <= 250000
         && data.bannerUrl is string && data.bannerUrl.size() <= 250000
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
         && data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 8
         && data.publishStatus in ['DRAFT', 'PUBLISHED', 'SUSPENDED']
         && (!('externalStoreId' in data) || (data.externalStoreId is string && data.externalStoreId.size() <= 128))
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
         && data.verified is bool
         && data.featured is bool
         && data.createdAt is timestamp
@@ -635,7 +665,7 @@ service cloud.firestore {
           'imageUrl', 'stock', 'status', 'featured', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'storeId', 'storeName', 'storeSlug', 'ownerUid',
+          'id', 'storeId', 'storeName', 'storeSlug', 'ownerUid', 'businessProfileId',
           'title', 'description', 'category', 'priceCents', 'compareAtPriceCents',
           'currency', 'imageUrl', 'stock', 'status', 'featured', 'tag',
           'location', 'condition', 'galleryUrls',
@@ -646,6 +676,7 @@ service cloud.firestore {
         && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
         && isValidMarketplaceSlug(data.storeSlug)
         && isValidId(data.ownerUid)
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
         && data.description is string && data.description.size() <= 1000
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
@@ -672,7 +703,8 @@ service cloud.firestore {
           'shippingAddress', 'shippingCity', 'note', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'buyerUid', 'buyerName', 'buyerEmail', 'storeId', 'storeName', 'storeOwnerUid',
+          'id', 'buyerUid', 'buyerName', 'buyerEmail', 'storeId', 'storeName',
+          'storeOwnerUid', 'storeBusinessProfileId',
           'items', 'subtotalCents', 'shippingCents', 'totalCents', 'currency',
           'paymentMethod', 'paymentStatus', 'status', 'shippingName', 'shippingPhone',
           'shippingAddress', 'shippingCity', 'note', 'createdAt', 'updatedAt'
@@ -684,6 +716,7 @@ service cloud.firestore {
         && isValidId(data.storeId)
         && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
         && isValidId(data.storeOwnerUid)
+        && (!('storeBusinessProfileId' in data) || isValidId(data.storeBusinessProfileId))
         && data.items is list && data.items.size() >= 1 && data.items.size() <= 25
         && data.items[0] is map
         && data.subtotalCents is int && data.subtotalCents >= 0 && data.subtotalCents <= 100000000
@@ -758,11 +791,16 @@ service cloud.firestore {
 
     function isValidBusinessHandle(data) {
       return data.keys().hasAll(['slug', 'businessProfileId', 'ownerUid', 'createdAt'])
-        && data.keys().hasOnly(['slug', 'businessProfileId', 'ownerUid', 'createdAt'])
+        && data.keys().hasOnly([
+          'slug', 'businessProfileId', 'ownerUid', 'isAlias', 'targetSlug', 'createdAt', 'updatedAt'
+        ])
         && isValidMarketplaceSlug(data.slug)
         && isValidId(data.businessProfileId)
         && isValidId(data.ownerUid)
-        && data.createdAt is timestamp;
+        && (!('isAlias' in data) || data.isAlias is bool)
+        && (!('targetSlug' in data) || isValidMarketplaceSlug(data.targetSlug))
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidBusinessMembership(data) {
@@ -836,6 +874,100 @@ service cloud.firestore {
         && data.body is string && data.body.size() >= 1 && data.body.size() <= 240
         && data.targetId is string && data.targetId.size() <= 128
         && data.read is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidBusinessMessagingSettings(data, bpId) {
+      return data.keys().hasAll([
+          'businessProfileId', 'welcomeEnabled', 'welcomeMessage',
+          'awayEnabled', 'awayMessage', 'quickReplies', 'updatedByUid', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'businessProfileId', 'welcomeEnabled', 'welcomeMessage',
+          'awayEnabled', 'awayMessage', 'quickReplies', 'updatedByUid', 'updatedAt'
+        ])
+        && isValidId(data.businessProfileId) && data.businessProfileId == bpId
+        && data.welcomeEnabled is bool
+        && data.welcomeMessage is string && data.welcomeMessage.size() <= 500
+        && data.awayEnabled is bool
+        && data.awayMessage is string && data.awayMessage.size() <= 500
+        && data.quickReplies is list && data.quickReplies.size() <= 20
+        && (data.quickReplies.size() == 0 || data.quickReplies[0] is map)
+        && isValidId(data.updatedByUid)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBusinessChatThread(data) {
+      return data.keys().hasAll([
+          'id', 'businessProfileId', 'businessName', 'businessAvatar', 'businessSlug',
+          'customerUid', 'customerName', 'customerAvatar', 'customerHandle',
+          'participantIds', 'status', 'labels', 'assignedUid',
+          'lastMessageText', 'lastMessageSenderId', 'lastMessageSenderType',
+          'unreadByBusiness', 'unreadByCustomer', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'businessProfileId', 'businessName', 'businessAvatar', 'businessSlug',
+          'customerUid', 'customerName', 'customerAvatar', 'customerHandle',
+          'participantIds', 'status', 'labels', 'assignedUid',
+          'linkedProductId', 'linkedProductTitle', 'linkedProductPrice',
+          'linkedProductImage', 'linkedOrderId',
+          'lastMessageText', 'lastMessageSenderId', 'lastMessageSenderType',
+          'unreadByBusiness', 'unreadByCustomer', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.businessProfileId)
+        && data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 80
+        && data.businessAvatar is string && data.businessAvatar.size() <= 250000
+        && isValidMarketplaceSlug(data.businessSlug)
+        && isValidId(data.customerUid)
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80
+        && data.customerAvatar is string && data.customerAvatar.size() <= 250000
+        && data.customerHandle is string && data.customerHandle.size() <= 64
+        && data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 50
+        && isValidId(data.participantIds[0])
+        && data.status in ['open', 'pending', 'resolved']
+        && data.labels is list && data.labels.size() <= 8
+        && (data.labels.size() == 0 || (data.labels[0] is string && data.labels[0].size() <= 32))
+        && data.assignedUid is string && data.assignedUid.size() <= 128
+        && (!('linkedProductId' in data) || (data.linkedProductId is string && data.linkedProductId.size() <= 128))
+        && (!('linkedProductTitle' in data) || (data.linkedProductTitle is string && data.linkedProductTitle.size() <= 120))
+        && (!('linkedProductPrice' in data) || (data.linkedProductPrice is string && data.linkedProductPrice.size() <= 40))
+        && (!('linkedProductImage' in data) || (data.linkedProductImage is string && data.linkedProductImage.size() <= 600000))
+        && (!('linkedOrderId' in data) || (data.linkedOrderId is string && data.linkedOrderId.size() <= 128))
+        && data.lastMessageText is string && data.lastMessageText.size() <= 500
+        && data.lastMessageSenderId is string && data.lastMessageSenderId.size() <= 128
+        && data.lastMessageSenderType in ['customer', 'business', 'system']
+        && data.unreadByBusiness is bool
+        && data.unreadByCustomer is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBusinessChatMessage(data, chatId) {
+      return data.keys().hasAll([
+          'id', 'chatId', 'businessProfileId', 'customerUid', 'senderUid',
+          'senderType', 'senderName', 'senderAvatar', 'text', 'messageType',
+          'participantIds', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'chatId', 'businessProfileId', 'customerUid', 'senderUid',
+          'senderType', 'senderName', 'senderAvatar', 'text', 'messageType',
+          'productAttachment', 'orderId', 'participantIds', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.chatId) && data.chatId == chatId
+        && isValidId(data.businessProfileId)
+        && isValidId(data.customerUid)
+        && isValidId(data.senderUid)
+        && data.senderType in ['customer', 'business', 'system']
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 80
+        && data.senderAvatar is string && data.senderAvatar.size() <= 250000
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 2000
+        && data.messageType in ['text', 'product', 'order', 'auto_welcome', 'auto_away']
+        && (!('productAttachment' in data) || data.productAttachment is map)
+        && (!('orderId' in data) || (data.orderId is string && data.orderId.size() <= 128))
+        && data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 50
+        && isValidId(data.participantIds[0])
         && data.createdAt is timestamp;
     }
 
@@ -1104,23 +1236,111 @@ service cloud.firestore {
           && isValidId(commentId)
           && isValidPostComment(incoming(), postId)
           && incoming().id == commentId
+          && (!('likesCount' in incoming()) || incoming().likesCount == 0)
+          && (!('edited' in incoming()) || incoming().edited == false)
           && incoming().createdAt == request.time
           && exists(/databases/$(database)/documents/posts/$(postId))
           && (
-            !('authorVerified' in incoming())
-            || incoming().authorVerified == false
-            || isAdmin()
-            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+            (
+              (!('authorType' in incoming()) || incoming().authorType == 'personal')
+              && incoming().authorId == request.auth.uid
+              && (!('actorUid' in incoming()) || incoming().actorUid == request.auth.uid)
+              && !('businessProfileId' in incoming())
+              && (
+                !('authorVerified' in incoming())
+                || incoming().authorVerified == false
+                || isAdmin()
+                || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+              )
+            )
+            || (
+              incoming().authorType == 'business'
+              && 'businessProfileId' in incoming()
+              && incoming().authorId == incoming().businessProfileId
+              && incoming().actorUid == request.auth.uid
+              && canPublishBusinessPost(incoming().businessProfileId)
+              && (
+                !('authorVerified' in incoming())
+                || incoming().authorVerified == false
+                || isAdmin()
+                || get(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.verified == true
+              )
+            )
           );
-        allow update: if false;
+        allow update: if isVerifiedUser()
+          && isValidId(postId)
+          && isValidId(commentId)
+          && isValidPostComment(incoming(), postId)
+          && incoming().id == existing().id
+          && incoming().postId == existing().postId
+          && incoming().authorId == existing().authorId
+          && (!('authorType' in existing()) || incoming().authorType == existing().authorType)
+          && (!('businessProfileId' in existing()) || incoming().businessProfileId == existing().businessProfileId)
+          && (!('actorUid' in existing()) || incoming().actorUid == existing().actorUid)
+          && incoming().createdAt == existing().createdAt
+          && (
+            (
+              (
+                existing().authorId == request.auth.uid
+                || (
+                  'authorType' in existing()
+                  && existing().authorType == 'business'
+                  && 'businessProfileId' in existing()
+                  && canPublishBusinessPost(existing().businessProfileId)
+                )
+                || isAdmin()
+              )
+              && incoming().edited == true
+              && incoming().updatedAt == request.time
+              && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'edited', 'updatedAt'])
+            )
+            || (
+              (
+                (!('likesCount' in existing()) && incoming().likesCount == 1)
+                || ('likesCount' in existing() && incoming().likesCount == existing().likesCount + 1)
+              )
+              && incoming().updatedAt == request.time
+              && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt'])
+              && existsAfter(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+            )
+            || (
+              'likesCount' in existing()
+              && existing().likesCount >= 1
+              && incoming().likesCount == existing().likesCount - 1
+              && incoming().updatedAt == request.time
+              && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt'])
+              && !existsAfter(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+            )
+          );
         allow delete: if isVerifiedUser()
           && isValidId(postId)
           && isValidId(commentId)
           && (
             existing().authorId == request.auth.uid
+            || (
+              'authorType' in existing()
+              && existing().authorType == 'business'
+              && 'businessProfileId' in existing()
+              && canPublishBusinessPost(existing().businessProfileId)
+            )
             || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
             || isAdmin()
           );
+
+        match /likes/{userId} {
+          allow get: if isVerifiedUser() && isValidId(postId) && isValidId(commentId) && isValidId(userId);
+          allow list: if isVerifiedUser() && resource.data.userId == request.auth.uid;
+          allow create: if isVerifiedUser()
+            && isOwner(userId)
+            && isValidId(postId)
+            && isValidId(commentId)
+            && isValidId(userId)
+            && isValidPostCommentLike(incoming(), userId)
+            && incoming().createdAt == request.time
+            && exists(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId));
+          allow update: if false;
+          allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(postId) && isValidId(commentId) && isValidId(userId);
+        }
       }
     }
 
@@ -1541,7 +1761,16 @@ service cloud.firestore {
     match /verificationRequests/{requestId} {
       allow get: if isVerifiedUser()
         && isValidId(requestId)
-        && (isAdmin() || existing().uid == request.auth.uid);
+        && (
+          isAdmin()
+          || existing().uid == request.auth.uid
+          || (
+            'targetType' in existing()
+            && existing().targetType == 'business'
+            && 'businessProfileId' in existing()
+            && isBusinessMember(existing().businessProfileId)
+          )
+        );
       allow list: if isAdmin()
         || (isVerifiedUser() && resource.data.uid == request.auth.uid);
       allow create: if isVerifiedUser()
@@ -1553,20 +1782,51 @@ service cloud.firestore {
         && incoming().reviewerUid == ''
         && incoming().reviewerNote == ''
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isAdmin()
+        && incoming().updatedAt == request.time
+        && (
+          !('targetType' in incoming())
+          || incoming().targetType == 'personal'
+          || (
+            incoming().targetType == 'business'
+            && 'businessProfileId' in incoming()
+            && isBusinessOwnerOrAdmin(incoming().businessProfileId)
+          )
+        );
+      allow update: if isVerifiedUser()
         && isValidId(requestId)
         && isValidVerificationRequest(incoming())
-        && existing().status == 'pending'
-        && incoming().status in ['approved', 'rejected']
         && incoming().id == existing().id
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
-        && incoming().reviewerUid == request.auth.uid
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'status', 'reviewerUid', 'reviewerNote', 'updatedAt'
-        ]);
+        && (
+          (
+            isAdmin()
+            && existing().status in ['pending', 'under_review', 'more_info_required']
+            && incoming().status in ['under_review', 'approved', 'rejected', 'more_info_required']
+            && incoming().reviewerUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'reviewerUid', 'reviewerNote', 'updatedAt'
+            ])
+          )
+          || (
+            (
+              existing().uid == request.auth.uid
+              || (
+                'targetType' in existing()
+                && existing().targetType == 'business'
+                && 'businessProfileId' in existing()
+                && isBusinessOwnerOrAdmin(existing().businessProfileId)
+              )
+            )
+            && existing().status in ['rejected', 'more_info_required']
+            && incoming().status == 'pending'
+            && incoming().reviewerUid == ''
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'reason', 'links', 'documentUrls', 'status', 'reviewerUid', 'updatedAt'
+            ])
+          )
+        );
       allow delete: if false;
     }
 
@@ -1575,7 +1835,14 @@ service cloud.firestore {
       allow get: if isValidId(storeId)
         && (
           existing().publishStatus == 'PUBLISHED'
-          || (isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin()))
+          || (
+            isVerifiedUser()
+            && (
+              existing().ownerUid == request.auth.uid
+              || ('businessProfileId' in existing() && isBusinessMember(existing().businessProfileId))
+              || isAdmin()
+            )
+          )
         );
       allow list: if resource.data.publishStatus == 'PUBLISHED'
         || (isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin()));
@@ -1588,7 +1855,10 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            incoming().ownerUid == request.auth.uid
+            (
+              incoming().ownerUid == request.auth.uid
+              || ('businessProfileId' in incoming() && isBusinessOwnerOrAdmin(incoming().businessProfileId))
+            )
             && incoming().verified == false
             && incoming().featured == false
             && incoming().publishStatus in ['DRAFT', 'PUBLISHED']
@@ -1604,14 +1874,17 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            existing().ownerUid == request.auth.uid
+            (
+              existing().ownerUid == request.auth.uid
+              || ('businessProfileId' in existing() && isBusinessOwnerOrAdmin(existing().businessProfileId))
+            )
             && existing().publishStatus != 'SUSPENDED'
             && incoming().verified == existing().verified
             && incoming().featured == existing().featured
             && incoming().publishStatus in ['DRAFT', 'PUBLISHED']
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'slug', 'name', 'tagline', 'logoUrl', 'bannerUrl',
-              'category', 'currency', 'publishStatus', 'externalStoreId', 'updatedAt'
+              'category', 'currency', 'publishStatus', 'externalStoreId', 'businessProfileId', 'updatedAt'
             ])
           )
         );
@@ -1622,7 +1895,14 @@ service cloud.firestore {
       allow get: if isValidId(productId)
         && (
           existing().status == 'ACTIVE'
-          || (isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin()))
+          || (
+            isVerifiedUser()
+            && (
+              existing().ownerUid == request.auth.uid
+              || ('businessProfileId' in existing() && isBusinessMember(existing().businessProfileId))
+              || isAdmin()
+            )
+          )
         );
       allow list: if resource.data.status == 'ACTIVE'
         || (isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin()));
@@ -1636,9 +1916,18 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            incoming().ownerUid == request.auth.uid
-            && incoming().featured == false
-            && get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.ownerUid == request.auth.uid
+            incoming().featured == false
+            && (
+              (
+                incoming().ownerUid == request.auth.uid
+                && get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.ownerUid == request.auth.uid
+              )
+              || (
+                'businessProfileId' in incoming()
+                && canPublishBusinessPost(incoming().businessProfileId)
+                && get(/databases/$(database)/documents/marketplaceStores/$(incoming().storeId)).data.businessProfileId == incoming().businessProfileId
+              )
+            )
           )
         );
       allow update: if isVerifiedUser()
@@ -1652,10 +1941,13 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            existing().ownerUid == request.auth.uid
+            (
+              existing().ownerUid == request.auth.uid
+              || ('businessProfileId' in existing() && canPublishBusinessPost(existing().businessProfileId))
+            )
             && incoming().featured == existing().featured
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'storeName', 'storeSlug', 'title', 'description', 'category',
+              'storeName', 'storeSlug', 'businessProfileId', 'title', 'description', 'category',
               'priceCents', 'compareAtPriceCents', 'currency', 'imageUrl',
               'stock', 'status', 'tag', 'location', 'condition', 'galleryUrls', 'updatedAt'
             ])
@@ -1663,7 +1955,11 @@ service cloud.firestore {
         );
       allow delete: if isVerifiedUser()
         && isValidId(productId)
-        && (existing().ownerUid == request.auth.uid || isAdmin());
+        && (
+          existing().ownerUid == request.auth.uid
+          || ('businessProfileId' in existing() && canPublishBusinessPost(existing().businessProfileId))
+          || isAdmin()
+        );
     }
 
     match /marketplaceOrders/{orderId} {
@@ -1672,6 +1968,7 @@ service cloud.firestore {
         && (
           existing().buyerUid == request.auth.uid
           || existing().storeOwnerUid == request.auth.uid
+          || ('storeBusinessProfileId' in existing() && isBusinessMember(existing().storeBusinessProfileId))
           || isAdmin()
         );
       allow list: if isVerifiedUser()
@@ -1708,7 +2005,10 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            existing().storeOwnerUid == request.auth.uid
+            (
+              existing().storeOwnerUid == request.auth.uid
+              || ('storeBusinessProfileId' in existing() && canPublishBusinessPost(existing().storeBusinessProfileId))
+            )
             && !(existing().status in ['DELIVERED', 'CANCELLED'])
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])
           )
@@ -1812,6 +2112,19 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
         allow delete: if isVerifiedUser() && isValidId(bpId) && isValidId(notificationId) && (isBusinessOwnerOrAdmin(bpId) || isAdmin());
       }
+      match /messagingSettings/{docId} {
+        allow get: if isVerifiedUser() && isValidId(bpId) && isValidId(docId);
+        allow list: if false;
+        allow create, update: if isVerifiedUser()
+          && isValidId(bpId)
+          && isValidId(docId)
+          && docId == 'config'
+          && isValidBusinessMessagingSettings(incoming(), bpId)
+          && (isBusinessOwnerOrAdmin(bpId) || canPublishBusinessPost(bpId) || isAdmin())
+          && incoming().updatedByUid == request.auth.uid
+          && incoming().updatedAt == request.time;
+        allow delete: if false;
+      }
     }
 
     match /businessHandles/{slug} {
@@ -1822,10 +2135,20 @@ service cloud.firestore {
         && isValidBusinessHandle(incoming())
         && incoming().slug == slug
         && incoming().ownerUid == request.auth.uid
+        && (!('isAlias' in incoming()) || incoming().isAlias == false)
         && incoming().createdAt == request.time
         && existsAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId))
         && getAfter(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.ownerUid == request.auth.uid;
-      allow update: if false;
+      allow update: if isVerifiedUser()
+        && isValidMarketplaceSlug(slug)
+        && isValidBusinessHandle(incoming())
+        && (isBusinessOwnerOrAdmin(existing().businessProfileId) || isAdmin())
+        && incoming().slug == existing().slug
+        && incoming().businessProfileId == existing().businessProfileId
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isAlias', 'targetSlug', 'updatedAt']);
       allow delete: if isVerifiedUser()
         && isValidMarketplaceSlug(slug)
         && (existing().ownerUid == request.auth.uid || isAdmin());
@@ -1942,6 +2265,117 @@ service cloud.firestore {
       allow delete: if isVerifiedUser()
         && isValidId(inviteId)
         && (isBusinessOwnerOrAdmin(existing().businessProfileId) || isAdmin());
+    }
+
+    // --- Independent Business Customer Messaging Collections ---
+    match /businessChats/{chatId} {
+      allow get: if isVerifiedUser()
+        && isValidId(chatId)
+        && (
+          existing().customerUid == request.auth.uid
+          || request.auth.uid in existing().participantIds
+          || isBusinessMember(existing().businessProfileId)
+          || isAdmin()
+        );
+      allow list: if isVerifiedUser()
+        && (
+          resource.data.customerUid == request.auth.uid
+          || request.auth.uid in resource.data.participantIds
+          || isAdmin()
+        );
+      allow create: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidBusinessChatThread(incoming())
+        && incoming().id == chatId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().customerUid in incoming().participantIds
+        && (
+          incoming().customerUid == request.auth.uid
+          || canPublishBusinessPost(incoming().businessProfileId)
+          || isAdmin()
+        );
+      allow update: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidBusinessChatThread(incoming())
+        && incoming().id == existing().id
+        && incoming().businessProfileId == existing().businessProfileId
+        && incoming().customerUid == existing().customerUid
+        && incoming().customerUid in incoming().participantIds
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            existing().customerUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastMessageText', 'lastMessageSenderId', 'lastMessageSenderType',
+              'unreadByBusiness', 'unreadByCustomer', 'participantIds',
+              'linkedProductId', 'linkedProductTitle', 'linkedProductPrice',
+              'linkedProductImage', 'linkedOrderId', 'updatedAt'
+            ])
+          )
+          || (
+            canPublishBusinessPost(existing().businessProfileId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'labels', 'assignedUid', 'participantIds',
+              'linkedProductId', 'linkedProductTitle', 'linkedProductPrice',
+              'linkedProductImage', 'linkedOrderId',
+              'lastMessageText', 'lastMessageSenderId', 'lastMessageSenderType',
+              'unreadByBusiness', 'unreadByCustomer', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(chatId);
+
+      match /messages/{messageId} {
+        allow get: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && (
+            existing().customerUid == request.auth.uid
+            || request.auth.uid in existing().participantIds
+            || isBusinessMember(existing().businessProfileId)
+            || isAdmin()
+          );
+        allow list: if isVerifiedUser()
+          && (
+            resource.data.customerUid == request.auth.uid
+            || request.auth.uid in resource.data.participantIds
+            || isAdmin()
+          );
+        allow create: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && isValidBusinessChatMessage(incoming(), chatId)
+          && incoming().id == messageId
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/businessChats/$(chatId))
+          && incoming().businessProfileId == get(/databases/$(database)/documents/businessChats/$(chatId)).data.businessProfileId
+          && incoming().customerUid == get(/databases/$(database)/documents/businessChats/$(chatId)).data.customerUid
+          && (
+            (
+              incoming().senderType == 'customer'
+              && incoming().senderUid == request.auth.uid
+              && incoming().customerUid == request.auth.uid
+            )
+            || (
+              incoming().senderType == 'business'
+              && incoming().senderUid == request.auth.uid
+              && (canPublishBusinessPost(incoming().businessProfileId) || isAdmin())
+            )
+            || (
+              incoming().senderType == 'system'
+              && incoming().senderUid == request.auth.uid
+              && (
+                incoming().customerUid == request.auth.uid
+                || canPublishBusinessPost(incoming().businessProfileId)
+                || isAdmin()
+              )
+            )
+          );
+        allow update, delete: if false;
+      }
     }
   }
 }

@@ -31,6 +31,7 @@ import {
   updateAuthUserProfile,
 } from '../src/services/firebase';
 import { uploadMediaToCloudflareR2 } from '../src/services/storage';
+import { emitBusinessNotification } from '../src/services/businessProfiles';
 import {
   deleteMarketplaceProductRecord,
   saveMarketplaceProductRecord,
@@ -1110,9 +1111,21 @@ function AdminAppInner(_props: AdminAppProps) {
           const list: VerificationRequest[] = [];
           snap.forEach((d) => {
             const raw = d.data() as Record<string, unknown>;
+            const rawStatus = String(raw.status || 'pending');
+            const status =
+              rawStatus === 'under_review' ||
+              rawStatus === 'approved' ||
+              rawStatus === 'rejected' ||
+              rawStatus === 'more_info_required'
+                ? rawStatus
+                : 'pending';
             list.push({
               id: String(raw.id || d.id),
               uid: String(raw.uid || ''),
+              targetType: raw.targetType === 'business' ? 'business' : 'personal',
+              ...(typeof raw.businessProfileId === 'string' && raw.businessProfileId
+                ? { businessProfileId: raw.businessProfileId }
+                : {}),
               displayName: String(raw.displayName || 'Looma Member'),
               handle: String(raw.handle || 'looma_member'),
               avatarUrl: normalizeAssetUrl(String(raw.avatarUrl || '')),
@@ -1120,10 +1133,14 @@ function AdminAppInner(_props: AdminAppProps) {
               links: Array.isArray(raw.links)
                 ? raw.links.filter((l): l is string => typeof l === 'string')
                 : [],
-              status:
-                raw.status === 'approved' || raw.status === 'rejected'
-                  ? raw.status
-                  : 'pending',
+              ...(Array.isArray(raw.documentUrls)
+                ? {
+                    documentUrls: raw.documentUrls.filter(
+                      (u): u is string => typeof u === 'string'
+                    ),
+                  }
+                : {}),
+              status,
               reviewerUid: typeof raw.reviewerUid === 'string' ? raw.reviewerUid : '',
               reviewerNote: typeof raw.reviewerNote === 'string' ? raw.reviewerNote : '',
               createdAtMs: timestampToMs(raw.createdAtMs ?? raw.createdAt),
@@ -1627,7 +1644,7 @@ function AdminAppInner(_props: AdminAppProps) {
   const handleReviewVerificationRequest = async (
     requestId: string,
     targetUid: string,
-    decision: 'approved' | 'rejected',
+    decision: 'under_review' | 'approved' | 'rejected' | 'more_info_required',
     note: string = ''
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!firebaseUser || !adminAuth.isAdmin) {
@@ -1659,35 +1676,75 @@ function AdminAppInner(_props: AdminAppProps) {
       return { ok: false, error: (err as Error).message || String(err) };
     }
 
+    const isBusinessTarget =
+      res.updated.targetType === 'business' && Boolean(res.updated.businessProfileId);
+
     if (decision === 'approved') {
-      setCommunityUsers((prev) =>
-        prev.map((u) => (u.uid === targetUid ? { ...u, isVerified: true } : u))
-      );
-      if (targetUid === firebaseUser.uid) {
-        setCurrentProfile((prev) => ({ ...prev, isVerified: true }));
-      }
-      try {
-        await updateDoc(doc(db, 'users', targetUid), {
-          isVerified: true,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
-        return { ok: false, error: (err as Error).message || String(err) };
+      if (isBusinessTarget && res.updated.businessProfileId) {
+        const bpId = res.updated.businessProfileId;
+        try {
+          await updateDoc(doc(db, 'businessProfiles', bpId), {
+            verified: true,
+            updatedAt: serverTimestamp(),
+          });
+          const bpSnap = await getDoc(doc(db, 'businessProfiles', bpId)).catch(() => null);
+          const storeId = bpSnap?.exists()
+            ? String(bpSnap.data()?.commerceStoreId || '')
+            : '';
+          if (storeId) {
+            await updateDoc(doc(db, 'marketplaceStores', storeId), {
+              verified: true,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `businessProfiles/${bpId}`);
+          return { ok: false, error: (err as Error).message || String(err) };
+        }
+      } else {
+        setCommunityUsers((prev) =>
+          prev.map((u) => (u.uid === targetUid ? { ...u, isVerified: true } : u))
+        );
+        if (targetUid === firebaseUser.uid) {
+          setCurrentProfile((prev) => ({ ...prev, isVerified: true }));
+        }
+        try {
+          await updateDoc(doc(db, 'users', targetUid), {
+            isVerified: true,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
+          return { ok: false, error: (err as Error).message || String(err) };
+        }
       }
     }
 
     const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const notifTitle =
-      decision === 'approved'
-        ? 'Verification Badge Granted'
-        : 'Verification Request Update';
-    const notifBody =
-      decision === 'approved'
-        ? 'Your account is now verified. Your blue verification badge is visible across Looma.'
-        : res.updated.reviewerNote
-          ? `Your verification request was not approved: ${res.updated.reviewerNote}`.slice(0, 240)
-          : 'Your verification request was not approved at this time. You may submit an updated request from Profile Settings.';
+    const notifTitleMap = {
+      approved: isBusinessTarget ? 'Business Verified' : 'Verification Badge Granted',
+      rejected: 'Verification Request Update',
+      under_review: 'Verification Under Review',
+      more_info_required: 'More Verification Info Needed',
+    } as const;
+    const notifBodyMap = {
+      approved: isBusinessTarget
+        ? `${res.updated.displayName} is now verified across Looma.`
+        : 'Your account is now verified. Your blue verification badge is visible across Looma.',
+      under_review: isBusinessTarget
+        ? `Looma administrators are currently reviewing verification documents for ${res.updated.displayName}.`
+        : 'Your verification request is now under review by Looma administrators.',
+      more_info_required: res.updated.reviewerNote
+        ? `More information required: ${res.updated.reviewerNote}`.slice(0, 240)
+        : 'Additional documentation or reference details were requested. Open Settings to resubmit.',
+      rejected: res.updated.reviewerNote
+        ? `Your verification request was not approved: ${res.updated.reviewerNote}`.slice(0, 240)
+        : 'Your verification request was not approved at this time. You may submit an updated request from Settings.',
+    } as const;
+
+    const notifTitle = notifTitleMap[decision];
+    const notifBody = notifBodyMap[decision];
+
     try {
       await setDoc(doc(db, 'users', targetUid, 'notifications', notifId), {
         id: notifId,
@@ -1703,14 +1760,27 @@ function AdminAppInner(_props: AdminAppProps) {
         createdAt: serverTimestamp(),
       });
     } catch {
-      // Notification write is best-effort after badge status update
+      // Notification write is best-effort after status update
+    }
+
+    if (isBusinessTarget && res.updated.businessProfileId) {
+      void emitBusinessNotification({
+        bpId: res.updated.businessProfileId,
+        actorId: firebaseUser.uid,
+        actorName: currentProfile.displayName,
+        actorAvatar: currentProfile.avatarUrl || '',
+        type: 'system',
+        title: notifTitle,
+        body: notifBody,
+        targetId: requestId,
+      }).catch(() => {});
     }
 
     await recordAudit(
       `verification.${decision}`,
-      'user',
-      targetUid,
-      `${decision === 'approved' ? 'Approved' : 'Rejected'} verification request ${requestId} for ${targetUid}.${res.updated.reviewerNote ? ` Note: ${res.updated.reviewerNote}` : ''}`
+      isBusinessTarget ? 'businessProfile' : 'user',
+      isBusinessTarget && res.updated.businessProfileId ? res.updated.businessProfileId : targetUid,
+      `${decision} verification request ${requestId} (${isBusinessTarget ? 'business' : 'personal'}).${res.updated.reviewerNote ? ` Note: ${res.updated.reviewerNote}` : ''}`
     );
 
     return { ok: true };

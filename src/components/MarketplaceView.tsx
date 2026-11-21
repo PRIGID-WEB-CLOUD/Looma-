@@ -52,6 +52,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import type { ChatThread, UserProfile } from '../types/social';
 import type {
   CartItem,
@@ -113,6 +114,20 @@ interface MarketplaceViewProps {
     sellerUid: string,
     initialMessage?: string,
     listingContext?: { id: string; title: string; priceFormatted: string }
+  ) => Promise<void> | void;
+  allBusinesses?: BusinessProfile[];
+  onMessageBusiness?: (
+    businessProfile: BusinessProfile,
+    initialMessage?: string,
+    listingContext?: {
+      id: string;
+      title: string;
+      priceFormatted: string;
+      imageUrl?: string;
+      priceCents?: number;
+      currency?: string;
+      storeSlug?: string;
+    }
   ) => Promise<void> | void;
   onToggleFollowSeller: (sellerUid: string) => Promise<void> | void;
   onOpenInbox?: () => void;
@@ -580,6 +595,8 @@ export function MarketplaceView({
   initialStoreSlug = null,
   marketplaceEnabled = true,
   onMessageSeller,
+  allBusinesses = [],
+  onMessageBusiness,
   onToggleFollowSeller,
   onOpenInbox,
   onOpenChatThread,
@@ -1030,12 +1047,41 @@ export function MarketplaceView({
     ]
   );
 
+  const resolveBusinessForProductOrSeller = (
+    product: MarketplaceProduct | null,
+    sellerUid: string
+  ): BusinessProfile | null => {
+    if (allBusinesses.length === 0) return null;
+    if (product?.businessProfileId) {
+      const byBp = allBusinesses.find((b) => b.id === product.businessProfileId);
+      if (byBp) return byBp;
+    }
+    if (product?.storeId) {
+      const matchedStore = stores.find((s) => s.id === product.storeId);
+      if (matchedStore?.businessProfileId) {
+        const byStoreBp = allBusinesses.find((b) => b.id === matchedStore.businessProfileId);
+        if (byStoreBp) return byStoreBp;
+      }
+      const byCommerceStore = allBusinesses.find((b) => b.commerceStoreId === product.storeId);
+      if (byCommerceStore) return byCommerceStore;
+    }
+    if (sellerUid) {
+      return allBusinesses.find((b) => b.ownerUid === sellerUid) || null;
+    }
+    return null;
+  };
+
   const handleOpenInboxChat = async (
     partnerUid: string,
     existingThreadId?: string | null
   ) => {
     if (existingThreadId && onOpenChatThread) {
       onOpenChatThread(existingThreadId);
+      return;
+    }
+    const matchedBiz = resolveBusinessForProductOrSeller(null, partnerUid);
+    if (matchedBiz && onMessageBusiness && partnerUid !== profile.uid) {
+      await onMessageBusiness(matchedBiz);
       return;
     }
     if (partnerUid && partnerUid !== profile.uid) {
@@ -2130,11 +2176,27 @@ export function MarketplaceView({
                         selectedProduct.priceCents,
                         selectedProduct.currency
                       );
-                      await onMessageSeller(selectedProduct.ownerUid, msg, {
-                        id: selectedProduct.id,
-                        title: selectedProduct.title,
-                        priceFormatted,
-                      });
+                      const matchedBiz = resolveBusinessForProductOrSeller(
+                        selectedProduct,
+                        selectedProduct.ownerUid
+                      );
+                      if (matchedBiz && onMessageBusiness) {
+                        await onMessageBusiness(matchedBiz, msg, {
+                          id: selectedProduct.id,
+                          title: selectedProduct.title,
+                          priceFormatted,
+                          imageUrl: selectedProduct.imageUrl,
+                          priceCents: selectedProduct.priceCents,
+                          currency: selectedProduct.currency,
+                          storeSlug: selectedProduct.storeSlug,
+                        });
+                      } else {
+                        await onMessageSeller(selectedProduct.ownerUid, msg, {
+                          id: selectedProduct.id,
+                          title: selectedProduct.title,
+                          priceFormatted,
+                        });
+                      }
                       recordMarketplaceThreadHint({
                         partnerUid: selectedProduct.ownerUid,
                         role: 'buying',
@@ -2231,17 +2293,38 @@ export function MarketplaceView({
                       disabled={isSelf}
                       onClick={async () => {
                         if (isSelf) return;
+                        const priceFormatted = formatCurrencyCents(
+                          selectedProduct.priceCents,
+                          selectedProduct.currency
+                        );
                         recordMarketplaceThreadHint({
                           partnerUid: selectedProduct.ownerUid,
                           role: 'buying',
                           listingId: selectedProduct.id,
-                          listingTitle: `${selectedProduct.title} · ${formatCurrencyCents(
-                            selectedProduct.priceCents,
-                            selectedProduct.currency
-                          )}`,
+                          listingTitle: `${selectedProduct.title} · ${priceFormatted}`,
                           updatedAtMs: Date.now(),
                         });
-                        await onMessageSeller(selectedProduct.ownerUid);
+                        const matchedBiz = resolveBusinessForProductOrSeller(
+                          selectedProduct,
+                          selectedProduct.ownerUid
+                        );
+                        if (matchedBiz && onMessageBusiness) {
+                          await onMessageBusiness(
+                            matchedBiz,
+                            `Hi, is "${selectedProduct.title}" still available?`,
+                            {
+                              id: selectedProduct.id,
+                              title: selectedProduct.title,
+                              priceFormatted,
+                              imageUrl: selectedProduct.imageUrl,
+                              priceCents: selectedProduct.priceCents,
+                              currency: selectedProduct.currency,
+                              storeSlug: selectedProduct.storeSlug,
+                            }
+                          );
+                        } else {
+                          await onMessageSeller(selectedProduct.ownerUid);
+                        }
                       }}
                       className="flex flex-col items-center gap-1.5 cursor-pointer group disabled:opacity-40"
                     >
@@ -2642,7 +2725,15 @@ export function MarketplaceView({
                         listingTitle: `${activeSellerProfile.displayName} Marketplace`,
                         updatedAtMs: Date.now(),
                       });
-                      await onMessageSeller(activeSellerProfile.uid);
+                      const matchedBiz = resolveBusinessForProductOrSeller(
+                        null,
+                        activeSellerProfile.uid
+                      );
+                      if (matchedBiz && onMessageBusiness) {
+                        await onMessageBusiness(matchedBiz);
+                      } else {
+                        await onMessageSeller(activeSellerProfile.uid);
+                      }
                     }}
                     className="flex flex-col items-center gap-1.5 cursor-pointer disabled:opacity-40"
                   >
@@ -2767,7 +2858,15 @@ export function MarketplaceView({
               sellerName={activeSellerProfile.displayName}
               isSelf={activeSellerProfile.uid === profile.uid}
               onSend={async (msg) => {
-                await onMessageSeller(activeSellerProfile.uid, msg);
+                const matchedBiz = resolveBusinessForProductOrSeller(
+                  null,
+                  activeSellerProfile.uid
+                );
+                if (matchedBiz && onMessageBusiness) {
+                  await onMessageBusiness(matchedBiz, msg);
+                } else {
+                  await onMessageSeller(activeSellerProfile.uid, msg);
+                }
                 recordMarketplaceThreadHint({
                   partnerUid: activeSellerProfile.uid,
                   role: 'buying',

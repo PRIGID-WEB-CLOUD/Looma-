@@ -20,6 +20,56 @@ export function normalizeBusinessSlug(raw: string): string {
     .slice(0, 64);
 }
 
+/**
+ * Generates an automatic compact lowercase @handle from a Business Name.
+ * Example: "Prigid Web Cloud" -> "prigidwebcloud"
+ */
+export function generateBusinessHandleFromName(displayName: string): string {
+  const normalized = (displayName || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 64);
+  return normalized;
+}
+
+/**
+ * Produces clean, deterministic alternative handle suggestions when a desired
+ * business @handle is already claimed.
+ */
+export function suggestAlternativeBusinessHandles(
+  baseHandle: string,
+  takenHandles?: Set<string> | string[]
+): string[] {
+  const cleanBase = normalizeBusinessSlug(baseHandle).replace(/-/g, '') ||
+    normalizeBusinessSlug(baseHandle);
+  if (!cleanBase || cleanBase.length < 2) return [];
+
+  const taken = new Set<string>(
+    takenHandles
+      ? Array.from(takenHandles).map((h) => h.toLowerCase())
+      : []
+  );
+  taken.add(cleanBase.toLowerCase());
+
+  const suffixes = ['hq', 'studio', 'official', 'co', 'shop', '1', '2', '24'];
+  const candidates: string[] = [];
+  for (const suffix of suffixes) {
+    const candidate = `${cleanBase.slice(0, 64 - suffix.length)}${suffix}`;
+    if (
+      candidate.length >= 2 &&
+      candidate.length <= 64 &&
+      !taken.has(candidate) &&
+      !candidates.includes(candidate)
+    ) {
+      candidates.push(candidate);
+    }
+    if (candidates.length >= 4) break;
+  }
+  return candidates;
+}
+
 export function validateBusinessProfileInput(input: {
   displayName: string;
   slug: string;
@@ -42,7 +92,7 @@ export function validateBusinessProfileInput(input: {
   };
 } {
   const displayName = (input.displayName || '').trim().slice(0, 80);
-  const slug = normalizeBusinessSlug(input.slug || displayName);
+  const slug = normalizeBusinessSlug(input.slug || generateBusinessHandleFromName(displayName));
   const category = (input.category || 'General Merchandise').trim().slice(0, 40);
   const bio = (input.bio || '').trim().slice(0, 280);
   const location = (input.location || '').trim().slice(0, 80);

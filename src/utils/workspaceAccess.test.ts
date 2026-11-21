@@ -208,3 +208,51 @@ test('public marketplace, product detail, and business profile routes stay acces
   assert.equal(authBp.businessSlug, 'luxe-atelier');
 });
 
+test('dedicated /search, /post/:postId/comments, and /business-workspace routes resolve cleanly', () => {
+  for (const [path, expectedLabel] of [
+    ['/search', 'Search is restricted'],
+    ['/post/post_777/comments', 'Post comments are restricted'],
+    ['/business-workspace', 'Business workspace is restricted'],
+  ] as const) {
+    const blocked = resolveRouteAccess({
+      pathname: path,
+      isAuthorized: false,
+      onboardingCompleted: false,
+      authReady: true,
+    });
+    assert.equal(blocked.surface, 'auth');
+    assert.equal(blocked.returnToPath, path);
+    assert.ok(blocked.protectedNotice?.includes(expectedLabel));
+  }
+
+  const searchRes = resolveRouteAccess({
+    pathname: '/search',
+    search: '?q=%23design',
+    isAuthorized: true,
+    onboardingCompleted: true,
+    authReady: true,
+  });
+  assert.equal(searchRes.surface, 'workspace');
+  assert.equal(searchRes.tab, 'search');
+
+  const commentsRes = resolveRouteAccess({
+    pathname: '/post/post_abc_123/comments',
+    isAuthorized: true,
+    onboardingCompleted: true,
+    authReady: true,
+  });
+  assert.equal(commentsRes.surface, 'workspace');
+  assert.equal(commentsRes.tab, 'post-comments');
+  assert.equal(commentsRes.postId, 'post_abc_123');
+
+  const bizRes = resolveRouteAccess({
+    pathname: '/business-workspace',
+    isAuthorized: true,
+    onboardingCompleted: true,
+    authReady: true,
+  });
+  assert.equal(bizRes.surface, 'workspace');
+  assert.equal(bizRes.tab, 'business-workspace');
+});
+
+

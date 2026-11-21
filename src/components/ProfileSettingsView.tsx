@@ -3,24 +3,16 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bell,
-  Building2,
   Camera,
   Check,
   Lock,
   LogOut,
   Moon,
-  Plus,
   ShieldCheck,
   Sun,
   Trash2,
-  User,
 } from 'lucide-react';
 import type { PushPermissionState } from '../services/notifications';
-import type {
-  ActiveIdentity,
-  BusinessMembership,
-  BusinessProfile,
-} from '../types/business';
 import type {
   MessagePrivacy,
   ProfileVisibility,
@@ -29,24 +21,12 @@ import type {
   UserProfile,
   VerificationRequest,
 } from '../types/social';
-import {
-  BUSINESS_CATEGORIES,
-  BUSINESS_CURRENCIES,
-  normalizeBusinessSlug,
-  updateBusinessProfile,
-  validateBusinessProfileInput,
-} from '../services/businessProfiles';
 import { RequestVerificationModal } from './RequestVerificationModal';
 import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
 } from '../services/storage';
-import {
-  BUSINESS_ACCOUNT_CATEGORIES,
-  INTEREST_OPTIONS,
-  validateBusinessAccountDetails,
-  validateProfileInput,
-} from '../utils/socialLogic';
+import { INTEREST_OPTIONS, validateProfileInput } from '../utils/socialLogic';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import type { LegalDocId } from '../utils/legalLogic';
@@ -57,13 +37,6 @@ interface ProfileSettingsViewProps {
   accountEmail?: string | null;
   theme: ThemeMode;
   pushPermission: PushPermissionState;
-  activeIdentity?: ActiveIdentity;
-  businesses?: BusinessProfile[];
-  memberships?: BusinessMembership[];
-  onSwitchToPersonal?: () => void;
-  onSwitchToBusiness?: (businessProfileId: string) => void;
-  onOpenBusinessProfile?: (slug: string) => void;
-  onEditBusiness?: (business: BusinessProfile) => void;
   onSetTheme: (theme: ThemeMode) => void;
   onEnablePush: () => Promise<PushPermissionState>;
   onLogout: () => Promise<void>;
@@ -75,8 +48,17 @@ interface ProfileSettingsViewProps {
   ) => Promise<void>;
   onBack: () => void;
   userVerificationRequest?: VerificationRequest | null;
-  onSubmitVerificationRequest?: (reason: string, links: string[]) => Promise<{ ok: boolean; error?: string }>;
-  onCreateBusiness?: () => void;
+  onSubmitVerificationRequest?: (
+    reason: string,
+    links: string[],
+    documentUrls?: string[]
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onResubmitVerificationRequest?: (
+    requestId: string,
+    reason: string,
+    links: string[],
+    documentUrls?: string[]
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface SwitchRowProps {
@@ -135,11 +117,6 @@ export function ProfileSettingsView({
   accountEmail,
   theme,
   pushPermission,
-  activeIdentity,
-  businesses = [],
-  memberships = [],
-  onSwitchToPersonal,
-  onSwitchToBusiness,
   onSetTheme,
   onEnablePush,
   onLogout,
@@ -150,7 +127,7 @@ export function ProfileSettingsView({
   onBack,
   userVerificationRequest,
   onSubmitVerificationRequest,
-  onCreateBusiness,
+  onResubmitVerificationRequest,
 }: ProfileSettingsViewProps) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.handle);
@@ -186,142 +163,6 @@ export function ProfileSettingsView({
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const syncedUidRef = useRef<string>(profile.uid);
   const isDirtyRef = useRef<boolean>(false);
-
-  const activeBusinessProfile =
-    activeIdentity?.type === 'business'
-      ? businesses.find((b) => b.id === activeIdentity.businessProfileId) ||
-        activeIdentity.businessProfile
-      : null;
-  const activeBusinessRole =
-    activeIdentity?.type === 'business'
-      ? memberships.find((m) => m.businessProfileId === activeIdentity.businessProfileId)?.role ||
-        activeIdentity.role
-      : null;
-  const isBusinessMode = Boolean(activeBusinessProfile);
-  const canEditActiveBusiness =
-    activeBusinessRole === 'OWNER' || activeBusinessRole === 'ADMIN';
-
-  const [bizDisplayName, setBizDisplayName] = useState(
-    activeBusinessProfile?.displayName || ''
-  );
-  const [bizSlug, setBizSlug] = useState(activeBusinessProfile?.slug || '');
-  const [bizCategory, setBizCategory] = useState(
-    activeBusinessProfile?.category || BUSINESS_CATEGORIES[0]
-  );
-  const [bizBio, setBizBio] = useState(activeBusinessProfile?.bio || '');
-  const [bizLocation, setBizLocation] = useState(
-    activeBusinessProfile?.location || ''
-  );
-  const [bizWebsiteUrl, setBizWebsiteUrl] = useState(
-    activeBusinessProfile?.websiteUrl || ''
-  );
-  const [bizCurrency, setBizCurrency] = useState(
-    activeBusinessProfile?.currency || 'USD'
-  );
-  const [bizLogoUrl, setBizLogoUrl] = useState(
-    activeBusinessProfile?.logoUrl || ''
-  );
-  const [bizUploadingLogo, setBizUploadingLogo] = useState(false);
-  const [bizSaving, setBizSaving] = useState(false);
-  const [bizError, setBizError] = useState<string | null>(null);
-  const [bizSavedNotice, setBizSavedNotice] = useState<string | null>(null);
-  const bizLogoInputRef = useRef<HTMLInputElement | null>(null);
-  const syncedBizIdRef = useRef<string | null>(activeBusinessProfile?.id || null);
-  const isBizDirtyRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    const nextBizId = activeBusinessProfile?.id || null;
-    const bizChanged = syncedBizIdRef.current !== nextBizId;
-    if (bizChanged || !isBizDirtyRef.current) {
-      syncedBizIdRef.current = nextBizId;
-      isBizDirtyRef.current = false;
-      setBizDisplayName(activeBusinessProfile?.displayName || '');
-      setBizSlug(activeBusinessProfile?.slug || '');
-      setBizCategory(activeBusinessProfile?.category || BUSINESS_CATEGORIES[0]);
-      setBizBio(activeBusinessProfile?.bio || '');
-      setBizLocation(activeBusinessProfile?.location || '');
-      setBizWebsiteUrl(activeBusinessProfile?.websiteUrl || '');
-      setBizCurrency(activeBusinessProfile?.currency || 'USD');
-      setBizLogoUrl(activeBusinessProfile?.logoUrl || '');
-      if (bizChanged) {
-        setBizError(null);
-        setBizSavedNotice(null);
-      }
-    }
-  }, [activeBusinessProfile]);
-
-  const handleBizLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeBusinessProfile) return;
-    setBizError(null);
-    setBizSavedNotice(null);
-    setBizUploadingLogo(true);
-    try {
-      const uploaded = await uploadMediaToCloudflareR2(file, 'avatars');
-      if (uploaded.kind !== 'image') {
-        void deleteUploadedMedia(uploaded.url, { ignoreNotFound: true }).catch(
-          () => {}
-        );
-        setBizError('Please select a valid image file (PNG, JPG, WebP, GIF, or AVIF).');
-        return;
-      }
-      isBizDirtyRef.current = true;
-      setBizLogoUrl(uploaded.url);
-    } catch (err) {
-      setBizError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to upload logo to Cloudflare R2.'
-      );
-    } finally {
-      setBizUploadingLogo(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleSaveBusinessDetails = async () => {
-    if (!activeBusinessProfile || bizSaving || bizUploadingLogo) return;
-    const validation = validateBusinessProfileInput({
-      displayName: bizDisplayName,
-      slug: bizSlug,
-      category: bizCategory,
-      bio: bizBio,
-      websiteUrl: bizWebsiteUrl,
-      location: bizLocation,
-      currency: bizCurrency,
-    });
-    if (!validation.valid) {
-      setBizError(validation.error || 'Please review your Business Profile details.');
-      setBizSavedNotice(null);
-      return;
-    }
-
-    setBizError(null);
-    setBizSavedNotice(null);
-    setBizSaving(true);
-    try {
-      await updateBusinessProfile(
-        activeBusinessProfile.id,
-        activeBusinessProfile.slug,
-        {
-          ...validation.clean,
-          logoUrl: bizLogoUrl,
-          bannerUrl: activeBusinessProfile.bannerUrl || '',
-          ownerUid: activeBusinessProfile.ownerUid,
-        }
-      );
-      isBizDirtyRef.current = false;
-      setBizSavedNotice('Business profile details saved');
-    } catch (err) {
-      setBizError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to save Business Profile details.'
-      );
-    } finally {
-      setBizSaving(false);
-    }
-  };
 
   useEffect(() => {
     const uidChanged = syncedUidRef.current !== profile.uid;
@@ -442,8 +283,14 @@ export function ProfileSettingsView({
           ? 'In-app banners active'
           : 'Not yet authorized';
 
+  const verificationStatus = userVerificationRequest?.status;
+  const isVerificationInReview =
+    verificationStatus === 'pending' || verificationStatus === 'under_review';
+  const canResubmitVerification =
+    verificationStatus === 'rejected' || verificationStatus === 'more_info_required';
+
   return (
-    <section aria-label="Profile Settings" className="space-y-5">
+    <section aria-label="Personal Profile Settings" className="space-y-5">
       {/* Header Bar */}
       <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6">
         <button
@@ -456,355 +303,12 @@ export function ProfileSettingsView({
         </button>
 
         <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-white mt-2">
-          Profile Settings
+          Personal Settings
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Manage your public identity, appearance, notifications, and privacy.
+          Manage your personal identity, appearance, notifications, privacy, and mother account security.
         </p>
       </div>
-
-
-
-      {/* Profile Switcher (Icon-Only) */}
-      <div
-        data-testid="settings-profile-switcher"
-        className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Profile Switcher
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Active: {activeBusinessProfile ? activeBusinessProfile.displayName : profile.displayName}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Personal Profile Icon */}
-            <button
-              type="button"
-              data-testid="switcher-option-personal"
-              aria-pressed={!isBusinessMode}
-              aria-label={`Switch to ${profile.displayName}`}
-              title={profile.displayName}
-              onClick={() => {
-                setSavedNotice(null);
-                onSwitchToPersonal?.();
-              }}
-              className={`relative rounded-full p-0.5 transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
-                !isBusinessMode
-                  ? 'ring-2 ring-blue-600 dark:ring-blue-400'
-                  : 'opacity-75 hover:opacity-100'
-              }`}
-            >
-              <Avatar src={profile.avatarUrl} name={profile.displayName} size="md" />
-              {!isBusinessMode && (
-                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-600 text-white border-2 border-white dark:border-slate-900 flex items-center justify-center">
-                  <Check className="w-2.5 h-2.5" aria-hidden="true" />
-                </span>
-              )}
-            </button>
-
-            {/* Linked Business Profile Icons */}
-            {businesses.map((biz) => {
-              const selected =
-                isBusinessMode && activeBusinessProfile?.id === biz.id;
-              return (
-                <button
-                  key={biz.id}
-                  type="button"
-                  data-testid={`switcher-option-business-${biz.id}`}
-                  aria-pressed={selected}
-                  aria-label={`Switch to ${biz.displayName}`}
-                  title={biz.displayName}
-                  onClick={() => {
-                    setSavedNotice(null);
-                    onSwitchToBusiness?.(biz.id);
-                  }}
-                  className={`relative rounded-full p-0.5 transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
-                    selected
-                      ? 'ring-2 ring-blue-600 dark:ring-blue-400'
-                      : 'opacity-75 hover:opacity-100'
-                  }`}
-                >
-                  <Avatar src={biz.logoUrl} name={biz.displayName} size="md" />
-                  {selected && (
-                    <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-600 text-white border-2 border-white dark:border-slate-900 flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" aria-hidden="true" />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-
-            {onCreateBusiness && (
-              <button
-                type="button"
-                onClick={onCreateBusiness}
-                aria-label="Create Business Storefront"
-                title="Create Business Storefront"
-                className="w-11 h-11 rounded-full border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer"
-              >
-                <Plus className="w-4 h-4" aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Active Business Profile Direct Editor (shown when switched to a Business Storefront) */}
-      {isBusinessMode && activeBusinessProfile && (
-        <div
-          data-testid="active-business-settings-panel"
-          className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-5"
-        >
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-              01 · Business Identity · {activeBusinessRole || 'MEMBER'}
-            </p>
-            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5 inline-flex items-center gap-1.5">
-              <span>Edit {activeBusinessProfile.displayName}</span>
-              {activeBusinessProfile.verified && <VerifiedBadge size={14} />}
-            </h2>
-          </div>
-
-          {bizError && (
-            <p
-              role="alert"
-              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300"
-            >
-              {bizError}
-            </p>
-          )}
-
-          {bizSavedNotice && (
-            <p
-              role="status"
-              className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2"
-            >
-              <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>{bizSavedNotice}</span>
-            </p>
-          )}
-
-          {canEditActiveBusiness ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-4">
-                <Avatar
-                  src={bizLogoUrl}
-                  name={bizDisplayName || activeBusinessProfile.displayName}
-                  size="lg"
-                />
-                <div className="space-y-1.5">
-                  <input
-                    ref={bizLogoInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleBizLogoUpload}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    disabled={bizUploadingLogo}
-                    onClick={() => bizLogoInputRef.current?.click()}
-                    className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
-                  >
-                    <Camera className="w-4 h-4" aria-hidden="true" />
-                    <span>{bizUploadingLogo ? 'Uploading...' : 'Upload Business Logo'}</span>
-                  </button>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Updates your Business Profile avatar across Marketplace and posts.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="settings-biz-name"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Business Name
-                  </label>
-                  <input
-                    id="settings-biz-name"
-                    type="text"
-                    value={bizDisplayName}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizDisplayName(e.target.value);
-                      setBizSavedNotice(null);
-                    }}
-                    maxLength={80}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="settings-biz-slug"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Business Handle
-                  </label>
-                  <input
-                    id="settings-biz-slug"
-                    type="text"
-                    value={bizSlug}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizSlug(normalizeBusinessSlug(e.target.value));
-                      setBizSavedNotice(null);
-                    }}
-                    maxLength={64}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="settings-biz-category"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Category
-                  </label>
-                  <select
-                    id="settings-biz-category"
-                    value={bizCategory}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizCategory(e.target.value);
-                      setBizSavedNotice(null);
-                    }}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  >
-                    {BUSINESS_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="settings-biz-currency"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Storefront Currency
-                  </label>
-                  <select
-                    id="settings-biz-currency"
-                    value={bizCurrency}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizCurrency(e.target.value);
-                      setBizSavedNotice(null);
-                    }}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  >
-                    {BUSINESS_CURRENCIES.map((cur) => (
-                      <option key={cur} value={cur}>
-                        {cur}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="settings-biz-location"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    City or Studio Location
-                  </label>
-                  <input
-                    id="settings-biz-location"
-                    type="text"
-                    value={bizLocation}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizLocation(e.target.value);
-                      setBizSavedNotice(null);
-                    }}
-                    maxLength={80}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="settings-biz-website"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
-                  >
-                    Business Website (Optional)
-                  </label>
-                  <input
-                    id="settings-biz-website"
-                    type="url"
-                    value={bizWebsiteUrl}
-                    onChange={(e) => {
-                      isBizDirtyRef.current = true;
-                      setBizWebsiteUrl(e.target.value);
-                      setBizSavedNotice(null);
-                    }}
-                    placeholder="https://studio.example.com"
-                    maxLength={500}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label
-                    htmlFor="settings-biz-bio"
-                    className="block text-xs font-medium text-slate-600 dark:text-slate-400"
-                  >
-                    Business Bio
-                  </label>
-                  <span className="text-xs text-slate-400 tabular-nums">
-                    {bizBio.trim().length}/280
-                  </span>
-                </div>
-                <textarea
-                  id="settings-biz-bio"
-                  rows={3}
-                  value={bizBio}
-                  onChange={(e) => {
-                    isBizDirtyRef.current = true;
-                    setBizBio(e.target.value);
-                    setBizSavedNotice(null);
-                  }}
-                  maxLength={280}
-                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 resize-none"
-                />
-              </div>
-
-              <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  data-testid="save-business-details-btn"
-                  disabled={bizSaving || bizUploadingLogo}
-                  onClick={() => void handleSaveBusinessDetails()}
-                  className="min-h-[42px] px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
-                >
-                  {bizSaving ? 'Saving...' : 'Save Business Details'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Your role ({activeBusinessRole || 'MEMBER'}) does not include editing Business Profile details. Contact the Business Owner or Admin to update profile information.
-            </p>
-          )}
-        </div>
-      )}
 
       <form onSubmit={handleSave} className="space-y-5">
         {error && (
@@ -826,8 +330,7 @@ export function ProfileSettingsView({
           </div>
         )}
 
-        {/* 01 · Identity & Public Profile (Unified Normal or Business Profile) */}
-        {!isBusinessMode && (
+        {/* 01 · Personal Identity */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-5">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 tabular-nums">
@@ -913,7 +416,7 @@ export function ProfileSettingsView({
               htmlFor="settings-location"
               className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5"
             >
-              City or Studio
+              City or Neighborhood
             </label>
             <input
               id="settings-location"
@@ -958,7 +461,7 @@ export function ProfileSettingsView({
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                Topics & Interests
+                Topics &amp; Interests
               </span>
               <span className="text-xs text-slate-400 tabular-nums">
                 {interests.length}/6 selected
@@ -995,46 +498,51 @@ export function ProfileSettingsView({
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   {profile.isVerified
-                    ? 'Your account is officially verified with a blue checkmark.'
-                    : userVerificationRequest?.status === 'pending'
+                    ? 'Your personal account is officially verified.'
+                    : verificationStatus === 'pending'
                       ? 'Your verification request is currently pending admin review.'
-                      : userVerificationRequest?.status === 'rejected'
-                        ? 'Your previous verification request was not approved. You may submit a new request.'
-                        : 'Request an official verification badge by providing a reason and reference links.'}
+                      : verificationStatus === 'under_review'
+                        ? 'Your verification request is currently under review by an administrator.'
+                        : verificationStatus === 'more_info_required'
+                          ? 'Additional information is required. Update and resubmit your verification request.'
+                          : verificationStatus === 'rejected'
+                            ? 'Your previous verification request was not approved. You may submit an updated request.'
+                            : 'Request an official verification badge by providing a reason and reference links.'}
                 </p>
                 {!profile.isVerified &&
-                  userVerificationRequest?.status === 'rejected' &&
-                  userVerificationRequest.reviewerNote && (
-                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                      Admin note: {userVerificationRequest.reviewerNote}
+                  canResubmitVerification &&
+                  userVerificationRequest?.reviewerNote && (
+                    <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                      Reviewer note: {userVerificationRequest.reviewerNote}
                     </p>
                   )}
               </div>
-              {!profile.isVerified && userVerificationRequest?.status !== 'pending' && (
+              {!profile.isVerified && !isVerificationInReview && (
                 <button
                   type="button"
                   onClick={() => setVerifyModalOpen(true)}
                   className="min-h-[38px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                   <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-                  <span>Request Verification</span>
+                  <span>
+                    {canResubmitVerification ? 'Resubmit Verification' : 'Request Verification'}
+                  </span>
                 </button>
               )}
               {profile.isVerified && (
                 <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                  Verified Creator
+                  Verified Member
                 </span>
               )}
-              {!profile.isVerified && userVerificationRequest?.status === 'pending' && (
+              {!profile.isVerified && isVerificationInReview && (
                 <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-xs font-semibold">
-                  Pending Review
+                  {verificationStatus === 'under_review' ? 'Under Review' : 'Pending Review'}
                 </span>
               )}
             </div>
           </div>
         </div>
-        )}
 
         {/* 02 · Appearance & Display */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
@@ -1043,7 +551,7 @@ export function ProfileSettingsView({
               02 · Appearance
             </p>
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-              Theme & Display
+              Theme &amp; Display
             </h2>
           </div>
 
@@ -1085,8 +593,6 @@ export function ProfileSettingsView({
         </div>
 
         {/* 03 · Notifications & Engagement */}
-        {!isBusinessMode && (
-        <>
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1094,7 +600,7 @@ export function ProfileSettingsView({
                 03 · Notifications
               </p>
               <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                Push & Activity Preferences
+                Push &amp; Activity Preferences
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {permissionLabel}
@@ -1127,7 +633,7 @@ export function ProfileSettingsView({
             <SwitchRow
               id="switch-notify-likes"
               label="Likes & reactions"
-              description="Notify when creators appreciate one of your posts."
+              description="Notify when members appreciate one of your posts."
               checked={notifyLikes}
               onToggle={() => {
                 setNotifyLikes((prev) => !prev);
@@ -1147,7 +653,7 @@ export function ProfileSettingsView({
             <SwitchRow
               id="switch-notify-messages"
               label="Direct messages"
-              description="Notify immediately when a creator sends you a chat message."
+              description="Notify immediately when someone sends you a personal chat message."
               checked={notifyMessages}
               onToggle={() => {
                 setNotifyMessages((prev) => !prev);
@@ -1165,7 +671,7 @@ export function ProfileSettingsView({
                 04 · Privacy
               </p>
               <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                Visibility & Direct Messages
+                Visibility &amp; Direct Messages
               </h2>
             </div>
             <Lock className="w-4 h-4 text-slate-400 mt-1" aria-hidden="true" />
@@ -1247,10 +753,8 @@ export function ProfileSettingsView({
             </div>
           </div>
         </div>
-        </>
-        )}
 
-        {/* 05 · Account Session */}
+        {/* 05 · Mother Account Session */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 tabular-nums">
@@ -1322,8 +826,6 @@ export function ProfileSettingsView({
               </div>
             </div>
           )}
-
-
 
           {onDeleteAccount && (
             <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
@@ -1418,23 +920,39 @@ export function ProfileSettingsView({
         </div>
 
         {/* Bottom Action Bar */}
-        {!isBusinessMode && (
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={saving}
-              className="min-h-[44px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-60"
-            >
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
-          </div>
-        )}
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving}
+            className="min-h-[44px] px-6 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-60"
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
       </form>
 
       <RequestVerificationModal
         isOpen={verifyModalOpen}
         onClose={() => setVerifyModalOpen(false)}
-        onSubmit={onSubmitVerificationRequest || (async () => ({ ok: true }))}
+        initialReason={canResubmitVerification ? userVerificationRequest?.reason || '' : ''}
+        initialLinks={canResubmitVerification ? userVerificationRequest?.links || [] : []}
+        initialDocumentUrls={
+          canResubmitVerification ? userVerificationRequest?.documentUrls || [] : []
+        }
+        onSubmit={async (reason, links, documentUrls) => {
+          if (canResubmitVerification && userVerificationRequest && onResubmitVerificationRequest) {
+            return onResubmitVerificationRequest(
+              userVerificationRequest.id,
+              reason,
+              links,
+              documentUrls
+            );
+          }
+          if (onSubmitVerificationRequest) {
+            return onSubmitVerificationRequest(reason, links, documentUrls);
+          }
+          return { ok: true };
+        }}
         theme={theme}
       />
     </section>
