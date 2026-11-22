@@ -27,6 +27,7 @@ async function buildAll() {
       "@workspace/db": path.resolve(rootDir, "lib/db/src/index.ts"),
       "@workspace/api-zod": path.resolve(rootDir, "lib/api-zod/src/index.ts"),
       "@workspace/api-spec": path.resolve(rootDir, "lib/api-spec/src/index.ts"),
+      "@workspace/tenant-routing": path.resolve(rootDir, "lib/tenant-routing/src/index.ts"),
     },
     // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
     // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.
