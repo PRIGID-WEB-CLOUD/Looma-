@@ -2155,6 +2155,8 @@ export function createWorkerApp() {
       'content-type',
       'accept',
       'cookie',
+      'x-seller-token',
+      'x-seller-session-token',
       'x-idempotency-key',
       'stripe-signature',
       'x-paystack-signature',

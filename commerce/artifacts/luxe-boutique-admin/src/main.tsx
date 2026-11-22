@@ -39,15 +39,23 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.startsWith("/api") || url.includes("/api/")) {
     let token = "";
     try {
-      token = window.sessionStorage.getItem("looma_seller_session_token") || "";
+      token =
+        window.sessionStorage?.getItem("looma_seller_session_token") ||
+        window.localStorage?.getItem("looma_seller_session_token") ||
+        "";
     } catch {
       token = "";
     }
     const headers = new Headers(
       init?.headers || (input instanceof Request ? input.headers : undefined)
     );
-    if (token && !headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${token}`);
+    if (token) {
+      if (!headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      if (!headers.has("X-Seller-Token")) {
+        headers.set("X-Seller-Token", token);
+      }
     }
     const modifiedInit: RequestInit = {
       ...init,

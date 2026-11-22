@@ -8,22 +8,39 @@ export type User = {
 };
 
 const SELLER_TOKEN_KEY = "looma_seller_session_token";
+let inMemorySessionToken = "";
 
-function readSellerSessionToken(): string {
+export function readSellerSessionToken(): string {
+  if (inMemorySessionToken) return inMemorySessionToken;
   try {
-    return typeof window !== "undefined" ? window.sessionStorage.getItem(SELLER_TOKEN_KEY) || "" : "";
+    if (typeof window !== "undefined") {
+      const fromSession = window.sessionStorage?.getItem(SELLER_TOKEN_KEY);
+      if (fromSession) {
+        inMemorySessionToken = fromSession;
+        return fromSession;
+      }
+      const fromLocal = window.localStorage?.getItem(SELLER_TOKEN_KEY);
+      if (fromLocal) {
+        inMemorySessionToken = fromLocal;
+        return fromLocal;
+      }
+    }
   } catch {
-    return "";
+    // Ignore storage errors in restricted contexts
   }
+  return "";
 }
 
 export function setSellerSessionToken(token: string | null): void {
+  inMemorySessionToken = token || "";
   try {
     if (typeof window === "undefined") return;
     if (token) {
-      window.sessionStorage.setItem(SELLER_TOKEN_KEY, token);
+      try { window.sessionStorage?.setItem(SELLER_TOKEN_KEY, token); } catch {}
+      try { window.localStorage?.setItem(SELLER_TOKEN_KEY, token); } catch {}
     } else {
-      window.sessionStorage.removeItem(SELLER_TOKEN_KEY);
+      try { window.sessionStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
+      try { window.localStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
     }
   } catch {
     // Ignore storage errors in sandboxed iframes
@@ -45,7 +62,12 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function getAdminAuthHeaders(): Record<string, string> {
   const token = readSellerSessionToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return token
+    ? {
+        Authorization: `Bearer ${token}`,
+        "X-Seller-Token": token,
+      }
+    : {};
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -53,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchUser = useCallback(async (retries = 2): Promise<User | null> => {
+    const sentToken = readSellerSessionToken();
     try {
       const res = await fetch("/api/auth/me", {
         credentials: "include",
@@ -68,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         return data;
       }
-      if (res.status === 401) {
+      if (res.status === 401 && sentToken && sentToken === readSellerSessionToken()) {
         setSellerSessionToken(null);
       }
       setUser(null);
@@ -86,6 +109,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // If we're on /sso or /seller/sso with a ?code= in the URL, wait for AdminSsoPage to exchange
+    if (
+      typeof window !== "undefined" &&
+      window.location.pathname.includes("/sso") &&
+      window.location.search.includes("code=")
+    ) {
+      return;
+    }
     void fetchUser();
   }, [fetchUser]);
 

@@ -129,12 +129,18 @@ function toStoredUser(
 }
 
 function extractToken(req: Request): string | undefined {
-  const cookieToken = req.cookies?.[SESSION_COOKIE] as string | undefined;
-  if (cookieToken) return cookieToken;
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    return authHeader.slice(7).trim();
+  const customHeader = (req.headers["x-seller-token"] || req.headers["x-seller-session-token"]) as string | undefined;
+  if (customHeader && customHeader.trim()) return customHeader.trim();
+
+  const authHeader = req.headers.authorization || (typeof (req as any).header === "function" ? (req as any).header("authorization") : undefined);
+  if (authHeader) {
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (match && match[1]) return match[1].trim();
   }
+
+  const cookieToken = req.cookies?.[SESSION_COOKIE] as string | undefined;
+  if (cookieToken && cookieToken.trim()) return cookieToken.trim();
+
   return undefined;
 }
 
