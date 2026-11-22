@@ -262,13 +262,11 @@ export function BusinessPlatformLayout({
                 disabled={portalBusy}
                 onClick={onLaunchSellerPortal}
                 data-testid="business-header-seller-portal-btn"
-                className="min-h-[38px] px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+                title={portalBusy ? 'Authorizing...' : 'Seller Portal'}
+                aria-label={portalBusy ? 'Authorizing...' : 'Seller Portal'}
+                className="min-h-[40px] w-[40px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center justify-center cursor-pointer disabled:opacity-60 shrink-0"
               >
-                <Store className="w-3.5 h-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">
-                  {portalBusy ? 'Authorizing...' : 'Seller Portal'}
-                </span>
-                <ExternalLink className="w-3 h-3 hidden sm:inline" aria-hidden="true" />
+                <Store className="w-4 h-4" aria-hidden="true" />
               </button>
             )}
 

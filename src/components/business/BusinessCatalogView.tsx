@@ -314,10 +314,11 @@ export function BusinessCatalogView({
               type="button"
               disabled={portalBusy}
               onClick={() => void handleOpenPortal()}
-              className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title={portalBusy ? 'Authorizing...' : 'Seller Portal'}
+              aria-label={portalBusy ? 'Authorizing...' : 'Seller Portal'}
+              className="min-h-[40px] w-[40px] rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 inline-flex items-center justify-center cursor-pointer shrink-0"
             >
-              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>{portalBusy ? 'Authorizing...' : 'Seller Portal'}</span>
+              <Store className="w-4 h-4" aria-hidden="true" />
             </button>
           )}
           {canEditCatalog && (

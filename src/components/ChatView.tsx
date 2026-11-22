@@ -436,9 +436,8 @@ export function ChatView({
   onOpenBusinessProfile,
   onOpenProduct,
 }: ChatViewProps) {
-  const [inboxMode, setInboxMode] = useState<'personal' | 'business'>(
-    initialBusinessChatId ? 'business' : initialInboxMode
-  );
+  const inboxMode: 'personal' | 'business' =
+    platformMode === 'business' ? 'business' : 'personal';
   const [bizThreads, setBizThreads] = useState<BusinessChatThread[]>([]);
   const [selectedBizChatId, setSelectedBizChatId] = useState<string | null>(
     initialBusinessChatId
@@ -605,7 +604,6 @@ export function ChatView({
 
   useEffect(() => {
     if (initialBusinessChatId) {
-      setInboxMode('business');
       setSelectedBizChatId(initialBusinessChatId);
       setMobileShowThread(true);
     }
@@ -633,7 +631,6 @@ export function ChatView({
 
   useEffect(() => {
     if (initialThreadId) {
-      setInboxMode('personal');
       setSelectedId(initialThreadId);
       setMobileShowThread(true);
     }
@@ -1042,51 +1039,7 @@ export function ChatView({
             </div>
           </div>
 
-          {platformMode === 'normal' && (
-            <div
-              role="tablist"
-              aria-label="Messaging environment switcher"
-              className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-800"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inboxMode === 'personal'}
-                onClick={() => {
-                  setInboxMode('personal');
-                  setMobileShowThread(false);
-                }}
-                className={`min-h-[36px] px-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                  inboxMode === 'personal'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                Personal Chats
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inboxMode === 'business'}
-                onClick={() => {
-                  setInboxMode('business');
-                  setMobileShowThread(false);
-                }}
-                className={`min-h-[36px] px-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap ${
-                  inboxMode === 'business'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <span>Business Inquiries</span>
-                {bizUnreadCount > 0 && (
-                  <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center tabular-nums">
-                    {bizUnreadCount}
-                  </span>
-                )}
-              </button>
-            </div>
-          )}
+
 
           {/* Conversation Search */}
           <div className="relative">

@@ -287,17 +287,23 @@ export function BusinessSettingsView({
             type="button"
             disabled={portalBusy}
             onClick={() => void handlePortalLaunch()}
-            className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shrink-0"
-          >
-            <Store className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>
-              {portalBusy
+            title={
+              portalBusy
                 ? 'Authorizing...'
                 : businessProfile.commerceStoreId
                   ? 'Launch Seller Portal'
-                  : 'Activate & Launch Store'}
-            </span>
-            <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                  : 'Activate & Launch Store'
+            }
+            aria-label={
+              portalBusy
+                ? 'Authorizing...'
+                : businessProfile.commerceStoreId
+                  ? 'Launch Seller Portal'
+                  : 'Activate & Launch Store'
+            }
+            className="min-h-[40px] w-[40px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center justify-center cursor-pointer disabled:opacity-60 shrink-0"
+          >
+            <Store className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -333,13 +339,23 @@ export function BusinessSettingsView({
                 );
                 setVerifyModalOpen(true);
               }}
-              className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+              title={
+                latestVerification?.status === 'more_info_required'
+                  ? 'Submit Additional Info'
+                  : latestVerification?.status === 'rejected'
+                    ? 'Resubmit Verification'
+                    : 'Request Verification'
+              }
+              aria-label={
+                latestVerification?.status === 'more_info_required'
+                  ? 'Submit Additional Info'
+                  : latestVerification?.status === 'rejected'
+                    ? 'Resubmit Verification'
+                    : 'Request Verification'
+              }
+              className="min-h-[40px] w-[40px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center justify-center cursor-pointer shrink-0"
             >
-              {latestVerification?.status === 'more_info_required'
-                ? 'Submit Additional Info'
-                : latestVerification?.status === 'rejected'
-                  ? 'Resubmit Verification'
-                  : 'Request Verification'}
+              <ShieldCheck className="w-4 h-4" aria-hidden="true" />
             </button>
           ) : latestVerification ? (
             <span

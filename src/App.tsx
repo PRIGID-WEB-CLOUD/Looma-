@@ -214,6 +214,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const {
     activeMembershipRole,
     activeBusinessProfile,
+    activeBusinessMembership,
     businessNotifications,
     unreadBusinessNotifications,
     businessSection,
@@ -413,6 +414,17 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   }, [isUserAdmin, store.communityUsers, store.posts, store.profile.isVerified, store.profile.uid]);
 
   const unreadCount = countUnreadNotifications(activityNotifications);
+  const unreadBusinessInboxCount = useMemo(
+    () => businessInboxThreads.filter((t) => t.unreadByBusiness).length,
+    [businessInboxThreads]
+  );
+  const activeCommentPost = useMemo(
+    () =>
+      selectedCommentPostId
+        ? store.posts.find((p) => p.id === selectedCommentPostId) || null
+        : null,
+    [selectedCommentPostId, store.posts]
+  );
   const appStage = resolveAppStage(
     store.isAuthorized,
     store.profile.onboardingCompleted,
@@ -1374,19 +1386,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     Boolean(activeBusinessProfile) &&
     !isSharedOverlayRoute;
 
-  const unreadBusinessInboxCount = useMemo(
-    () => businessInboxThreads.filter((t) => t.unreadByBusiness).length,
-    [businessInboxThreads]
-  );
-
-  const activeCommentPost = useMemo(
-    () =>
-      selectedCommentPostId
-        ? store.posts.find((p) => p.id === selectedCommentPostId) || null
-        : null,
-    [selectedCommentPostId, store.posts]
-  );
-
   const normalRightRail = (
     <aside
       aria-label="Community creators and active conversations"
@@ -1513,33 +1512,19 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           businessProfile={activeBusinessProfile}
           role={activeMembershipRole || 'VIEWER'}
           section={businessSection}
-          onSelectSection={(next) => {
-            if (next !== 'inbox') {
-              setBusinessInboxInitialThreadId(null);
-            }
-            setBusinessSection(next);
-          }}
-          unreadInboxCount={unreadBusinessInboxCount}
+          onSelectSection={(sec) => setBusinessSection(sec)}
+          unreadInboxCount={businessInboxThreads.filter((t) => t.unreadByBusiness).length}
           businessNotifications={businessNotifications}
           unreadBusinessNotifications={unreadBusinessNotifications}
-          onMarkBusinessNotificationRead={async (id) => {
-            await markBusinessNotificationRead(activeBusinessProfile.id, id);
-          }}
-          onMarkAllBusinessNotificationsRead={async () => {
-            const unreadIds = businessNotifications
-              .filter((n) => !n.read)
-              .map((n) => n.id);
-            await markAllBusinessNotificationsRead(activeBusinessProfile.id, unreadIds);
-          }}
+          onMarkBusinessNotificationRead={async () => {}}
+          onMarkAllBusinessNotificationsRead={async () => {}}
           theme={store.theme}
           onToggleTheme={store.toggleTheme}
           maintenanceMode={store.featureFlags.maintenanceMode}
           memberModeration={store.memberModeration}
-          onOpenPublicBusinessPage={() =>
-            openBusinessProfileRoute(activeBusinessProfile.slug)
-          }
+          onOpenPublicBusinessPage={() => openBusinessProfileRoute(activeBusinessProfile.slug)}
           onOpenMarketplace={() => selectWorkspaceTab('marketplace')}
-          onLaunchSellerPortal={handleLaunchSellerPortal}
+          onLaunchSellerPortal={() => void handleLaunchSellerPortal()}
           portalBusy={portalBusy}
           onCreateBusiness={() => {
             setBusinessModalMode('create');
@@ -1557,15 +1542,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 posts={store.posts}
                 inboxThreads={businessInboxThreads}
                 portalBusy={portalBusy}
-                onSelectSection={(nextSection, threadId) => {
-                  if (threadId) setBusinessInboxInitialThreadId(threadId);
-                  setBusinessSection(nextSection);
-                }}
+                onSelectSection={(sec) => setBusinessSection(sec)}
                 onCreateBrandPost={() => setComposerOpen(true)}
-                onLaunchSellerPortal={handleLaunchSellerPortal}
-                onOpenPublicBusinessPage={() =>
-                  openBusinessProfileRoute(activeBusinessProfile.slug)
-                }
+                onLaunchSellerPortal={() => void handleLaunchSellerPortal()}
+                onOpenPublicBusinessPage={() => openBusinessProfileRoute(activeBusinessProfile.slug)}
               />
             )}
 
@@ -1583,20 +1563,30 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 businessProfile={activeBusinessProfile}
                 role={activeMembershipRole || 'VIEWER'}
                 viewerUid={store.profile.uid}
-                onMessageCustomer={handleBusinessOrderMessageCustomer}
-                onActivateStorefront={() => setBusinessSection('settings')}
+                onMessageCustomer={async (order) => {
+                  const target =
+                    store.allKnownChatUsers.find((u) => u.uid === order.buyerUid) ||
+                    (await store.fetchPublicUserProfile(order.buyerUid));
+                  if (target) {
+                    const thread = await store.startDirectThread(target);
+                    setChatInboxMode('business');
+                    setActiveBusinessChatId(thread.id);
+                    setBusinessSection('inbox');
+                  }
+                }}
+                onActivateStorefront={() => void handleLaunchSellerPortal()}
               />
             )}
 
             {businessSection === 'inbox' && (
               <BusinessInboxView
                 businessProfile={activeBusinessProfile}
-                activeRole={activeMembershipRole || 'VIEWER'}
+                activeRole={activeMembershipRole}
                 currentProfile={store.profile}
+                initialThreadId={activeBusinessChatId}
                 members={businessMembers}
                 products={businessCatalogProducts}
                 orders={businessOrders}
-                initialThreadId={businessInboxInitialThreadId}
                 onOpenProduct={openProductDetailRoute}
               />
             )}
@@ -1616,7 +1606,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onToggleLike={store.toggleLike}
                 onToggleBookmark={store.toggleBookmark}
                 onAddComment={store.addComment}
-                onOpenComments={(post) => openPostCommentsRoute(post.id)}
                 onUpdatePost={store.updatePost}
                 onDeletePost={store.deletePost}
                 onDeleteComment={store.deleteComment}
@@ -1624,6 +1613,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onShareToChat={handleSharePostToChat}
                 onSelectHashtag={handleHashtagClick}
                 onMentionClick={handleOpenMention}
+                onOpenComments={(post) => openPostCommentsRoute(post.id)}
               />
             )}
 
@@ -1707,24 +1697,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           onLogout={handleLogout}
           rightRail={normalRightRail}
         >
-          {platformMode === 'business' && activeBusinessProfile && (
-            <div className="mb-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-xs font-medium min-w-0">
-                <Building2 className="w-4 h-4 text-blue-400 shrink-0" aria-hidden="true" />
-                <span className="truncate">
-                  Business Mode · {activeBusinessProfile.displayName}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => selectWorkspaceTab('business-workspace')}
-                className="min-h-[34px] px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Business Workspace</span>
-              </button>
-            </div>
-          )}
 
           {activeTab === 'feed' && (
             <FeedView
@@ -1875,6 +1847,21 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 bookmarkedPostIds={store.bookmarkedPostIds}
                 shareThreads={store.threads}
                 categories={store.categories}
+                theme={store.theme}
+                onSubmitVerificationRequest={(bp, reason, links, documentUrls) =>
+                  store.submitVerificationRequest(reason, links, {
+                    targetType: 'business',
+                    businessProfile: bp,
+                    documentUrls,
+                  })
+                }
+                onResubmitVerificationRequest={(requestId, reason, links, documentUrls) =>
+                  store.resubmitVerificationRequest(requestId, {
+                    reason,
+                    links,
+                    documentUrls,
+                  })
+                }
                 onBack={() =>
                   selectWorkspaceTab(
                     platformMode === 'business' && activeBusinessProfile
@@ -2229,60 +2216,115 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           )}
 
           {activeTab === 'profile' && (
-            <ProfileView
-              profile={store.profile}
-              profileSwitcherSlot={
-                <BusinessSwitcherMenu
-                  profile={store.profile}
-                  align="right"
-                  onCreateBusiness={() => {
-                    setBusinessModalMode('create');
-                    setEditingBusinessProfile(null);
+            platformMode === 'business' && activeBusinessProfile ? (
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <BusinessProfilePage
+                  slug={activeBusinessProfile.slug}
+                  currentProfile={store.profile}
+                  isAuthorized={store.isAuthorized}
+                  memberships={activeBusinessMembership ? [activeBusinessMembership] : []}
+                  posts={store.posts}
+                  commentsByPost={store.commentsByPost}
+                  likedPostIds={store.likedPostIds}
+                  bookmarkedPostIds={store.bookmarkedPostIds}
+                  shareThreads={store.threads}
+                  categories={store.categories}
+                  theme={store.theme}
+                  onSubmitVerificationRequest={(bp, reason, links, documentUrls) =>
+                    store.submitVerificationRequest(reason, links, {
+                      targetType: 'business',
+                      businessProfile: bp,
+                      documentUrls,
+                    })
+                  }
+                  onResubmitVerificationRequest={(requestId, reason, links, documentUrls) =>
+                    store.resubmitVerificationRequest(requestId, {
+                      reason,
+                      links,
+                      documentUrls,
+                    })
+                  }
+                  onBack={() => selectWorkspaceTab('feed')}
+                  onRequireAuth={() => navigateToPath('/auth')}
+                  onEditBusiness={(bp) => {
+                    setBusinessModalMode('edit');
+                    setEditingBusinessProfile(bp);
                     setBusinessModalOpen(true);
                   }}
+                  onCreateBusinessPost={() => {
+                    setComposerOpen(true);
+                  }}
+                  onMessageBusiness={(bp) => handleMessageBusiness(bp)}
+                  onOpenProduct={openProductDetailRoute}
+                  onToggleLike={store.toggleLike}
+                  onToggleBookmark={store.toggleBookmark}
+                  onAddComment={store.addComment}
+                  onOpenComments={(post) => openPostCommentsRoute(post.id)}
+                  onUpdatePost={store.updatePost}
+                  onDeletePost={store.deletePost}
+                  onDeleteComment={store.deleteComment}
+                  onShareToStory={store.sharePostToStory}
+                  onShareToChat={handleSharePostToChat}
+                  onMentionClick={handleOpenMention}
+                  onSelectHashtag={handleHashtagClick}
                 />
-              }
-              posts={store.posts}
-              categories={store.categories}
-              followersCount={store.connections.followers.length}
-              followingCount={store.connections.following.length}
-              friendsCount={store.connections.friends.length}
-              likedPostIds={store.likedPostIds}
-              bookmarkedPostIds={store.bookmarkedPostIds}
-              commentsByPost={store.commentsByPost}
-              shareThreads={store.threads}
-              onToggleLike={store.toggleLike}
-              onToggleBookmark={store.toggleBookmark}
-              onAddComment={store.addComment}
-              onOpenComments={(post) => openPostCommentsRoute(post.id)}
-              onUpdatePost={store.updatePost}
-              onDeletePost={store.deletePost}
-              onDeleteComment={store.deleteComment}
-              onShareToStory={store.sharePostToStory}
-              onShareToChat={handleSharePostToChat}
-              onOpenSettings={() => selectWorkspaceTab('settings')}
-              onOpenConnections={(tab) => openConnections(tab, null)}
-              onAuthorClick={(post) => {
-                if (post.authorType === 'business' && post.authorHandle) {
-                  openBusinessProfileRoute(post.authorHandle);
-                  return;
+              </Suspense>
+            ) : (
+              <ProfileView
+                profile={store.profile}
+                profileSwitcherSlot={
+                  <BusinessSwitcherMenu
+                    profile={store.profile}
+                    align="right"
+                    onCreateBusiness={() => {
+                      setBusinessModalMode('create');
+                      setEditingBusinessProfile(null);
+                      setBusinessModalOpen(true);
+                    }}
+                  />
                 }
-                handleOpenPublicProfile(post.authorId, post, 'profile');
-              }}
-              onMentionClick={handleOpenMention}
-              onSelectHashtag={handleHashtagClick}
-              storiesEnabled={store.featureFlags.storiesEnabled}
-              onReportPost={async (post, category, reason) => {
-                await store.submitContentReport({
-                  targetType: 'post',
-                  targetId: post.id,
-                  targetAuthorUid: post.authorId,
-                  targetSummary: post.caption || post.mediaTitle || `Post by @${post.authorHandle}`,
-                  category,
-                  reason,
-                });
-              }}
-            />
+                posts={store.posts}
+                categories={store.categories}
+                followersCount={store.connections.followers.length}
+                followingCount={store.connections.following.length}
+                friendsCount={store.connections.friends.length}
+                likedPostIds={store.likedPostIds}
+                bookmarkedPostIds={store.bookmarkedPostIds}
+                commentsByPost={store.commentsByPost}
+                shareThreads={store.threads}
+                onToggleLike={store.toggleLike}
+                onToggleBookmark={store.toggleBookmark}
+                onAddComment={store.addComment}
+                onOpenComments={(post) => openPostCommentsRoute(post.id)}
+                onUpdatePost={store.updatePost}
+                onDeletePost={store.deletePost}
+                onDeleteComment={store.deleteComment}
+                onShareToStory={store.sharePostToStory}
+                onShareToChat={handleSharePostToChat}
+                onOpenSettings={() => selectWorkspaceTab('settings')}
+                onOpenConnections={(tab) => openConnections(tab, null)}
+                onAuthorClick={(post) => {
+                  if (post.authorType === 'business' && post.authorHandle) {
+                    openBusinessProfileRoute(post.authorHandle);
+                    return;
+                  }
+                  handleOpenPublicProfile(post.authorId, post, 'profile');
+                }}
+                onMentionClick={handleOpenMention}
+                onSelectHashtag={handleHashtagClick}
+                storiesEnabled={store.featureFlags.storiesEnabled}
+                onReportPost={async (post, category, reason) => {
+                  await store.submitContentReport({
+                    targetType: 'post',
+                    targetId: post.id,
+                    targetAuthorUid: post.authorId,
+                    targetSummary: post.caption || post.mediaTitle || `Post by @${post.authorHandle}`,
+                    category,
+                    reason,
+                  });
+                }}
+              />
+            )
           )}
 
           {activeTab === 'connections' && (() => {
@@ -2376,7 +2418,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           )}
         </NormalPlatformLayout>
       )}
-
       <CreatePostModal
         open={composerOpen}
         profile={store.profile}

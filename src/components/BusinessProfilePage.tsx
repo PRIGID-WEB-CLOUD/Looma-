@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   Building2,
+  Clock,
   ExternalLink,
   Globe,
   MapPin,
   MessageSquare,
   Pencil,
   Plus,
+  ShieldCheck,
   ShoppingBag,
   Store,
   Trash2,
@@ -28,7 +30,10 @@ import type {
   Post,
   PostCategory,
   PostComment,
+  ThemeMode,
   UserProfile,
+  VerificationRequest,
+  VerificationRequestStatus,
 } from '../types/social';
 import type { MarketplaceProduct } from '../types/marketplace';
 import {
@@ -40,6 +45,7 @@ import {
   revokeBusinessInvite,
   subscribeBusinessInvitesForBusiness,
   subscribeBusinessMembers,
+  subscribeBusinessVerificationRequests,
   subscribeIsFollowingBusinessProfile,
   toggleFollowBusinessProfile,
   updateBusinessMemberRole,
@@ -47,7 +53,41 @@ import {
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
+import { RequestVerificationModal } from './RequestVerificationModal';
 import { VerifiedBadge } from './VerifiedBadge';
+
+function getVerificationStatusMeta(status: VerificationRequestStatus): {
+  label: string;
+  tone: string;
+} {
+  switch (status) {
+    case 'approved':
+      return {
+        label: 'Verified',
+        tone: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+      };
+    case 'under_review':
+      return {
+        label: 'Under Review',
+        tone: 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800',
+      };
+    case 'more_info_required':
+      return {
+        label: 'More Info Required',
+        tone: 'bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-800',
+      };
+    case 'rejected':
+      return {
+        label: 'Rejected',
+        tone: 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800',
+      };
+    default:
+      return {
+        label: 'Pending Review',
+        tone: 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+      };
+  }
+}
 
 interface BusinessProfilePageProps {
   slug: string;
@@ -60,12 +100,25 @@ interface BusinessProfilePageProps {
   bookmarkedPostIds: string[];
   shareThreads: ChatThread[];
   categories: string[];
+  theme?: ThemeMode;
   onBack: () => void;
   onRequireAuth: () => void;
   onEditBusiness: (bp: BusinessProfile) => void;
   onCreateBusinessPost: (bp: BusinessProfile) => void;
   onMessageOwner?: (ownerUid: string, businessName: string) => void;
   onMessageBusiness?: (bp: BusinessProfile) => Promise<void> | void;
+  onSubmitVerificationRequest?: (
+    bp: BusinessProfile,
+    reason: string,
+    links: string[],
+    documentUrls?: string[]
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onResubmitVerificationRequest?: (
+    requestId: string,
+    reason: string,
+    links: string[],
+    documentUrls?: string[]
+  ) => Promise<{ ok: boolean; error?: string }>;
   onOpenProduct: (productId: string) => void;
   onToggleLike: (post: Post) => void;
   onToggleBookmark: (postId: string) => void;
@@ -94,12 +147,15 @@ export function BusinessProfilePage({
   bookmarkedPostIds,
   shareThreads,
   categories,
+  theme,
   onBack,
   onRequireAuth,
   onEditBusiness,
   onCreateBusinessPost,
   onMessageOwner,
   onMessageBusiness,
+  onSubmitVerificationRequest,
+  onResubmitVerificationRequest,
   onOpenProduct,
   onToggleLike,
   onToggleBookmark,
@@ -123,6 +179,10 @@ export function BusinessProfilePage({
   const [catalogProducts, setCatalogProducts] = useState<MarketplaceProduct[]>([]);
   const [members, setMembers] = useState<BusinessMembership[]>([]);
   const [invites, setInvites] = useState<BusinessInvite[]>([]);
+
+  const [verificationHistory, setVerificationHistory] = useState<VerificationRequest[]>([]);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [resubmitTarget, setResubmitTarget] = useState<VerificationRequest | null>(null);
 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Exclude<BusinessMembershipRole, 'OWNER'>>('EDITOR');
@@ -245,6 +305,28 @@ export function BusinessProfilePage({
       unsubInvites();
     };
   }, [businessProfile, isOwnerOrAdmin]);
+
+  useEffect(() => {
+    if (!businessProfile || !isOwnerOrAdmin) {
+      setVerificationHistory([]);
+      return;
+    }
+    return subscribeBusinessVerificationRequests(
+      businessProfile.id,
+      businessProfile.ownerUid,
+      setVerificationHistory
+    );
+  }, [businessProfile, isOwnerOrAdmin]);
+
+  const latestVerification = verificationHistory[0] || null;
+  const canRequestVerification = Boolean(
+    isOwnerOrAdmin &&
+      businessProfile &&
+      !businessProfile.verified &&
+      (!latestVerification ||
+        latestVerification.status === 'rejected' ||
+        latestVerification.status === 'more_info_required')
+  );
 
   const businessPosts = useMemo(() => {
     if (!businessProfile) return [];
@@ -394,6 +476,37 @@ export function BusinessProfilePage({
         </div>
       )}
 
+      {isOwnerOrAdmin && latestVerification && (latestVerification.status === 'more_info_required' || latestVerification.status === 'rejected') && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="space-y-0.5">
+            <p className="font-bold text-amber-900 dark:text-amber-200">
+              Verification Notice: {getVerificationStatusMeta(latestVerification.status).label}
+            </p>
+            {latestVerification.reviewerNote ? (
+              <p className="text-amber-800 dark:text-amber-300">
+                Admin note: {latestVerification.reviewerNote}
+              </p>
+            ) : (
+              <p className="text-amber-800 dark:text-amber-300">
+                {latestVerification.status === 'more_info_required'
+                  ? 'Administrators need additional verification documents (registration, domain, or trademark proof).'
+                  : 'Your previous verification request was not approved. You can submit updated documents.'}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setResubmitTarget(latestVerification);
+              setVerifyModalOpen(true);
+            }}
+            className="min-h-[36px] px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold shrink-0 cursor-pointer"
+          >
+            {latestVerification.status === 'more_info_required' ? 'Update & Provide Info' : 'Resubmit Request'}
+          </button>
+        </div>
+      )}
+
       {/* Business Header Card */}
       <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
         {businessProfile.bannerUrl ? (
@@ -472,18 +585,72 @@ export function BusinessProfilePage({
                     disabled={portalBusy}
                     onClick={() => void handleLaunchCommerce()}
                     data-testid="launch-commerce-portal-btn"
-                    className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                  >
-                    <Store className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>
-                      {portalBusy
+                    title={
+                      portalBusy
                         ? 'Authorizing...'
                         : businessProfile.commerceStoreId
                           ? 'Open Seller Portal'
-                          : 'Activate Merchant Store'}
-                    </span>
-                    <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                          : 'Activate Merchant Store'
+                    }
+                    aria-label={
+                      portalBusy
+                        ? 'Authorizing...'
+                        : businessProfile.commerceStoreId
+                          ? 'Open Seller Portal'
+                          : 'Activate Merchant Store'
+                    }
+                    className="min-h-[40px] w-[40px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center justify-center cursor-pointer disabled:opacity-60 shrink-0"
+                  >
+                    <Store className="w-4 h-4" aria-hidden="true" />
                   </button>
+
+                  {/* Verification Badge Request Button / Status Pill */}
+                  {businessProfile.verified ? (
+                    <span className="min-h-[40px] px-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5">
+                      <VerifiedBadge size={14} />
+                      <span>Verified Business</span>
+                    </span>
+                  ) : canRequestVerification ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResubmitTarget(
+                          latestVerification &&
+                            (latestVerification.status === 'more_info_required' ||
+                              latestVerification.status === 'rejected')
+                            ? latestVerification
+                            : null
+                        );
+                        setVerifyModalOpen(true);
+                      }}
+                      title={
+                        latestVerification?.status === 'more_info_required'
+                          ? 'Submit Additional Info'
+                          : latestVerification?.status === 'rejected'
+                            ? 'Resubmit Verification'
+                            : 'Request Verification'
+                      }
+                      aria-label={
+                        latestVerification?.status === 'more_info_required'
+                          ? 'Submit Additional Info'
+                          : latestVerification?.status === 'rejected'
+                            ? 'Resubmit Verification'
+                            : 'Request Verification'
+                      }
+                      className="min-h-[40px] w-[40px] rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 inline-flex items-center justify-center cursor-pointer shrink-0"
+                    >
+                      <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  ) : latestVerification ? (
+                    <span
+                      className={`min-h-[40px] px-3.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 ${
+                        getVerificationStatusMeta(latestVerification.status).tone
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{getVerificationStatusMeta(latestVerification.status).label}</span>
+                    </span>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -826,6 +993,45 @@ export function BusinessProfilePage({
             </div>
           )}
         </div>
+      )}
+
+      {businessProfile && (
+        <RequestVerificationModal
+          isOpen={verifyModalOpen}
+          onClose={() => {
+            setVerifyModalOpen(false);
+            setResubmitTarget(null);
+          }}
+          theme={theme || 'light'}
+          targetType="business"
+          businessProfile={businessProfile}
+          initialReason={resubmitTarget?.reason || ''}
+          initialLinks={resubmitTarget?.links || []}
+          initialDocumentUrls={resubmitTarget?.documentUrls || []}
+          onSubmit={async (reason, links, documentUrls) => {
+            if (
+              resubmitTarget &&
+              (resubmitTarget.status === 'more_info_required' || resubmitTarget.status === 'rejected') &&
+              onResubmitVerificationRequest
+            ) {
+              return onResubmitVerificationRequest(
+                resubmitTarget.id,
+                reason,
+                links,
+                documentUrls
+              );
+            }
+            if (onSubmitVerificationRequest) {
+              return onSubmitVerificationRequest(
+                businessProfile,
+                reason,
+                links,
+                documentUrls
+              );
+            }
+            return { ok: false, error: 'Verification handler not available.' };
+          }}
+        />
       )}
     </section>
   );
