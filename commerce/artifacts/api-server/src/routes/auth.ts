@@ -39,7 +39,19 @@ async function isRateLimited(key: string, limit: number, windowMs: number) {
   return false;
 }
 
+function isHttpsRequest(req: TenantRequest): boolean {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto) {
+    return forwardedProto === "https";
+  }
+  return Boolean(req.secure || process.env.NODE_ENV === "production");
+}
+
 async function setSession(
+  req: TenantRequest,
   res: Response,
   userId: string,
   storeId: string,
@@ -61,10 +73,11 @@ async function setSession(
     idleExpiresAt,
     revokedAt: null,
   });
+  const isHttps = isHttpsRequest(req);
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: isHttps ? "none" : "lax",
+    secure: isHttps,
     path: "/",
     maxAge: absTtlMs,
   });
@@ -85,10 +98,11 @@ async function clearSession(req: TenantRequest, res: Response) {
     filters = and(filters, eq(sessionsTable.storeId, storeId));
     await db.delete(sessionsTable).where(filters);
   }
+  const isHttps = isHttpsRequest(req);
   res.clearCookie(SESSION_COOKIE, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: isHttps ? "none" : "lax",
+    secure: isHttps,
     path: "/",
   });
 }
@@ -166,7 +180,7 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
   }
   
   const isAdminUser = ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes((user.role || "").toUpperCase());
-  await setSession(res, user.id, storeId, { isAdminSession: isAdminUser });
+  await setSession(req, res, user.id, storeId, { isAdminSession: isAdminUser });
   const { passwordHash: _, ...safe } = user;
   return res.json(safe);
 });
@@ -175,7 +189,13 @@ router.post("/auth/logout", async (req: TenantRequest, res: Response) => { await
 router.post("/auth/logout-all", requireAdmin, async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
   await db.delete(sessionsTable).where(and(eq(sessionsTable.userId, req.adminUser!.id), eq(sessionsTable.storeId, storeId)));
-  res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  const isHttps = isHttpsRequest(req);
+  res.clearCookie(SESSION_COOKIE, {
+    httpOnly: true,
+    sameSite: isHttps ? "none" : "lax",
+    secure: isHttps,
+    path: "/",
+  });
   return res.json({ ok: true });
 });
 
@@ -361,7 +381,7 @@ router.get("/auth/google/callback", async (req: TenantRequest, res: Response) =>
     }
 
     // 6. Establish Session and Redirect Back
-    await setSession(res, user.id, storeId);
+    await setSession(req, res, user.id, storeId);
     
     // Construct safe return URL
     const destination = returnUrl || "/account";

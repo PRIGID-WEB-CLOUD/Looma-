@@ -922,10 +922,20 @@ test('Worker static asset routing serves /admin and /landingpage cleanly with tr
       if (url.pathname === '/admin/index.html') {
         return new Response('<html><title>Admin App</title></html>', { status: 200 });
       }
+      if (url.pathname === '/seller/index.html') {
+        return new Response('<html><title>Seller Portal</title></html>', { status: 200 });
+      }
+      if (url.pathname === '/seller/assets/app.js') {
+        return new Response('console.log("seller");', { status: 200 });
+      }
       if (url.pathname === '/landingpage/index.html') {
         return new Response('<html><title>Landing App</title></html>', { status: 200 });
       }
       if (url.pathname === '/index.html') {
+        return new Response('<html><title>Main App</title></html>', { status: 200 });
+      }
+      // Simulate Cloudflare Wrangler "not_found_handling: single-page-application" returning root /index.html for unknown SPA paths
+      if (!/\.[a-z0-9]+$/i.test(url.pathname)) {
         return new Response('<html><title>Main App</title></html>', { status: 200 });
       }
       return new Response('Not found', { status: 404 });
@@ -952,6 +962,27 @@ test('Worker static asset routing serves /admin and /landingpage cleanly with tr
   );
   assert.equal(adminSubpath.status, 200);
   assert.equal((await adminSubpath.text()).includes('Admin App'), true);
+
+  const sellerNoSlash = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/seller?tab=orders'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(sellerNoSlash.status, 301);
+  assert.equal(sellerNoSlash.headers.get('location'), '/seller/?tab=orders');
+
+  const sellerSso = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/seller/sso?code=one_time_123'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(sellerSso.status, 200);
+  assert.equal((await sellerSso.text()).includes('Seller Portal'), true);
+
+  const sellerAsset = await app.fetch(
+    new Request('https://looma.prigidcollection.workers.dev/seller/assets/app.js'),
+    { ASSETS: multiPageAssets }
+  );
+  assert.equal(sellerAsset.status, 200);
+  assert.equal((await sellerAsset.text()).includes('console.log("seller")'), true);
 
   const landingNoSlash = await app.fetch(
     new Request('https://looma.prigidcollection.workers.dev/landing?ref=nav'),

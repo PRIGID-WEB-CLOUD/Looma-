@@ -24,6 +24,17 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function isHttpsRequest(req: Request): boolean {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto) {
+    return forwardedProto === "https";
+  }
+  return Boolean(req.secure || process.env.NODE_ENV === "production");
+}
+
 function verifyInternalSecret(req: Request, res: Response): boolean {
   const configured = (process.env.COMMERCE_INTERNAL_SSO_SECRET || "").trim();
   if (!configured) {
@@ -487,15 +498,17 @@ router.post("/auth/looma/exchange", async (req: Request, res: Response) => {
       return res.status(result.status).json({ error: result.error });
     }
 
+    const isHttps = isHttpsRequest(req);
     res.cookie(SESSION_COOKIE, result.sessionToken, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      sameSite: isHttps ? "none" : "lax",
+      secure: isHttps,
       path: "/",
       maxAge: ADMIN_SESSION_ABS_TTL_MS,
     });
     res.cookie("prigid_store_slug", result.store.slug, {
-      sameSite: "lax",
+      sameSite: isHttps ? "none" : "lax",
+      secure: isHttps,
       path: "/",
       maxAge: 86400 * 1000,
     });
@@ -508,6 +521,7 @@ router.post("/auth/looma/exchange", async (req: Request, res: Response) => {
 
     return res.json({
       ok: true,
+      sessionToken: result.sessionToken,
       storeId: result.store.id,
       storeSlug: result.store.slug,
       businessProfileId: result.user.businessProfileId,

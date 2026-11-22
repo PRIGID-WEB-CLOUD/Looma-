@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && vite build --config vite.admin.config.ts && vite build --config vite.landing.config.ts",
+    "build": "vite build && vite build --config vite.admin.config.ts && vite build --config vite.landing.config.ts && vite build --config vite.commerce.config.ts",
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-admin dist-landing dist-commerce server.js",

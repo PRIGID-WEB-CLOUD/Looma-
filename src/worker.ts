@@ -2141,6 +2141,15 @@ export function createWorkerApp() {
     for (const [key, value] of Object.entries(tenantHeaders)) {
       forwardHeaders.set(key, value);
     }
+    try {
+      const parsedReqProto = new URL(c.req.url).protocol.replace(':', '');
+      const incomingProto = cleanReqHeaders.get('x-forwarded-proto') || parsedReqProto;
+      if (incomingProto) {
+        forwardHeaders.set('X-Forwarded-Proto', incomingProto);
+      }
+    } catch {
+      // Ignore invalid URL proto extraction
+    }
 
     const forwardHeaderAllowlist = [
       'content-type',
@@ -2443,23 +2452,30 @@ export function createWorkerApp() {
         ) as unknown as Response;
       };
 
-      // Redirect /admin or /landingpage directory without trailing slash to preserve relative asset resolution
+      const isStaticAssetFile = (p: string): boolean =>
+        /\.[a-z0-9]{1,10}$/i.test(p) && !/\.html?$/i.test(p);
+
+      // Redirect /admin, /seller, or /landingpage directory without trailing slash to preserve relative asset resolution
       if (pathname === '/admin') {
         return c.redirect(`/admin/${url.search}`, 301);
       }
-      if (pathname === '/admin/') {
+      if (pathname === '/admin/' || (pathname.startsWith('/admin/') && !isStaticAssetFile(pathname))) {
         return fetchAssetHtml('/admin/index.html');
       }
       if (pathname === '/seller') {
         return c.redirect(`/seller/${url.search}`, 301);
       }
-      if (pathname === '/seller/') {
+      if (pathname === '/seller/' || (pathname.startsWith('/seller/') && !isStaticAssetFile(pathname))) {
         return fetchAssetHtml('/seller/index.html');
       }
       if (pathname === '/landingpage' || pathname === '/landing') {
         return c.redirect(`/landingpage/${url.search}`, 301);
       }
-      if (pathname === '/landingpage/') {
+      if (
+        pathname === '/landingpage/' ||
+        ((pathname.startsWith('/landingpage/') || pathname.startsWith('/landing/')) &&
+          !isStaticAssetFile(pathname))
+      ) {
         return fetchAssetHtml('/landingpage/index.html');
       }
 

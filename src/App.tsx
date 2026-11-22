@@ -13,31 +13,9 @@ import {
   ActiveIdentityProvider,
   useActiveIdentity,
 } from './contexts/ActiveIdentityContext';
-import type {
-  BusinessMembership,
-  BusinessProfile,
-} from './types/business';
-import type { BusinessChatThread } from './types/businessChat';
-import type {
-  MarketplaceOrder,
-  MarketplaceProduct,
-} from './types/marketplace';
-import {
-  fetchActiveBusinessProfilesForOwner,
-  launchCommerceDashboardSso,
-  markAllBusinessNotificationsRead,
-  markBusinessNotificationRead,
-  provisionCommerceStoreForBusiness,
-  subscribeBusinessMembers,
-} from './services/businessProfiles';
-import {
-  startOrOpenBusinessInquiry,
-  subscribeBusinessInboxChats,
-} from './services/businessChat';
-import {
-  subscribeSellerMarketplaceOrders,
-  subscribeStoreMarketplaceProducts,
-} from './services/commerce';
+import type { BusinessProfile } from './types/business';
+import { fetchActiveBusinessProfilesForOwner } from './services/businessProfiles';
+import { startOrOpenBusinessInquiry } from './services/businessChat';
 import type {
   ChatThread,
   ConnectionsTab,
@@ -75,7 +53,6 @@ import {
 import { AddStoryModal } from './components/AddStoryModal';
 import { Avatar } from './components/Avatar';
 import { AuthView, type AuthMode } from './components/AuthView';
-import { BusinessPlatformLayout } from './components/BusinessPlatformLayout';
 import { BusinessProfileModal } from './components/BusinessProfileModal';
 import { BusinessSwitcherMenu } from './components/BusinessSwitcherMenu';
 import { CreatePostModal } from './components/CreatePostModal';
@@ -149,41 +126,6 @@ const CommentThreadView = lazy(() =>
     default: m.CommentThreadView,
   }))
 );
-const BusinessDashboardView = lazy(() =>
-  import('./components/business/BusinessDashboardView').then((m) => ({
-    default: m.BusinessDashboardView,
-  }))
-);
-const BusinessCatalogView = lazy(() =>
-  import('./components/business/BusinessCatalogView').then((m) => ({
-    default: m.BusinessCatalogView,
-  }))
-);
-const BusinessOrdersView = lazy(() =>
-  import('./components/business/BusinessOrdersView').then((m) => ({
-    default: m.BusinessOrdersView,
-  }))
-);
-const BusinessInboxView = lazy(() =>
-  import('./components/BusinessInboxView').then((m) => ({
-    default: m.BusinessInboxView,
-  }))
-);
-const BusinessBrandPostsView = lazy(() =>
-  import('./components/business/BusinessBrandPostsView').then((m) => ({
-    default: m.BusinessBrandPostsView,
-  }))
-);
-const BusinessTeamView = lazy(() =>
-  import('./components/business/BusinessTeamView').then((m) => ({
-    default: m.BusinessTeamView,
-  }))
-);
-const BusinessSettingsView = lazy(() =>
-  import('./components/business/BusinessSettingsView').then((m) => ({
-    default: m.BusinessSettingsView,
-  }))
-);
 const AdminApp = lazy(() => import('../admin/AdminApp'));
 const LandingPageApp = lazy(() => import('../landingpage/LandingPageApp'));
 import { isAllowlistedAdminEmail } from '../admin/adminLogic';
@@ -215,10 +157,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     activeMembershipRole,
     activeBusinessProfile,
     activeBusinessMembership,
+    canManageActiveBusiness,
     businessNotifications,
-    unreadBusinessNotifications,
-    businessSection,
-    setBusinessSection,
+    markBusinessNotificationRead,
+    markAllBusinessNotificationsRead,
     isTransitioning,
     platformMode,
     switchToBusiness,
@@ -286,12 +228,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatInboxMode, setChatInboxMode] = useState<'personal' | 'business'>('personal');
   const [activeBusinessChatId, setActiveBusinessChatId] = useState<string | null>(null);
-  const [businessInboxInitialThreadId, setBusinessInboxInitialThreadId] = useState<string | null>(null);
-  const [businessInboxThreads, setBusinessInboxThreads] = useState<BusinessChatThread[]>([]);
-  const [businessMembers, setBusinessMembers] = useState<BusinessMembership[]>([]);
-  const [businessCatalogProducts, setBusinessCatalogProducts] = useState<MarketplaceProduct[]>([]);
-  const [businessOrders, setBusinessOrders] = useState<MarketplaceOrder[]>([]);
-  const [portalBusy, setPortalBusy] = useState(false);
 
   const [selectedPublicProfile, setSelectedPublicProfile] =
     useState<UserProfile | null>(null);
@@ -414,10 +350,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   }, [isUserAdmin, store.communityUsers, store.posts, store.profile.isVerified, store.profile.uid]);
 
   const unreadCount = countUnreadNotifications(activityNotifications);
-  const unreadBusinessInboxCount = useMemo(
-    () => businessInboxThreads.filter((t) => t.unreadByBusiness).length,
-    [businessInboxThreads]
-  );
   const activeCommentPost = useMemo(
     () =>
       selectedCommentPostId
@@ -534,7 +466,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     routeLocation.search,
   ]);
 
-  // Synchronize whole-app platform workspace immediately when switching between Normal and Business Profiles
+  // Synchronize route cleanly when switching between Personal and Business Profiles
   const prevPlatformKeyRef = useRef<string>(
     `${platformMode}:${activeBusinessProfile?.id || ''}`
   );
@@ -544,9 +476,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     prevPlatformKeyRef.current = nextKey;
 
     if (platformMode === 'business' && activeBusinessProfile) {
-      setBusinessSection('dashboard');
-      setActiveTab('business-workspace');
-      navigateToPath('/business-workspace');
+      setActiveTab('profile');
+      navigateToPath('/profile');
     } else if (platformMode === 'normal') {
       if (activeTab === 'business-workspace') {
         setActiveTab('feed');
@@ -554,84 +485,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
       }
     }
   }, [activeBusinessProfile?.id, platformMode]);
-
-  // Subscribe to Business Platform inbox & team state while operating in Business mode
-  useEffect(() => {
-    if (
-      platformMode !== 'business' ||
-      !activeBusinessProfile?.id ||
-      !store.isAuthorized ||
-      store.isLocalAutostart
-    ) {
-      setBusinessInboxThreads([]);
-      setBusinessMembers([]);
-      return;
-    }
-    const unsubInbox = subscribeBusinessInboxChats(
-      activeBusinessProfile.id,
-      store.profile.uid,
-      setBusinessInboxThreads
-    );
-    const unsubMembers = subscribeBusinessMembers(
-      activeBusinessProfile.id,
-      setBusinessMembers
-    );
-    return () => {
-      unsubInbox();
-      unsubMembers();
-    };
-  }, [
-    activeBusinessProfile?.id,
-    platformMode,
-    store.isAuthorized,
-    store.isLocalAutostart,
-    store.profile.uid,
-  ]);
-
-  // Subscribe to catalog & orders for Business Inbox sharing & lookup
-  useEffect(() => {
-    if (
-      platformMode !== 'business' ||
-      !activeBusinessProfile?.id ||
-      businessSection !== 'inbox' ||
-      !store.isAuthorized ||
-      store.isLocalAutostart
-    ) {
-      setBusinessCatalogProducts([]);
-      setBusinessOrders([]);
-      return;
-    }
-    const unsubProducts = activeBusinessProfile.commerceStoreId
-      ? subscribeStoreMarketplaceProducts(
-          activeBusinessProfile.commerceStoreId,
-          activeBusinessProfile.ownerUid,
-          store.profile.uid,
-          setBusinessCatalogProducts
-        )
-      : () => {};
-    const unsubOrders =
-      activeBusinessProfile.commerceStoreId &&
-      activeBusinessProfile.ownerUid === store.profile.uid
-        ? subscribeSellerMarketplaceOrders(
-            store.profile.uid,
-            setBusinessOrders,
-            () => setBusinessOrders([])
-          )
-        : () => {};
-    return () => {
-      unsubProducts();
-      unsubOrders();
-    };
-  }, [
-    activeBusinessProfile?.commerceStoreId,
-    activeBusinessProfile?.id,
-    activeBusinessProfile?.ownerUid,
-    businessSection,
-    platformMode,
-    store.isAuthorized,
-    store.isLocalAutostart,
-    store.profile.uid,
-  ]);
 
   const openBusinessProfileRoute = (slug: string) => {
     const clean = slug.trim().toLowerCase();
@@ -702,40 +555,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     selectWorkspaceTab('messages');
   };
 
-  const handleBusinessOrderMessageCustomer = async (order: MarketplaceOrder) => {
-    if (!activeBusinessProfile) return;
-    const customer =
-      store.allKnownChatUsers.find((u) => u.uid === order.buyerUid) ||
-      (await store.fetchPublicUserProfile(order.buyerUid).catch(() => null));
-    const thread = await startOrOpenBusinessInquiry({
-      businessProfileId: activeBusinessProfile.id,
-      businessName: activeBusinessProfile.displayName,
-      businessAvatar: activeBusinessProfile.logoUrl,
-      businessSlug: activeBusinessProfile.slug,
-      businessOwnerUid: activeBusinessProfile.ownerUid,
-      customerUid: order.buyerUid,
-      customerName: customer?.displayName || order.buyerName || 'Customer',
-      customerAvatar: customer?.avatarUrl || '',
-      customerHandle: customer?.handle || '',
-      actorUid: store.profile.uid,
-      linkedOrderId: order.id,
-    });
-    setBusinessInboxInitialThreadId(thread.id);
-    setBusinessSection('inbox');
-  };
-
-  const handleLaunchSellerPortal = async () => {
-    if (!activeBusinessProfile || portalBusy) return;
-    setPortalBusy(true);
-    try {
-      if (!activeBusinessProfile.commerceStoreId) {
-        await provisionCommerceStoreForBusiness(activeBusinessProfile.id);
-      }
-      await launchCommerceDashboardSso(activeBusinessProfile.id);
-    } finally {
-      setPortalBusy(false);
-    }
-  };
 
   useEffect(() => {
     const targetUid =
@@ -1373,18 +1192,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const isMessageProfileFullScreen =
     activeTab === 'public-profile' && publicProfileReturnTab === 'messages';
 
-  const isSharedOverlayRoute =
-    activeTab === 'marketplace' ||
-    activeTab === 'product-detail' ||
-    activeTab === 'business-profile' ||
-    activeTab === 'search' ||
-    activeTab === 'post-comments' ||
-    activeTab === 'public-profile';
-
-  const isBusinessWorkspaceView =
-    platformMode === 'business' &&
-    Boolean(activeBusinessProfile) &&
-    !isSharedOverlayRoute;
 
   const normalRightRail = (
     <aside
@@ -1506,156 +1313,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
 
   return (
     <>
-      {isBusinessWorkspaceView && activeBusinessProfile ? (
-        <BusinessPlatformLayout
-          personalProfile={store.profile}
-          businessProfile={activeBusinessProfile}
-          role={activeMembershipRole || 'VIEWER'}
-          section={businessSection}
-          onSelectSection={(sec) => setBusinessSection(sec)}
-          unreadInboxCount={businessInboxThreads.filter((t) => t.unreadByBusiness).length}
-          businessNotifications={businessNotifications}
-          unreadBusinessNotifications={unreadBusinessNotifications}
-          onMarkBusinessNotificationRead={async () => {}}
-          onMarkAllBusinessNotificationsRead={async () => {}}
-          theme={store.theme}
-          onToggleTheme={store.toggleTheme}
-          maintenanceMode={store.featureFlags.maintenanceMode}
-          memberModeration={store.memberModeration}
-          onOpenPublicBusinessPage={() => openBusinessProfileRoute(activeBusinessProfile.slug)}
-          onOpenMarketplace={() => selectWorkspaceTab('marketplace')}
-          onLaunchSellerPortal={() => void handleLaunchSellerPortal()}
-          portalBusy={portalBusy}
-          onCreateBusiness={() => {
-            setBusinessModalMode('create');
-            setEditingBusinessProfile(null);
-            setBusinessModalOpen(true);
-          }}
-          onLogout={handleLogout}
-        >
-          <Suspense fallback={<RouteLoadingFallback />}>
-            {businessSection === 'dashboard' && (
-              <BusinessDashboardView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                viewerUid={store.profile.uid}
-                posts={store.posts}
-                inboxThreads={businessInboxThreads}
-                portalBusy={portalBusy}
-                onSelectSection={(sec) => setBusinessSection(sec)}
-                onCreateBrandPost={() => setComposerOpen(true)}
-                onLaunchSellerPortal={() => void handleLaunchSellerPortal()}
-                onOpenPublicBusinessPage={() => openBusinessProfileRoute(activeBusinessProfile.slug)}
-              />
-            )}
-
-            {businessSection === 'catalog' && (
-              <BusinessCatalogView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                viewerUid={store.profile.uid}
-                onOpenProduct={openProductDetailRoute}
-              />
-            )}
-
-            {businessSection === 'orders' && (
-              <BusinessOrdersView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                viewerUid={store.profile.uid}
-                onMessageCustomer={async (order) => {
-                  const target =
-                    store.allKnownChatUsers.find((u) => u.uid === order.buyerUid) ||
-                    (await store.fetchPublicUserProfile(order.buyerUid));
-                  if (target) {
-                    const thread = await store.startDirectThread(target);
-                    setChatInboxMode('business');
-                    setActiveBusinessChatId(thread.id);
-                    setBusinessSection('inbox');
-                  }
-                }}
-                onActivateStorefront={() => void handleLaunchSellerPortal()}
-              />
-            )}
-
-            {businessSection === 'inbox' && (
-              <BusinessInboxView
-                businessProfile={activeBusinessProfile}
-                activeRole={activeMembershipRole}
-                currentProfile={store.profile}
-                initialThreadId={activeBusinessChatId}
-                members={businessMembers}
-                products={businessCatalogProducts}
-                orders={businessOrders}
-                onOpenProduct={openProductDetailRoute}
-              />
-            )}
-
-            {businessSection === 'posts' && (
-              <BusinessBrandPostsView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                currentUserId={store.profile.uid}
-                posts={store.posts}
-                commentsByPost={store.commentsByPost}
-                likedPostIds={store.likedPostIds}
-                bookmarkedPostIds={store.bookmarkedPostIds}
-                shareThreads={store.threads}
-                categories={store.categories}
-                onCreateBrandPost={() => setComposerOpen(true)}
-                onToggleLike={store.toggleLike}
-                onToggleBookmark={store.toggleBookmark}
-                onAddComment={store.addComment}
-                onUpdatePost={store.updatePost}
-                onDeletePost={store.deletePost}
-                onDeleteComment={store.deleteComment}
-                onShareToStory={store.sharePostToStory}
-                onShareToChat={handleSharePostToChat}
-                onSelectHashtag={handleHashtagClick}
-                onMentionClick={handleOpenMention}
-                onOpenComments={(post) => openPostCommentsRoute(post.id)}
-              />
-            )}
-
-            {businessSection === 'team' && (
-              <BusinessTeamView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                viewerUid={store.profile.uid}
-              />
-            )}
-
-            {businessSection === 'settings' && (
-              <BusinessSettingsView
-                businessProfile={activeBusinessProfile}
-                role={activeMembershipRole || 'VIEWER'}
-                viewerUid={store.profile.uid}
-                theme={store.theme}
-                onEditBusinessProfile={(bp) => {
-                  setBusinessModalMode('edit');
-                  setEditingBusinessProfile(bp);
-                  setBusinessModalOpen(true);
-                }}
-                onSubmitVerificationRequest={(bp, reason, links, documentUrls) =>
-                  store.submitVerificationRequest(reason, links, {
-                    targetType: 'business',
-                    businessProfile: bp,
-                    documentUrls,
-                  })
-                }
-                onResubmitVerificationRequest={(requestId, reason, links, documentUrls) =>
-                  store.resubmitVerificationRequest(requestId, {
-                    reason,
-                    links,
-                    documentUrls,
-                  })
-                }
-              />
-            )}
-          </Suspense>
-        </BusinessPlatformLayout>
-      ) : (
-        <NormalPlatformLayout
+      <NormalPlatformLayout
           profile={store.profile}
           isUserAdmin={isUserAdmin}
           activeTab={activeTab}
@@ -1671,7 +1329,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           onDismissToast={store.dismissToast}
           onSelectTab={(tab) => {
             if (tab === 'messages') {
-              setChatInboxMode('personal');
+              setChatInboxMode(platformMode === 'business' ? 'business' : 'personal');
             }
             selectWorkspaceTab(tab);
           }}
@@ -1701,10 +1359,14 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
           {activeTab === 'feed' && (
             <FeedView
               profile={store.profile}
-              platformMode="normal"
-              activeBusinessProfile={null}
+              platformMode={platformMode}
+              activeBusinessProfile={activeBusinessProfile}
               posts={store.posts}
-              canManageBusinessIds={[]}
+              canManageBusinessIds={
+                canManageActiveBusiness && activeBusinessProfile
+                  ? [activeBusinessProfile.id]
+                  : []
+              }
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -1767,7 +1429,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   onBack={() =>
                     selectWorkspaceTab(
                       platformMode === 'business' && activeBusinessProfile
-                        ? 'business-workspace'
+                        ? 'profile'
                         : 'feed'
                     )
                   }
@@ -1810,7 +1472,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                     } else {
                       selectWorkspaceTab(
                         platformMode === 'business' && activeBusinessProfile
-                          ? 'business-workspace'
+                          ? 'profile'
                           : 'feed'
                       );
                     }
@@ -1865,7 +1527,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onBack={() =>
                   selectWorkspaceTab(
                     platformMode === 'business' && activeBusinessProfile
-                      ? 'business-workspace'
+                      ? 'profile'
                       : 'feed'
                   )
                 }
@@ -2106,10 +1768,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
               <ChatView
                 profile={store.profile}
                 platformMode={platformMode}
-                initialInboxMode={chatInboxMode}
+                initialInboxMode={platformMode === 'business' ? 'business' : chatInboxMode}
                 initialBusinessChatId={activeBusinessChatId}
                 isAuthorized={store.isAuthorized}
-                activeBusinessProfile={null}
+                activeBusinessProfile={activeBusinessProfile}
                 threads={store.threads}
                 messagesByChat={store.messagesByChat}
                 mutedChatIds={store.mutedChatIds}
@@ -2173,8 +1835,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             <NotificationsView
               profile={store.profile}
               notifications={activityNotifications}
-              activeBusinessProfile={null}
-              businessNotifications={[]}
+              activeBusinessProfile={activeBusinessProfile}
+              businessNotifications={businessNotifications}
+              onMarkBusinessNotificationRead={markBusinessNotificationRead}
+              onMarkAllBusinessNotificationsRead={markAllBusinessNotificationsRead}
               verifiedAuthorIds={Array.from(verifiedUidSet)}
               pushPermission={store.pushPermission}
               onEnablePush={store.enablePushNotifications}
@@ -2215,7 +1879,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             />
           )}
 
-          {activeTab === 'profile' && (
+          {(activeTab === 'profile' || activeTab === 'business-workspace') && (
             platformMode === 'business' && activeBusinessProfile ? (
               <Suspense fallback={<RouteLoadingFallback />}>
                 <BusinessProfilePage
@@ -2417,7 +2081,6 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             </Suspense>
           )}
         </NormalPlatformLayout>
-      )}
       <CreatePostModal
         open={composerOpen}
         profile={store.profile}
@@ -2432,10 +2095,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
         onClose={() => setComposerOpen(false)}
         onCreatePost={async (caption, category, imageUrl, extra) => {
           await store.createPost(caption, category, imageUrl, extra);
-          if (platformMode === 'business' && activeBusinessProfile) {
-            setBusinessSection('posts');
-            selectWorkspaceTab('business-workspace');
-          } else if (activeTab === 'profile') {
+          if (activeTab === 'profile' || activeTab === 'business-workspace') {
             selectWorkspaceTab('profile');
           } else {
             selectWorkspaceTab('feed');
@@ -2454,8 +2114,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
         }}
         onSaved={(savedProfile) => {
           switchToBusiness(savedProfile.id);
-          setBusinessSection('dashboard');
-          selectWorkspaceTab('business-workspace');
+          selectWorkspaceTab('profile');
         }}
       />
 

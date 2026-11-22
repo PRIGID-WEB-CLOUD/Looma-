@@ -65,11 +65,15 @@ export default function AdminLoginPage() {
         {/* Action Buttons */}
         <div className="space-y-2.5 pt-1">
           <a
-            href="/"
+            href={
+              (import.meta as any).env?.VITE_LOOMA_APP_URL
+                ? `${String((import.meta as any).env.VITE_LOOMA_APP_URL).replace(/\/+$/, "")}/profile`
+                : "/profile"
+            }
             className="w-full min-h-[44px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-lg shadow-emerald-950/50"
           >
             <Building2 className="w-4 h-4" aria-hidden="true" />
-            <span>Launch from Looma</span>
+            <span>Open Looma Business Profile</span>
             <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
           </a>
           <a

@@ -32,14 +32,27 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
-// Global fetch interceptor to automatically attach credentials for HTTP-only cookies
+// Global fetch interceptor to automatically attach credentials for HTTP-only cookies and SSO bearer fallback
 const originalFetch = window.fetch;
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (url.startsWith("/api") || url.includes("/api/")) {
+    let token = "";
+    try {
+      token = window.sessionStorage.getItem("looma_seller_session_token") || "";
+    } catch {
+      token = "";
+    }
+    const headers = new Headers(
+      init?.headers || (input instanceof Request ? input.headers : undefined)
+    );
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
     const modifiedInit: RequestInit = {
       ...init,
       credentials: init?.credentials || "include",
+      headers,
     };
     if (input instanceof Request) {
       return originalFetch(new Request(input, modifiedInit));
