@@ -91,11 +91,13 @@ export function parseCommerceConfig(env?: {
   COMMERCE_INTERNAL_SSO_SECRET?: string;
 }): CommerceEnvConfig {
   const safeEnv = env || {};
+  const apiUrl = cleanCommerceEnvUrl(safeEnv.COMMERCE_API_URL);
+  const adminDashboardUrl = cleanCommerceEnvUrl(safeEnv.COMMERCE_ADMIN_DASHBOARD_URL);
   return {
-    apiUrl: cleanCommerceEnvUrl(safeEnv.COMMERCE_API_URL),
+    apiUrl,
     defaultStoreId: (safeEnv.COMMERCE_DEFAULT_STORE_ID || '').trim(),
     publishableKey: (safeEnv.COMMERCE_PUBLISHABLE_KEY || '').trim(),
-    adminDashboardUrl: cleanCommerceEnvUrl(safeEnv.COMMERCE_ADMIN_DASHBOARD_URL),
+    adminDashboardUrl: adminDashboardUrl || (apiUrl ? `${apiUrl}/seller` : ''),
     internalSsoSecret: (safeEnv.COMMERCE_INTERNAL_SSO_SECRET || '').trim(),
   };
 }

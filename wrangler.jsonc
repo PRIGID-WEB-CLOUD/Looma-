@@ -31,7 +31,10 @@
   "vars": {
     "PUBLIC_APP_URL": "https://looma.prigidcollection.workers.dev",
     "ALLOWED_ORIGINS": "https://looma.prigidcollection.workers.dev,https://looma-admin.prigidcollection.workers.dev,https://looma-landing.prigidcollection.workers.dev,https://admin.prigidcollection.workers.dev",
-    "R2_BUCKET_NAME": "looma"
+    "R2_BUCKET_NAME": "looma",
+    "COMMERCE_API_URL": "https://looma-commerce-api.onrender.com",
+    "COMMERCE_ADMIN_DASHBOARD_URL": "https://looma-commerce-api.onrender.com/seller",
+    "COMMERCE_INTERNAL_SSO_SECRET": "5c2cff00e62b0e7f9924733202ca23fcf510951106bd4df0cce0995c8db8e70a"
   },
   "observability": {
     "enabled": true
