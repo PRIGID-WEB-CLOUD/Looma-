@@ -2449,6 +2449,17 @@ export function createWorkerApp() {
         if (primary.ok || assetPath === '/index.html') {
           return primary;
         }
+        if (assetPath.startsWith('/seller')) {
+          const cfg = parseCommerceConfig(c.env);
+          if (cfg.apiUrl) {
+            try {
+              const upstream = await fetch(new Request(new URL('/seller/', cfg.apiUrl), c.req.raw));
+              if (upstream.ok) return upstream;
+            } catch {
+              // fallback to root index if upstream fails
+            }
+          }
+        }
         return c.env.ASSETS!.fetch(
           new Request(new URL('/index.html', url.origin), c.req.raw)
         ) as unknown as Response;
@@ -2489,6 +2500,15 @@ export function createWorkerApp() {
           return fetchAssetHtml('/admin/index.html');
         }
         if (pathname.startsWith('/seller')) {
+          const cfg = parseCommerceConfig(c.env);
+          if (cfg.apiUrl) {
+            try {
+              const upstream = await fetch(new Request(new URL(pathname + url.search, cfg.apiUrl), c.req.raw));
+              if (upstream.ok) return upstream;
+            } catch {
+              // fallback below
+            }
+          }
           return fetchAssetHtml('/seller/index.html');
         }
         if (pathname.startsWith('/landingpage') || pathname.startsWith('/landing')) {
