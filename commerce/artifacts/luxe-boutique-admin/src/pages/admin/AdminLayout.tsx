@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth, getAdminAuthHeaders } from "../../contexts/AuthContext";
+import { getLoomaHomeUrl, getLoomaProfileUrl } from "../../lib/loomaUrl";
 import { 
+  MdArrowBack,
   MdDashboard, 
   MdLocationOn,
   MdShoppingCart, 
@@ -321,6 +323,8 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
   const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const loomaHomeUrl = getLoomaHomeUrl();
+  const loomaProfileUrl = getLoomaProfileUrl();
 
   const [showNotif,      setShowNotif]      = useState(false);
   const [showUser,       setShowUser]       = useState(false);
@@ -389,7 +393,7 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
   const navItems = sidebar === "channels" ? channelNavItems : filteredMainNavItems;
   
   // Responsive sidebar width/margin logic
-  const sidebarW = collapsed ? "w-[68px]" : "w-64";
+  const sidebarW = mobileOpen ? "w-72 sm:w-80" : collapsed ? "w-[68px] lg:w-[68px]" : "w-64";
   
   // For desktop: margin-left for the main content to clear the fixed sidebar
   // For mobile: sidebar is an overlay (translate-x)
@@ -714,25 +718,36 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
       <aside className={`admin-sidebar fixed left-0 top-0 h-screen ${sidebarW} bg-slate-50 border-r border-slate-200 flex flex-col z-50 overflow-hidden transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
 
         <div className="flex items-center border-b border-slate-100 h-20 px-3 shrink-0">
-          {!collapsed ? (
+          {(!collapsed || mobileOpen) ? (
             <div className="flex items-center justify-between w-full">
               <Link href="/dashboard" className="flex items-center gap-3 cursor-pointer no-underline min-w-0 pl-1">
                 <div className="w-9 h-9 bg-black rounded-sm flex items-center justify-center shrink-0 shadow-lg">
                   <MdDashboard className="text-white text-xl" />
                 </div>
                 <div className="min-w-0">
-                  <h1 className="text-base font-serif font-black tracking-widest text-slate-900 uppercase leading-tight">BOUTIQUE</h1>
-                  <p className="text-[10px] font-[Manrope] uppercase tracking-widest text-[#7c839b]">Seller Terminal</p>
+                  <h1 className="text-base font-serif font-black tracking-widest text-slate-900 uppercase leading-tight">LOOMA</h1>
+                  <p className="text-[10px] font-[Manrope] uppercase tracking-widest text-[#7c839b]">Commerce</p>
                 </div>
               </Link>
-              <button
-                type="button"
-                onClick={() => setCollapsed(true)}
-                className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors ml-auto cursor-pointer"
-                title="Collapse sidebar"
-              >
-                <MdKeyboardDoubleArrowLeft className="text-xl" />
-              </button>
+              {mobileOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setMobileOpen(false)}
+                  className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-colors ml-auto cursor-pointer"
+                  title="Close navigation"
+                >
+                  <MdClose className="text-xl" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setCollapsed(true)}
+                  className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors ml-auto cursor-pointer hidden lg:flex"
+                  title="Collapse sidebar"
+                >
+                  <MdKeyboardDoubleArrowLeft className="text-xl" />
+                </button>
+              )}
             </div>
           ) : (
             <div className="w-full flex items-center justify-center">
@@ -746,6 +761,19 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
               </button>
             </div>
           )}
+        </div>
+        <div className={`px-2.5 py-2 border-b border-slate-200/80 bg-white ${(!collapsed || mobileOpen) ? "" : "flex justify-center"}`}>
+          <a
+            href={loomaHomeUrl || "https://looma.prigidcollection.workers.dev/"}
+            onClick={() => setMobileOpen(false)}
+            className={`flex items-center gap-2 rounded-lg text-xs font-[Manrope] font-bold text-slate-800 hover:text-black bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-colors shadow-xs ${
+              (!collapsed || mobileOpen) ? "px-3 py-2.5 w-full justify-start" : "w-10 h-10 justify-center p-0"
+            }`}
+            title="Return to Looma Social App"
+          >
+            <MdArrowBack className="text-sm shrink-0 text-slate-700" />
+            {(!collapsed || mobileOpen) && <span className="truncate">← Back to Looma</span>}
+          </a>
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto overflow-x-hidden">
@@ -1133,6 +1161,16 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
             )}
           </div>
 
+          {/* ── Return to Looma Social button ── */}
+          <a
+            href={loomaHomeUrl || "https://looma.prigidcollection.workers.dev/"}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-full text-xs font-[Manrope] font-bold text-slate-800 hover:text-black bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-all shadow-xs shrink-0"
+            title="Return to Looma Social App"
+          >
+            <MdArrowBack className="text-sm shrink-0 text-slate-700" />
+            <span className="font-bold">Back to Looma</span>
+          </a>
+
           {/* ── User avatar ── */}
           <div ref={userRef} className="relative">
             <button
@@ -1173,6 +1211,25 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
                         : user?.teamRole || (user?.role === "BUSINESS_OWNER" ? "Owner" : "Business")}
                     </span>
                   </div>
+                </div>
+
+                <div className="py-2 border-b border-slate-100 bg-slate-50/50">
+                  <a
+                    href={loomaHomeUrl || "https://looma.prigidcollection.workers.dev/"}
+                    onClick={() => setShowUser(false)}
+                    className="flex items-center gap-3 px-5 py-2.5 hover:bg-blue-50 text-blue-700 cursor-pointer transition-colors"
+                  >
+                    <MdArrowBack className="text-blue-500 text-base shrink-0" />
+                    <span className="font-[Manrope] text-xs font-bold">Return to Looma Social</span>
+                  </a>
+                  <a
+                    href={loomaProfileUrl || "https://looma.prigidcollection.workers.dev/profile"}
+                    onClick={() => setShowUser(false)}
+                    className="flex items-center gap-3 px-5 py-2 hover:bg-slate-100 text-slate-700 cursor-pointer transition-colors"
+                  >
+                    <MdStorefront className="text-slate-400 text-base shrink-0" />
+                    <span className="font-[Manrope] text-xs font-semibold">Business Profile</span>
+                  </a>
                 </div>
 
                 <div className="py-2">

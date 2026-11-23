@@ -40,7 +40,9 @@ export function isSameOriginLoomaHost(hostname?: string): boolean {
   );
 }
 
-export function resolveLoomaBaseUrl(options?: ResolveLoomaUrlOptions): string | null {
+export function resolveLoomaBaseUrl(
+  options?: ResolveLoomaUrlOptions
+): string | null {
   const metaCandidate =
     options?.metaUrl !== undefined ? options.metaUrl : readMetaLoomaUrl();
   const runtimeCandidate =

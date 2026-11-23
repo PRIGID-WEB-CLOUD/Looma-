@@ -21,7 +21,7 @@ const configuredLoomaUrl = (
   process.env.LOOMA_APP_URL ||
   process.env.PUBLIC_LOOMA_APP_URL ||
   process.env.VITE_LOOMA_APP_URL ||
-  ""
+  "https://looma.prigidcollection.workers.dev"
 ).trim();
 let sanitizedLoomaAppUrl = "";
 if (configuredLoomaUrl) {

@@ -57,7 +57,7 @@ test("resolveLoomaBaseUrl prioritizes runtime -> meta -> viteEnv and avoids exte
     "https://looma.prigidcollection.workers.dev"
   );
 
-  // When on external Commerce host without a configured Looma URL, return null instead of relative '/profile'
+  // When on external Commerce host without a configured Looma URL, return null
   assert.equal(
     resolveLoomaBaseUrl({
       runtimeUrl: "",
@@ -80,7 +80,7 @@ test("resolveLoomaBaseUrl prioritizes runtime -> meta -> viteEnv and avoids exte
   );
 });
 
-test("resolveLoomaTargetUrl generates absolute URLs for Looma entrypoints and null when unconfigured externally", () => {
+test("resolveLoomaTargetUrl generates absolute URLs for Looma entrypoints and null when unconfigured", () => {
   const opts = {
     runtimeUrl: "",
     metaUrl: "https://looma.prigidcollection.workers.dev",

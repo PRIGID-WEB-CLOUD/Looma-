@@ -490,8 +490,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     prevPlatformKeyRef.current = nextKey;
 
     if (platformMode === 'business' && activeBusinessProfile) {
-      setActiveTab('profile');
-      navigateToPath('/profile');
+      // Stay on current tab (e.g. feed) instead of forcing /profile
     } else if (platformMode === 'normal') {
       if (activeTab === 'business-workspace') {
         setActiveTab('feed');
