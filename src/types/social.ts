@@ -235,6 +235,9 @@ export interface AppNotification {
 export interface StoryItem {
   id: string;
   authorId: string;
+  authorType?: 'personal' | 'business';
+  businessProfileId?: string;
+  actorUid?: string;
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
@@ -247,6 +250,9 @@ export interface StoryItem {
 
 export interface StoryGroup {
   authorId: string;
+  authorType?: 'personal' | 'business';
+  businessProfileId?: string;
+  actorUid?: string;
   authorName: string;
   authorHandle: string;
   authorAvatar: string;

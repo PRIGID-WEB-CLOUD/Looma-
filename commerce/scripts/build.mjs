@@ -24,10 +24,17 @@ async function run() {
   });
 
   console.log("==> [2/3] Building @workspace/luxe-boutique-admin (Admin Portal)...");
+  const viteLoomaUrl = (process.env.VITE_LOOMA_APP_URL || process.env.LOOMA_APP_URL || "").trim();
   execSync("npm run build --workspace=@workspace/luxe-boutique-admin", {
     cwd: rootDir,
     stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production", PORT: "3000", BASE_PATH: "/seller/" },
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      PORT: "3000",
+      BASE_PATH: "/seller/",
+      ...(viteLoomaUrl ? { VITE_LOOMA_APP_URL: viteLoomaUrl } : {}),
+    },
   });
 
   console.log("==> [3/3] Assembling unified dist/ directory...");

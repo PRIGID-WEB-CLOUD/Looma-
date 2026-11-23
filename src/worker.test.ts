@@ -1082,4 +1082,299 @@ test('Worker commerce and marketplace proxy routes report status, block admin pa
   assert.equal(ssoUnauthRes.status, 401);
 });
 
+test('Worker SSO authorize/revoke/status and Commerce proxy enforce membership, absolute redirectUrl, header sanitization, and fail-closed config', async () => {
+  clearJwkCacheForTests();
+  const ownerAuth = await setupAuthFixture('owner_uid_1', true);
+  const editorAuth = await setupAuthFixture('editor_uid_1', true);
+  const outsiderAuth = await setupAuthFixture('outsider_uid_1', true);
+  const originalFetch = globalThis.fetch;
+
+  const capturedUpstreamRequests: Array<{
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }> = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const reqObj = input instanceof Request ? input : null;
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url.includes('googleapis.com/service_accounts/v1/jwk/securetoken')) {
+      return new Response(
+        JSON.stringify({ keys: [ownerAuth.publicJwk, editorAuth.publicJwk, outsiderAuth.publicJwk] }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=300' },
+        }
+      );
+    }
+
+    if (url.includes('identitytoolkit.googleapis.com/v1/accounts:lookup')) {
+      const parsedBody = JSON.parse(String(init?.body || '{}')) as { idToken?: string };
+      const uid =
+        parsedBody.idToken === editorAuth.token
+          ? 'editor_uid_1'
+          : parsedBody.idToken === outsiderAuth.token
+            ? 'outsider_uid_1'
+            : 'owner_uid_1';
+      return new Response(
+        JSON.stringify({
+          users: [{ localId: uid, email: `${uid}@looma.app`, emailVerified: true, disabled: false }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (url.includes('firestore.googleapis.com/v1/projects/')) {
+      if (url.endsWith('/documents/businessProfiles/bp_active')) {
+        return new Response(
+          JSON.stringify({
+            fields: {
+              status: { stringValue: 'ACTIVE' },
+              slug: { stringValue: 'atelier-one' },
+              displayName: { stringValue: 'Atelier One' },
+              currency: { stringValue: 'USD' },
+              ownerUid: { stringValue: 'owner_uid_1' },
+              commerceStoreId: { stringValue: 'store-atelier-1' },
+              commerceStoreSlug: { stringValue: 'atelier-one' },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.endsWith('/documents/businessProfiles/bp_suspended')) {
+        return new Response(
+          JSON.stringify({
+            fields: {
+              status: { stringValue: 'SUSPENDED' },
+              ownerUid: { stringValue: 'owner_uid_1' },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.endsWith('/documents/businessMemberships/bp_active_owner_uid_1')) {
+        return new Response(
+          JSON.stringify({
+            fields: { status: { stringValue: 'ACTIVE' }, role: { stringValue: 'OWNER' } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.endsWith('/documents/businessMemberships/bp_active_editor_uid_1')) {
+        return new Response(
+          JSON.stringify({
+            fields: { status: { stringValue: 'ACTIVE' }, role: { stringValue: 'EDITOR' } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.endsWith('/documents/businessMemberships/bp_active_outsider_uid_1')) {
+        return new Response(
+          JSON.stringify({
+            fields: { status: { stringValue: 'REVOKED' }, role: { stringValue: 'ADMIN' } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ error: { status: 'NOT_FOUND' } }), { status: 404 });
+    }
+
+    if (url.startsWith('https://looma-commerce-api.onrender.com/')) {
+      const headersRecord: Record<string, string> = {};
+      const hdrs = new Headers(init?.headers || reqObj?.headers);
+      hdrs.forEach((v, k) => {
+        headersRecord[k.toLowerCase()] = v;
+      });
+      const bodyText = typeof init?.body === 'string' ? init.body : undefined;
+      capturedUpstreamRequests.push({
+        url,
+        method: init?.method || reqObj?.method || 'GET',
+        headers: headersRecord,
+        body: bodyText,
+      });
+
+      if (url === 'https://looma-commerce-api.onrender.com/api/internal/sso/issue-code') {
+        const payload = JSON.parse(bodyText || '{}') as { role?: string };
+        return new Response(
+          JSON.stringify({
+            code: `code_for_${(payload.role || 'unknown').toLowerCase()}`,
+            storeId: 'store-atelier-1',
+            storeSlug: 'atelier-one',
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url === 'https://looma-commerce-api.onrender.com/api/internal/sessions/revoke') {
+        return new Response(JSON.stringify({ ok: true, revoked: 1 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ ok: true, proxied: url }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return originalFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    const app = createWorkerApp();
+    const env: WorkerEnv = {
+      ASSETS: createMockAssets(),
+      FIREBASE_PROJECT_ID: ownerAuth.projectId,
+      FIREBASE_API_KEY: 'firebase-test-key',
+      FIREBASE_DATABASE_ID: 'ai-studio-test',
+      COMMERCE_API_URL: 'https://looma-commerce-api.onrender.com/',
+      COMMERCE_ADMIN_DASHBOARD_URL: 'https://looma-commerce-api.onrender.com/seller/',
+      COMMERCE_INTERNAL_SSO_SECRET: 'super_secret_sso_value_never_exposed',
+      COMMERCE_PUBLISHABLE_KEY: 'pk_live_looma_test',
+      COMMERCE_DEFAULT_STORE_ID: 'store-default-public',
+    };
+
+    // 1. /api/commerce/status never leaks secret
+    const statusRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/status'),
+      env
+    );
+    assert.equal(statusRes.status, 200);
+    const statusText = await statusRes.text();
+    assert.equal(statusText.includes('super_secret_sso_value_never_exposed'), false);
+    const statusJson = JSON.parse(statusText) as {
+      ssoConfigured: boolean;
+      adminDashboardUrl: string;
+    };
+    assert.equal(statusJson.ssoConfigured, true);
+    assert.equal(statusJson.adminDashboardUrl, 'https://looma-commerce-api.onrender.com/seller');
+
+    // 2. Fail closed with 503 if SSO config missing or dashboard URL invalid before hitting Firestore/Commerce
+    const missingSecretRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/authorize', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_active' }),
+      }),
+      { ...env, COMMERCE_INTERNAL_SSO_SECRET: '' }
+    );
+    assert.equal(missingSecretRes.status, 503);
+    assert.equal(((await missingSecretRes.json()) as { code: string }).code, 'COMMERCE_SSO_UNCONFIGURED');
+
+    // 3. Reject suspended BP and revoked member
+    const suspendedRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/authorize', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_suspended' }),
+      }),
+      env
+    );
+    assert.equal(suspendedRes.status, 403);
+
+    const revokedMemberRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/authorize', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${outsiderAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_active' }),
+      }),
+      env
+    );
+    assert.equal(revokedMemberRes.status, 403);
+
+    // 4. Valid active owner SSO launch returns absolute URL to external Seller Portal (never relative)
+    const ownerSsoRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/authorize', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_active' }),
+      }),
+      env
+    );
+    assert.equal(ownerSsoRes.status, 200);
+    const ownerSsoJson = (await ownerSsoRes.json()) as {
+      ok: boolean;
+      storeId: string;
+      redirectUrl: string;
+    };
+    assert.equal(ownerSsoJson.ok, true);
+    assert.equal(ownerSsoJson.storeId, 'store-atelier-1');
+    assert.equal(
+      ownerSsoJson.redirectUrl,
+      'https://looma-commerce-api.onrender.com/seller/sso?code=code_for_owner'
+    );
+
+    // 5. Proxy /api/posts & /api/commerce/admin/* strips x-looma-* spoofed headers and x-store-id overrides
+    const postsProxyRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/posts?storeId=evil-tenant', {
+        method: 'GET',
+        headers: {
+          'X-Looma-Internal-Secret': 'forged',
+          'X-Store-Id': 'evil-tenant',
+        },
+      }),
+      env
+    );
+    assert.equal(postsProxyRes.status, 200);
+    const proxiedPostReq = capturedUpstreamRequests.find((r) =>
+      r.url.startsWith('https://looma-commerce-api.onrender.com/api/posts')
+    );
+    assert.ok(proxiedPostReq);
+    assert.equal(proxiedPostReq.url, 'https://looma-commerce-api.onrender.com/api/posts');
+    assert.equal(proxiedPostReq.headers['x-looma-internal-secret'], undefined);
+    assert.equal(proxiedPostReq.headers['x-store-id'], undefined);
+
+    // 6. Editor cannot call /api/commerce/sso/revoke (403); Owner can (200)
+    const editorRevokeRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/revoke', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${editorAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_active', email: 'staff@looma.app', removeMember: true }),
+      }),
+      env
+    );
+    assert.equal(editorRevokeRes.status, 403);
+
+    const ownerRevokeRes = await app.fetch(
+      new Request('https://looma.prigidcollection.workers.dev/api/commerce/sso/revoke', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerAuth.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ businessProfileId: 'bp_active', email: 'staff@looma.app', removeMember: true }),
+      }),
+      env
+    );
+    assert.equal(ownerRevokeRes.status, 200);
+    const revokeUpstream = capturedUpstreamRequests.find((r) =>
+      r.url.endsWith('/api/internal/sessions/revoke')
+    );
+    assert.ok(revokeUpstream);
+    assert.equal(revokeUpstream.headers['x-looma-internal-secret'], 'super_secret_sso_value_never_exposed');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearJwkCacheForTests();
+  }
+});
+
+
 

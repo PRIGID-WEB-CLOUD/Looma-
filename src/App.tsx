@@ -14,7 +14,10 @@ import {
   useActiveIdentity,
 } from './contexts/ActiveIdentityContext';
 import type { BusinessProfile } from './types/business';
-import { fetchActiveBusinessProfilesForOwner } from './services/businessProfiles';
+import {
+  fetchActiveBusinessProfilesForOwner,
+  getBusinessProfileBySlug,
+} from './services/businessProfiles';
 import { startOrOpenBusinessInquiry } from './services/businessChat';
 import type {
   ChatThread,
@@ -154,10 +157,8 @@ export default function App() {
 function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const { snapshot: initSnapshot } = useInitialization();
   const {
-    activeMembershipRole,
     activeBusinessProfile,
-    activeBusinessMembership,
-    canManageActiveBusiness,
+    memberships,
     businessNotifications,
     markBusinessNotificationRead,
     markAllBusinessNotificationsRead,
@@ -165,6 +166,17 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     platformMode,
     switchToBusiness,
   } = useActiveIdentity();
+  const canManageBusinessIds = useMemo(
+    () =>
+      memberships
+        .filter(
+          (m) =>
+            m.status === 'ACTIVE' &&
+            (m.role === 'OWNER' || m.role === 'ADMIN' || m.role === 'EDITOR')
+        )
+        .map((m) => m.businessProfileId),
+    [memberships]
+  );
   const searchParams =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search)
@@ -221,6 +233,8 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [selectedCommentPostId, setSelectedCommentPostId] = useState<string | null>(null);
   const [addStoryOpen, setAddStoryOpen] = useState(false);
+  const [storyBusinessTarget, setStoryBusinessTarget] =
+    useState<BusinessProfile | null>(null);
   const [brandModalOpen, setBrandModalOpen] = useState(false);
   const [activeStoryAuthorId, setActiveStoryAuthorId] = useState<string | null>(
     null
@@ -771,6 +785,18 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
   };
 
   const handleReplyToStory = async (group: StoryGroup, text: string) => {
+    if (group.authorType === 'business') {
+      const targetBizId = group.businessProfileId || group.authorId;
+      if (canManageBusinessIds.includes(targetBizId)) return;
+      const liveBiz =
+        store.allActiveBusinesses.find((b) => b.id === targetBizId) ||
+        (group.authorHandle
+          ? await getBusinessProfileBySlug(group.authorHandle)
+          : null);
+      if (!liveBiz) return;
+      await handleMessageBusiness(liveBiz, `Story reply: ${text}`);
+      return;
+    }
     if (group.authorId === store.profile.uid) return;
     const matchedCreator =
       store.communityUsers.find((u) => u.uid === group.authorId) || {
@@ -1362,11 +1388,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
               platformMode={platformMode}
               activeBusinessProfile={activeBusinessProfile}
               posts={store.posts}
-              canManageBusinessIds={
-                canManageActiveBusiness && activeBusinessProfile
-                  ? [activeBusinessProfile.id]
-                  : []
-              }
+              canManageBusinessIds={canManageBusinessIds}
               storyGroups={store.storyGroups}
               commentsByPost={store.commentsByPost}
               likedPostIds={store.likedPostIds}
@@ -1378,7 +1400,12 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
               onSearchQueryChange={setFeedSearchQuery}
               onOpenComposer={() => setComposerOpen(true)}
               onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
-              onOpenAddStory={() => setAddStoryOpen(true)}
+              onOpenAddStory={() => {
+                setStoryBusinessTarget(
+                  platformMode === 'business' ? activeBusinessProfile : null
+                );
+                setAddStoryOpen(true);
+              }}
               onToggleLike={store.toggleLike}
               onToggleBookmark={store.toggleBookmark}
               onAddComment={store.addComment}
@@ -1426,6 +1453,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   shareThreads={store.threads}
                   categories={store.categories}
                   currentUserId={store.profile.uid}
+                  canManageBusinessIds={canManageBusinessIds}
                   onBack={() =>
                     selectWorkspaceTab(
                       platformMode === 'business' && activeBusinessProfile
@@ -1502,8 +1530,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 slug={selectedBusinessSlug}
                 currentProfile={store.profile}
                 isAuthorized={store.isAuthorized}
-                memberships={activeBusinessProfile?.slug === selectedBusinessSlug ? [{ businessProfileId: activeBusinessProfile.id, uid: store.profile.uid, role: activeMembershipRole || 'VIEWER', status: 'ACTIVE', id: `${activeBusinessProfile.id}_${store.profile.uid}`, invitedByUid: '', createdAtMs: 0, updatedAtMs: 0 }] : []}
+                memberships={memberships}
+                canManageBusinessIds={canManageBusinessIds}
                 posts={store.posts}
+                storyGroups={store.storyGroups}
                 commentsByPost={store.commentsByPost}
                 likedPostIds={store.likedPostIds}
                 bookmarkedPostIds={store.bookmarkedPostIds}
@@ -1540,6 +1570,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 onCreateBusinessPost={(bp) => {
                   switchToBusiness(bp.id);
                   setComposerOpen(true);
+                }}
+                onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
+                onAddBusinessStory={(bp) => {
+                  setStoryBusinessTarget(bp);
+                  setAddStoryOpen(true);
                 }}
                 onMessageBusiness={(bp) => handleMessageBusiness(bp)}
                 onMessageOwner={async (ownerUid, businessName) => {
@@ -1690,6 +1725,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                 <PublicProfileView
                   creator={liveCreator}
                   currentUserId={store.profile.uid}
+                  canManageBusinessIds={canManageBusinessIds}
                   loading={loadingPublicProfile}
                   fullScreen={isMessageProfileFullScreen}
                   ownerBusinesses={publicProfileBusinesses}
@@ -1886,8 +1922,10 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   slug={activeBusinessProfile.slug}
                   currentProfile={store.profile}
                   isAuthorized={store.isAuthorized}
-                  memberships={activeBusinessMembership ? [activeBusinessMembership] : []}
+                  memberships={memberships}
+                  canManageBusinessIds={canManageBusinessIds}
                   posts={store.posts}
+                  storyGroups={store.storyGroups}
                   commentsByPost={store.commentsByPost}
                   likedPostIds={store.likedPostIds}
                   bookmarkedPostIds={store.bookmarkedPostIds}
@@ -1917,6 +1955,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   }}
                   onCreateBusinessPost={() => {
                     setComposerOpen(true);
+                  }}
+                  onOpenStory={(group) => setActiveStoryAuthorId(group.authorId)}
+                  onAddBusinessStory={(bp) => {
+                    setStoryBusinessTarget(bp);
+                    setAddStoryOpen(true);
                   }}
                   onMessageBusiness={(bp) => handleMessageBusiness(bp)}
                   onOpenProduct={openProductDetailRoute}
@@ -1948,6 +1991,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   />
                 }
                 posts={store.posts}
+                canManageBusinessIds={canManageBusinessIds}
                 categories={store.categories}
                 followersCount={store.connections.followers.length}
                 followingCount={store.connections.following.length}
@@ -2122,20 +2166,47 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
         groups={store.storyGroups}
         activeAuthorId={activeStoryAuthorId}
         currentUid={store.profile.uid}
+        canManageBusinessIds={canManageBusinessIds}
         onClose={() => setActiveStoryAuthorId(null)}
         onSelectAuthor={(authorId) => setActiveStoryAuthorId(authorId)}
         onMarkViewed={store.markStoryViewed}
-        onOpenAuthorProfile={(authorId) => handleOpenPublicProfile(authorId)}
+        onOpenAuthorProfile={(group) => {
+          if (group.authorType === 'business' && group.authorHandle) {
+            openBusinessProfileRoute(group.authorHandle);
+          } else {
+            handleOpenPublicProfile(group.authorId);
+          }
+        }}
         onReplyToStory={handleReplyToStory}
         onDeleteStory={store.deleteStory}
       />
 
       <AddStoryModal
         open={addStoryOpen}
-        onClose={() => setAddStoryOpen(false)}
+        activeBusinessProfile={
+          storyBusinessTarget ||
+          (platformMode === 'business' ? activeBusinessProfile : null)
+        }
+        onClose={() => {
+          setAddStoryOpen(false);
+          setStoryBusinessTarget(null);
+        }}
         onCreateStory={async (caption, imageUrl) => {
-          await store.addStory(caption, imageUrl);
-          selectWorkspaceTab('feed');
+          const targetBiz =
+            storyBusinessTarget ||
+            (platformMode === 'business' ? activeBusinessProfile : null);
+          await store.addStory(caption, imageUrl, {
+            businessAuthor: targetBiz
+              ? {
+                  id: targetBiz.id,
+                  slug: targetBiz.slug,
+                  displayName: targetBiz.displayName,
+                  logoUrl: targetBiz.logoUrl,
+                  verified: targetBiz.verified,
+                }
+              : null,
+          });
+          setStoryBusinessTarget(null);
         }}
       />
 

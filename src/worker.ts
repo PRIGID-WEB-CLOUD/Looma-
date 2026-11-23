@@ -89,6 +89,7 @@ import {
   isCommerceSellerApiPath,
   parseCommerceConfig,
   requiresVerifiedBuyerAuth,
+  resolveCommerceSsoRedirectUrl,
   resolveTenantForwardHeaders,
   sanitizeProxyHeaders,
 } from './utils/commerceProxyLogic.ts';
@@ -1934,11 +1935,11 @@ export function createWorkerApp() {
     }
 
     const cfg = parseCommerceConfig(c.env);
-    if (!cfg.apiUrl || !cfg.internalSsoSecret) {
+    if (!cfg.apiUrl || !cfg.internalSsoSecret || !resolveCommerceSsoRedirectUrl(cfg, 'probe')) {
       return c.json(
         {
           code: 'COMMERCE_SSO_UNCONFIGURED',
-          error: 'Commerce SSO requires COMMERCE_API_URL and COMMERCE_INTERNAL_SSO_SECRET.',
+          error: 'Commerce SSO requires COMMERCE_API_URL, COMMERCE_INTERNAL_SSO_SECRET, and a valid Commerce dashboard URL.',
         },
         503
       );
@@ -2026,11 +2027,22 @@ export function createWorkerApp() {
         );
       }
 
+      const redirectUrl = resolveCommerceSsoRedirectUrl(cfg, issueData.code);
+      if (!redirectUrl) {
+        return c.json(
+          {
+            code: 'COMMERCE_SSO_UNCONFIGURED',
+            error: 'Commerce Seller Portal dashboard URL is invalid or unconfigured.',
+          },
+          503
+        );
+      }
+
       return c.json({
         ok: true,
         storeId: issueData.storeId || storeId,
         storeSlug: issueData.storeSlug || storeSlug,
-        redirectUrl: `/seller/sso?code=${encodeURIComponent(issueData.code)}`,
+        redirectUrl,
       });
     } catch (err) {
       console.error('[worker/commerce/sso/authorize] Upstream error:', err);

@@ -7,6 +7,7 @@ import {
   isCommerceSellerApiPath,
   parseCommerceConfig,
   requiresVerifiedBuyerAuth,
+  resolveCommerceSsoRedirectUrl,
   resolveTenantForwardHeaders,
   sanitizeProxyHeaders,
 } from './commerceProxyLogic';
@@ -56,6 +57,8 @@ test('isCommerceSellerApiPath routes Commerce seller portal API paths while pres
   assert.equal(isCommerceSellerApiPath('/api/auth/me'), true);
   assert.equal(isCommerceSellerApiPath('/api/admin/stats'), true);
   assert.equal(isCommerceSellerApiPath('/api/products'), true);
+  assert.equal(isCommerceSellerApiPath('/api/posts'), true);
+  assert.equal(isCommerceSellerApiPath('/api/posts/post_1'), true);
   assert.equal(isCommerceSellerApiPath('/api/orders/ord_1'), true);
   assert.equal(isCommerceSellerApiPath('/api/payments/initialize'), true);
   assert.equal(isCommerceSellerApiPath('/api/events/live'), true);
@@ -67,6 +70,74 @@ test('isCommerceSellerApiPath routes Commerce seller portal API paths while pres
   assert.equal(isCommerceSellerApiPath('/api/business-profiles/bp_1/provision-store'), false);
   assert.equal(isCommerceSellerApiPath('/api/commerce/sso/authorize'), false);
   assert.equal(isCommerceSellerApiPath('/api/internal/sso/issue-code'), false);
+});
+
+test('resolveCommerceSsoRedirectUrl builds validated absolute /seller/sso URLs and fails closed when invalid', () => {
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: 'https://looma-commerce-api.onrender.com',
+        adminDashboardUrl: 'https://looma-commerce-api.onrender.com/seller/',
+      },
+      'abc+123/xyz='
+    ),
+    'https://looma-commerce-api.onrender.com/seller/sso?code=abc%2B123%2Fxyz%3D'
+  );
+
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: 'https://looma-commerce-api.onrender.com',
+        adminDashboardUrl: 'https://looma-commerce-api.onrender.com/seller/sso',
+      },
+      'one_time_code'
+    ),
+    'https://looma-commerce-api.onrender.com/seller/sso?code=one_time_code'
+  );
+
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: 'https://looma-commerce-api.onrender.com',
+        adminDashboardUrl: '',
+      },
+      'derived_code'
+    ),
+    'https://looma-commerce-api.onrender.com/seller/sso?code=derived_code'
+  );
+
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: '',
+        adminDashboardUrl: 'javascript:alert(1)',
+      },
+      'bad_url'
+    ),
+    null
+  );
+
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: '',
+        adminDashboardUrl: '',
+      },
+      'missing_base'
+    ),
+    null
+  );
+
+  assert.equal(
+    resolveCommerceSsoRedirectUrl(
+      {
+        apiUrl: 'https://looma-commerce-api.onrender.com',
+        adminDashboardUrl: 'https://looma-commerce-api.onrender.com/seller',
+      },
+      '   '
+    ),
+    null
+  );
 });
 
 test('requiresVerifiedBuyerAuth enforces Firebase auth on buyer checkout, orders, account, and mutations', () => {

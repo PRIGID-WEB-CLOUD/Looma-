@@ -46,6 +46,17 @@ function getTableName(table: any): string {
   return "unknown";
 }
 
+function readRowValue(row: any, colName: string): any {
+  if (!row || !colName) return undefined;
+  const toCamel = (s: string) => s.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
+  const toSnake = (s: string) => s.replace(/[A-Z]/g, (l: string) => `_${l.toLowerCase()}`);
+  if (row[colName] !== undefined) return row[colName];
+  const camel = toCamel(colName);
+  if (row[camel] !== undefined) return row[camel];
+  const snake = toSnake(colName);
+  return row[snake];
+}
+
 function evaluateCondition(row: any, cond: any): boolean {
   if (!cond) return true;
   
@@ -84,6 +95,7 @@ function evaluateCondition(row: any, cond: any): boolean {
     }
 
     let colName = "";
+    let colTableName = "";
     let op = "=";
     let rightVal: any = undefined;
 
@@ -91,6 +103,9 @@ function evaluateCondition(row: any, cond: any): boolean {
       if (!chunk) continue;
       if (chunk.name || chunk.key) {
         colName = chunk.name || chunk.key;
+        if (chunk.table) {
+          colTableName = getTableName(chunk.table);
+        }
       } else if (chunk.value !== undefined && !Array.isArray(chunk.value)) {
         rightVal = chunk.value;
       } else if (chunk.constructor?.name === "Param") {
@@ -110,11 +125,8 @@ function evaluateCondition(row: any, cond: any): boolean {
     }
 
     if (colName) {
-      const toCamel = (s: string) => s.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
-      const toSnake = (s: string) => s.replace(/[A-Z]/g, (l: string) => `_${l.toLowerCase()}`);
-      const rawVal = row[colName] !== undefined 
-        ? row[colName] 
-        : (row[toCamel(colName)] !== undefined ? row[toCamel(colName)] : row[toSnake(colName)]);
+      const targetRow = (colTableName && row?.__tables?.[colTableName]) ? row.__tables[colTableName] : row;
+      const rawVal = readRowValue(targetRow, colName);
 
       const normalizeComparable = (v: any): any => {
         if (v instanceof Date) return v.getTime();
@@ -149,11 +161,7 @@ function evaluateCondition(row: any, cond: any): boolean {
   }
   
   if (colName) {
-    const toCamel = (s: string) => s.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
-    const toSnake = (s: string) => s.replace(/[A-Z]/g, (l: string) => `_${l.toLowerCase()}`);
-    const val = row[colName] !== undefined 
-      ? row[colName] 
-      : (row[toCamel(colName)] !== undefined ? row[toCamel(colName)] : row[toSnake(colName)]);
+    const val = readRowValue(row, colName);
 
     let rightVal = cond.right;
     if (rightVal && typeof rightVal === 'object') {
@@ -210,6 +218,30 @@ function evaluateCondition(row: any, cond: any): boolean {
   return true;
 }
 
+function extractJoinColumns(cond: any): { leftCol?: string; leftTable?: string; rightCol?: string; rightTable?: string } {
+  if (!cond) return {};
+  if (Array.isArray(cond.queryChunks)) {
+    const colChunks = cond.queryChunks.filter((c: any) => c && (c.name || c.key));
+    if (colChunks.length >= 2) {
+      return {
+        leftCol: colChunks[0].name || colChunks[0].key,
+        leftTable: colChunks[0].table ? getTableName(colChunks[0].table) : undefined,
+        rightCol: colChunks[1].name || colChunks[1].key,
+        rightTable: colChunks[1].table ? getTableName(colChunks[1].table) : undefined,
+      };
+    }
+  }
+  if (cond.operator === '=') {
+    return {
+      leftCol: cond.left?.name,
+      leftTable: cond.left?.table ? getTableName(cond.left.table) : undefined,
+      rightCol: cond.right?.name,
+      rightTable: cond.right?.table ? getTableName(cond.right.table) : undefined,
+    };
+  }
+  return {};
+}
+
 async function executeQuery(chain: QueryChain) {
   if (seedingPromise && !isSeeding) {
     await seedingPromise;
@@ -225,11 +257,10 @@ async function executeQuery(chain: QueryChain) {
   const rows = dbData[tableName];
 
   if (chain.operation === 'select') {
-    let result = [...rows];
-    
-    if (chain.whereCond) {
-      result = result.filter(row => evaluateCondition(row, chain.whereCond));
-    }
+    let result: any[] = rows.map((row: any) => ({
+      ...row,
+      __tables: { [tableName]: row },
+    }));
 
     for (const join of chain.joins) {
       const joinTableName = getTableName(join.table);
@@ -240,33 +271,60 @@ async function executeQuery(chain: QueryChain) {
           const category = joinRows.find((c: any) => c.id === p.categoryId);
           return {
             ...p,
-            categoryName: category ? category.name : null
+            categoryName: category ? category.name : null,
+            __tables: { ...p.__tables, [joinTableName]: category || null },
           };
         });
       } else {
-        const cond = join.condition;
-        if (cond && cond.operator === '=') {
-          const leftCol = cond.left?.name;
-          const rightCol = cond.right?.name;
-          if (leftCol && rightCol) {
-            result = result.map(row => {
-              const matchedJoin = joinRows.find((jr: any) => jr[rightCol] === row[leftCol] || jr.id === row[leftCol]);
-              return { ...row, ...matchedJoin };
+        const { leftCol, leftTable, rightCol, rightTable } = extractJoinColumns(join.condition);
+        if (leftCol && rightCol) {
+          const isLeftJoinTable = leftTable === joinTableName && rightTable !== joinTableName;
+          const joinCol = isLeftJoinTable ? leftCol : rightCol;
+          const outerCol = isLeftJoinTable ? rightCol : leftCol;
+          const outerTable = isLeftJoinTable ? rightTable : leftTable;
+          const nextResult: any[] = [];
+          for (const row of result) {
+            const outerSource = (outerTable && row.__tables?.[outerTable]) ? row.__tables[outerTable] : row;
+            const outerVal = readRowValue(outerSource, outerCol);
+            const matchedJoin = joinRows.find((jr: any) => readRowValue(jr, joinCol) === outerVal);
+            if (join.type === 'inner' && !matchedJoin) {
+              continue;
+            }
+            nextResult.push({
+              ...row,
+              ...(matchedJoin || {}),
+              __tables: { ...row.__tables, [joinTableName]: matchedJoin || null },
             });
           }
+          result = nextResult;
         }
       }
+    }
+
+    if (chain.whereCond) {
+      result = result.filter(row => evaluateCondition(row, chain.whereCond));
     }
 
     if (chain.selectFields) {
       result = result.map(row => {
         const mapped: any = {};
         for (const [key, fieldExpr] of Object.entries(chain.selectFields)) {
-          const fieldName = (fieldExpr as any).name || key;
-          mapped[key] = row[fieldName] !== undefined ? row[fieldName] : row[key];
+          const exprAny = fieldExpr as any;
+          const tableSym = exprAny?.[Symbol.for("drizzle:Name")];
+          if (tableSym) {
+            mapped[key] = row.__tables?.[tableSym] ?? null;
+          } else if (exprAny?.name) {
+            const targetTable = exprAny.table ? getTableName(exprAny.table) : undefined;
+            const srcRow = (targetTable && row.__tables?.[targetTable]) ? row.__tables[targetTable] : row;
+            mapped[key] = readRowValue(srcRow, exprAny.name);
+          } else {
+            mapped[key] = readRowValue(row, key);
+          }
         }
         return mapped;
       });
+    } else {
+      result = result.map(({ __tables, ...rest }) => rest);
     }
 
     if (chain.offsetVal !== null) {

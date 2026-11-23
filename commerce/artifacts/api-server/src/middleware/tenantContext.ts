@@ -68,7 +68,7 @@ export async function isUserAdminOfStore(req: Request, storeId: string): Promise
     const role = row.user.role?.toUpperCase();
     if (role === "PLATFORM_ADMIN") return true;
     if (row.session.storeId !== storeId) return false;
-    return role === "ADMIN" || role === "SUPER_ADMIN";
+    return role === "BUSINESS" || role === "BUSINESS_OWNER";
   } catch (err) {
     logger.error({ err, storeId }, "Error checking admin status");
     return false;
@@ -80,6 +80,8 @@ function isSellerAdminPath(checkPath: string): boolean {
     checkPath.startsWith("/api/admin") ||
     checkPath.startsWith("/api/settings") ||
     checkPath.startsWith("/api/team") ||
+    checkPath.startsWith("/api/users") ||
+    checkPath.startsWith("/api/customers") ||
     checkPath.startsWith("/api/analytics") ||
     checkPath.startsWith("/api/apikeys") ||
     checkPath.startsWith("/api/media") ||
@@ -183,6 +185,9 @@ export async function tenantResolver(req: TenantRequest, res: Response, next: Ne
     if (checkPath === "/api/auth/me" && !storeRecord) {
       return res.status(401).json({ error: "Not authenticated" });
     }
+    if (checkPath === "/api/auth/logout" && !storeRecord) {
+      return next();
+    }
 
     // 3. Explicit X-Store-Id or ?storeId= on non-admin or platform-admin calls
     if (!storeRecord && storeIdHeader) {
@@ -229,6 +234,16 @@ export async function tenantResolver(req: TenantRequest, res: Response, next: Ne
           .limit(1);
         storeRecord = rawMatch;
       }
+    }
+
+    // 7. Authenticated admin session fallback on neutral API hosts when no explicit storefront tenant was specified
+    if (
+      !storeRecord &&
+      sessionBoundStoreId &&
+      (sessionRole === "BUSINESS" || sessionRole === "BUSINESS_OWNER" || sessionRole === "PLATFORM_ADMIN")
+    ) {
+      const [found] = await db.select().from(storesTable).where(eq(storesTable.id, sessionBoundStoreId)).limit(1);
+      storeRecord = found;
     }
 
     if (!storeRecord) {

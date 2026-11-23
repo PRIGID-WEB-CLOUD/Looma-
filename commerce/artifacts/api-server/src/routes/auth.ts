@@ -2,7 +2,7 @@ import { Router, type Response } from "express";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { db, usersTable, sessionsTable, authRateLimitsTable, appSettingsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { SESSION_COOKIE, getSessionUser, requireAdmin } from "../middleware/requireAdmin";
+import { SESSION_COOKIE, extractToken, getSessionUser, requireAdmin } from "../middleware/requireAdmin";
 import { validate } from "../middleware/validate";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -22,7 +22,7 @@ function digest(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function isRateLimited(key: string, limit: number, windowMs: number) {
+export async function isRateLimited(key: string, limit: number, windowMs: number) {
   const now = new Date();
   const [entry] = await db.select().from(authRateLimitsTable)
     .where(eq(authRateLimitsTable.key, key)).limit(1);
@@ -85,18 +85,13 @@ async function setSession(
 }
 
 async function clearSession(req: TenantRequest, res: Response) {
-  let token = req.cookies?.[SESSION_COOKIE] as string | undefined;
-  if (!token) {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.slice(7).trim();
-    }
-  }
+  const token = extractToken(req);
   if (token) {
-    const storeId = req.storeId!;
-    let filters = eq(sessionsTable.token, digest(token));
-    filters = and(filters, eq(sessionsTable.storeId, storeId));
-    await db.delete(sessionsTable).where(filters);
+    const tokenDigest = digest(token);
+    const filters = req.storeId
+      ? and(eq(sessionsTable.token, tokenDigest), eq(sessionsTable.storeId, req.storeId))
+      : eq(sessionsTable.token, tokenDigest);
+    await db.delete(sessionsTable).where(filters).catch(() => {});
   }
   const isHttps = isHttpsRequest(req);
   res.clearCookie(SESSION_COOKIE, {
@@ -179,7 +174,7 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
     await db.update(usersTable).set({ firebaseUid: uid }).where(eq(usersTable.id, user.id)).catch(() => {});
   }
   
-  const isAdminUser = ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes((user.role || "").toUpperCase());
+  const isAdminUser = ["BUSINESS", "BUSINESS_OWNER", "PLATFORM_ADMIN"].includes((user.role || "").toUpperCase());
   await setSession(req, res, user.id, storeId, { isAdminSession: isAdminUser });
   const { passwordHash: _, ...safe } = user;
   return res.json(safe);
@@ -206,7 +201,7 @@ router.get("/auth/admin/exists", async (req: TenantRequest, res: Response) => {
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
-      inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
+      inArray(usersTable.role, ["BUSINESS", "BUSINESS_OWNER", "PLATFORM_ADMIN"])
     ));
   return res.json({
     exists: rows.length > 0,

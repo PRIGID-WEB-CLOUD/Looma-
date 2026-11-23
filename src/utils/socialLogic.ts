@@ -822,7 +822,8 @@ export function groupStoriesByAuthor(
   stories: StoryItem[],
   currentUid: string,
   viewedStoryIds: string[],
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  priorityAuthorId?: string
 ): StoryGroup[] {
   const active = stories.filter((s) => s.expiresAtMs > nowMs);
   const grouped = new Map<string, StoryItem[]>();
@@ -838,8 +839,17 @@ export function groupStoriesByAuthor(
     const sortedItems = [...items].sort((a, b) => a.createdAtMs - b.createdAtMs);
     const latest = sortedItems[sortedItems.length - 1];
     const hasUnviewed = sortedItems.some((s) => !viewedStoryIds.includes(s.id));
+    const isBusiness =
+      latest.authorType === 'business' || Boolean(latest.businessProfileId);
     groups.push({
       authorId,
+      authorType: isBusiness ? 'business' : 'personal',
+      ...(latest.businessProfileId
+        ? { businessProfileId: latest.businessProfileId }
+        : isBusiness
+          ? { businessProfileId: authorId }
+          : {}),
+      ...(latest.actorUid ? { actorUid: latest.actorUid } : {}),
       authorName: latest.authorName,
       authorHandle: latest.authorHandle,
       authorAvatar: latest.authorAvatar,
@@ -850,9 +860,14 @@ export function groupStoriesByAuthor(
     });
   }
 
+  const leadId = priorityAuthorId || currentUid;
   return groups.sort((a, b) => {
-    if (a.authorId === currentUid) return -1;
-    if (b.authorId === currentUid) return 1;
+    if (a.authorId === leadId) return -1;
+    if (b.authorId === leadId) return 1;
+    if (leadId !== currentUid) {
+      if (a.authorId === currentUid) return -1;
+      if (b.authorId === currentUid) return 1;
+    }
     if (a.hasUnviewed !== b.hasUnviewed) return a.hasUnviewed ? -1 : 1;
     return b.latestCreatedAtMs - a.latestCreatedAtMs;
   });
@@ -1175,9 +1190,20 @@ export function resolvePostLinkPreview(
 
 export function canSharePostToStory(
   postAuthorId: string,
-  currentUid: string
+  currentUid: string,
+  postBusinessProfileId?: string,
+  manageableBusinessIds?: string[]
 ): boolean {
-  return Boolean(currentUid) && postAuthorId === currentUid;
+  if (!currentUid) return false;
+  if (postAuthorId === currentUid) return true;
+  if (
+    postBusinessProfileId &&
+    Array.isArray(manageableBusinessIds) &&
+    manageableBusinessIds.includes(postBusinessProfileId)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function buildStoryFromPost(post: Post): {
@@ -2660,10 +2686,19 @@ export function enrichCommentWithVerifiedAuthor(
   return comment;
 }
 
+export interface BusinessStorySnapshot {
+  id: string;
+  slug: string;
+  displayName: string;
+  logoUrl: string;
+  verified?: boolean;
+}
+
 export function enrichStoryGroupsWithVerifiedAuthors(
   groups: StoryGroup[],
   communityUsers: AuthorProfileSnapshot[],
-  currentProfile?: AuthorProfileSnapshot | null
+  currentProfile?: AuthorProfileSnapshot | null,
+  businesses: BusinessStorySnapshot[] = []
 ): StoryGroup[] {
   const authorMap = new Map<string, AuthorProfileSnapshot>();
   for (const user of communityUsers) {
@@ -2673,7 +2708,56 @@ export function enrichStoryGroupsWithVerifiedAuthors(
     authorMap.set(currentProfile.uid, currentProfile);
   }
 
+  const businessMap = new Map<string, BusinessStorySnapshot>();
+  for (const biz of businesses) {
+    if (biz?.id) businessMap.set(biz.id, biz);
+  }
+
   return groups.map((group) => {
+    if (group.authorType === 'business' || group.businessProfileId) {
+      const bpId = group.businessProfileId || group.authorId;
+      const biz = businessMap.get(bpId);
+      if (!biz) return group;
+
+      const nextVerified = Boolean(biz.verified);
+      const nextName =
+        typeof biz.displayName === 'string' && biz.displayName.trim()
+          ? biz.displayName.trim()
+          : group.authorName;
+      const nextHandle =
+        typeof biz.slug === 'string' && biz.slug.trim()
+          ? biz.slug.trim()
+          : group.authorHandle;
+      const nextAvatar =
+        typeof biz.logoUrl === 'string'
+          ? normalizeAssetUrl(biz.logoUrl)
+          : group.authorAvatar;
+
+      if (
+        Boolean(group.authorVerified) === nextVerified &&
+        group.authorName === nextName &&
+        group.authorHandle === nextHandle &&
+        group.authorAvatar === nextAvatar
+      ) {
+        return group;
+      }
+
+      return {
+        ...group,
+        authorName: nextName,
+        authorHandle: nextHandle,
+        authorAvatar: nextAvatar,
+        authorVerified: nextVerified,
+        items: group.items.map((item) => ({
+          ...item,
+          authorName: nextName,
+          authorHandle: nextHandle,
+          authorAvatar: nextAvatar,
+          authorVerified: nextVerified,
+        })),
+      };
+    }
+
     const matched = authorMap.get(group.authorId);
     if (!matched) return group;
 

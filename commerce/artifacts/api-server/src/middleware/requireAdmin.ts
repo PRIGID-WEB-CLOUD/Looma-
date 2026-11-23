@@ -11,8 +11,8 @@ function sessionDigest(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export type UserRole = "CUSTOMER" | "ADMIN" | "SUPER_ADMIN" | "PLATFORM_ADMIN";
-export type TeamRole = "Owner" | "Admin" | "Editor" | "Viewer";
+export type UserRole = "CUSTOMER" | "BUSINESS" | "BUSINESS_OWNER" | "PLATFORM_ADMIN";
+export type TeamRole = "Owner" | "Business" | "Editor" | "Viewer";
 
 export interface CommerceAuthContext {
   storeId: string;
@@ -77,17 +77,18 @@ export async function resolveTeamRole(
   systemRole: UserRole,
   storeId?: string | null
 ): Promise<TeamRole | null> {
-  if (systemRole === "PLATFORM_ADMIN" || systemRole === "SUPER_ADMIN") {
+  if (systemRole === "PLATFORM_ADMIN") {
     return "Owner";
   }
 
-  if (systemRole !== "ADMIN") {
+  if (systemRole !== "BUSINESS" && systemRole !== "BUSINESS_OWNER") {
     return null;
   }
 
+  const normalizedEmail = email.trim().toLowerCase();
   const filter = storeId
-    ? and(eq(teamMembersTable.email, email), eq(teamMembersTable.storeId, storeId))
-    : eq(teamMembersTable.email, email);
+    ? and(eq(teamMembersTable.email, normalizedEmail), eq(teamMembersTable.storeId, storeId))
+    : eq(teamMembersTable.email, normalizedEmail);
 
   const [member] = await db
     .select({ role: teamMembersTable.role, status: teamMembersTable.status })
@@ -97,17 +98,23 @@ export async function resolveTeamRole(
 
   if (member) {
     const status = (member.status || "").trim().toLowerCase();
-    if (status === "revoked" || status === "suspended" || status === "removed") {
+    if (status !== "active") {
       return null;
     }
     const r = member.role.trim().toLowerCase();
     if (r === "owner") return "Owner";
-    if (r === "admin") return "Admin";
+    if (r === "business" || r === "admin") return "Business";
     if (r === "editor") return "Editor";
     if (r === "viewer") return "Viewer";
+    return null;
   }
 
-  // Fail closed when no team membership exists
+  // Legacy fallback: BUSINESS_OWNER store creator without a teamMembersTable row
+  if (systemRole === "BUSINESS_OWNER") {
+    return "Owner";
+  }
+
+  // Fail closed when no active team membership exists for BUSINESS
   return null;
 }
 
@@ -128,11 +135,11 @@ function toStoredUser(
   };
 }
 
-function extractToken(req: Request): string | undefined {
+export function extractToken(req: Pick<Request, "headers" | "cookies"> & { header?: (name: string) => string | undefined }): string | undefined {
   const customHeader = (req.headers["x-seller-token"] || req.headers["x-seller-session-token"]) as string | undefined;
   if (customHeader && customHeader.trim()) return customHeader.trim();
 
-  const authHeader = req.headers.authorization || (typeof (req as any).header === "function" ? (req as any).header("authorization") : undefined);
+  const authHeader = req.headers.authorization || (typeof req.header === "function" ? req.header("authorization") : undefined);
   if (authHeader) {
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
     if (match && match[1]) return match[1].trim();
@@ -142,6 +149,81 @@ function extractToken(req: Request): string | undefined {
   if (cookieToken && cookieToken.trim()) return cookieToken.trim();
 
   return undefined;
+}
+
+function matchesPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+export function evaluateTeamAccess(
+  teamRole: TeamRole,
+  method: string,
+  reqPath: string,
+  systemRole?: UserRole
+): { allowed: boolean; error?: string } {
+  const upperMethod = (method || "GET").toUpperCase();
+  const normalizedPath = (reqPath || "/").split("?")[0].toLowerCase();
+  const isMutation = ["POST", "PUT", "DELETE", "PATCH"].includes(upperMethod);
+
+  if (systemRole === "PLATFORM_ADMIN" || teamRole === "Owner") {
+    return { allowed: true };
+  }
+
+  // Secret & credential configuration routes are strictly Owner-only (including reads)
+  if (
+    matchesPrefix(normalizedPath, "/apikeys") ||
+    matchesPrefix(normalizedPath, "/settings/google-config") ||
+    normalizedPath.includes("/keys")
+  ) {
+    return {
+      allowed: false,
+      error: "Access Denied: Only the store Owner is authorized to access API keys and credential settings.",
+    };
+  }
+
+  // Team, settings, and payment provider mutations are strictly Owner-only
+  const ownerOnlyWritePrefixes = ["/apikeys", "/settings", "/team", "/payments/providers"];
+  if (isMutation && ownerOnlyWritePrefixes.some((p) => matchesPrefix(normalizedPath, p))) {
+    return {
+      allowed: false,
+      error: "Access Denied: Only the store Owner is authorized to perform this administrative change.",
+    };
+  }
+
+  if (teamRole === "Viewer") {
+    if (isMutation) {
+      return {
+        allowed: false,
+        error: "Access Denied: Viewers do not have permission to make changes.",
+      };
+    }
+    return { allowed: true };
+  }
+
+  if (teamRole === "Editor") {
+    if (isMutation) {
+      const allowedWritePaths = [
+        "/media",
+        "/blog",
+        "/posts",
+        "/coupons",
+        "/upload",
+        "/uploads",
+        "/products",
+        "/categories",
+        "/newsletter",
+      ];
+      if (!allowedWritePaths.some((p) => matchesPrefix(normalizedPath, p))) {
+        return {
+          allowed: false,
+          error: "Access Denied: Editors are restricted to catalog, blog posts, newsletters, coupons, and media assets.",
+        };
+      }
+    }
+    return { allowed: true };
+  }
+
+  return { allowed: true };
 }
 
 export async function getSessionUser(req: Request, storeId?: string): Promise<StoredUser | null> {
@@ -165,6 +247,12 @@ export async function getSessionUser(req: Request, storeId?: string): Promise<St
   const systemRole = row.user.role as UserRole;
   const effectiveStoreId = storeId || row.session.storeId || row.user.storeId;
   const teamRole = await resolveTeamRole(row.user.email, systemRole, effectiveStoreId);
+
+  // Fail closed for merchant accounts whose team membership was revoked or disabled
+  if ((systemRole === "BUSINESS" || systemRole === "BUSINESS_OWNER") && !teamRole) {
+    return null;
+  }
+
   return toStoredUser(row.user, teamRole, row.session.businessProfileId);
 }
 
@@ -195,8 +283,8 @@ export async function requireAdmin(req: TenantRequest, res: Response, next: Next
   }
 
   const systemRole = row.user.role as UserRole;
-  if (systemRole !== "ADMIN" && systemRole !== "SUPER_ADMIN" && systemRole !== "PLATFORM_ADMIN") {
-    return res.status(403).json({ error: "Admin access required." });
+  if (systemRole !== "BUSINESS" && systemRole !== "BUSINESS_OWNER" && systemRole !== "PLATFORM_ADMIN") {
+    return res.status(403).json({ error: "Business access required." });
   }
 
   const effectiveStoreId = storeId || row.session.storeId || row.user.storeId;
@@ -215,46 +303,9 @@ export async function requireAdmin(req: TenantRequest, res: Response, next: Next
     uid: row.user.firebaseUid || row.user.id,
   };
 
-  const method = req.method;
-  const path = req.path;
-
-  // 1. Viewer has STRICTLY read-only access
-  if (teamRole === "Viewer") {
-    if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
-      return res.status(403).json({ error: "Access Denied: Viewers do not have permission to make changes." });
-    }
-  }
-
-  // 2. Editor can ONLY execute writes on Media, Blog Posts, and Coupons
-  if (teamRole === "Editor") {
-    if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
-      const allowedWritePaths = ["/media", "/blog", "/coupons", "/uploads"];
-      const isAllowed = allowedWritePaths.some((p) => path.startsWith(p));
-      if (!isAllowed) {
-        return res.status(403).json({
-          error: "Access Denied: Editors are restricted to managing blog posts, coupons, and media assets.",
-        });
-      }
-    }
-  }
-
-  // 3. Only Owner can make administrative modifications to team, settings, or API keys
-  if (teamRole === "Admin" || teamRole === "Editor" || teamRole === "Viewer") {
-    const restrictedActions = ["/apikeys", "/settings", "/team"];
-    const isRestrictedPath = restrictedActions.some((p) => path.startsWith(p));
-    if (isRestrictedPath && ["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
-      return res.status(403).json({
-        error: "Access Denied: Only the store Owner is authorized to perform this administrative change.",
-      });
-    }
-
-    if (path.startsWith("/apikeys") || path.startsWith("/settings")) {
-      if (["POST", "PUT", "DELETE", "PATCH"].includes(method) || path.includes("/keys")) {
-        return res.status(403).json({
-          error: "Access Denied: Only the store Owner is authorized to configure API keys and settings.",
-        });
-      }
-    }
+  const access = evaluateTeamAccess(teamRole, req.method, req.path, systemRole);
+  if (!access.allowed) {
+    return res.status(403).json({ error: access.error });
   }
 
   return next();

@@ -30,6 +30,7 @@ import type {
   Post,
   PostCategory,
   PostComment,
+  StoryGroup,
   ThemeMode,
   UserProfile,
   VerificationRequest,
@@ -94,7 +95,9 @@ interface BusinessProfilePageProps {
   currentProfile: UserProfile;
   isAuthorized: boolean;
   memberships: BusinessMembership[];
+  canManageBusinessIds?: string[];
   posts: Post[];
+  storyGroups?: StoryGroup[];
   commentsByPost: Record<string, PostComment[]>;
   likedPostIds: string[];
   bookmarkedPostIds: string[];
@@ -105,6 +108,8 @@ interface BusinessProfilePageProps {
   onRequireAuth: () => void;
   onEditBusiness: (bp: BusinessProfile) => void;
   onCreateBusinessPost: (bp: BusinessProfile) => void;
+  onOpenStory?: (group: StoryGroup) => void;
+  onAddBusinessStory?: (bp: BusinessProfile) => void;
   onMessageOwner?: (ownerUid: string, businessName: string) => void;
   onMessageBusiness?: (bp: BusinessProfile) => Promise<void> | void;
   onSubmitVerificationRequest?: (
@@ -141,7 +146,9 @@ export function BusinessProfilePage({
   currentProfile,
   isAuthorized,
   memberships,
+  canManageBusinessIds = [],
   posts,
+  storyGroups = [],
   commentsByPost,
   likedPostIds,
   bookmarkedPostIds,
@@ -152,6 +159,8 @@ export function BusinessProfilePage({
   onRequireAuth,
   onEditBusiness,
   onCreateBusinessPost,
+  onOpenStory,
+  onAddBusinessStory,
   onMessageOwner,
   onMessageBusiness,
   onSubmitVerificationRequest,
@@ -522,13 +531,42 @@ export function BusinessProfilePage({
         <div className="p-5 sm:p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div className="flex items-start gap-4 min-w-0">
-              <div className="-mt-12 sm:-mt-14 rounded-2xl p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm shrink-0">
-                <Avatar
-                  src={businessProfile.logoUrl}
-                  name={businessProfile.displayName}
-                  size="xl"
-                />
-              </div>
+              {(() => {
+                const businessStoryGroup =
+                  storyGroups.find((g) => g.authorId === businessProfile.id) ||
+                  null;
+                if (businessStoryGroup && onOpenStory) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => onOpenStory(businessStoryGroup)}
+                      aria-label={`View ${businessProfile.displayName}'s story`}
+                      className={`-mt-12 sm:-mt-14 rounded-2xl p-1 bg-white dark:bg-slate-900 shadow-sm shrink-0 cursor-pointer ${
+                        businessStoryGroup.hasUnviewed
+                          ? 'ring-2 ring-blue-600 dark:ring-blue-400'
+                          : 'ring-1 ring-slate-300 dark:ring-slate-700'
+                      }`}
+                    >
+                      <Avatar
+                        src={businessProfile.logoUrl}
+                        name={businessProfile.displayName}
+                        size="xl"
+                        shape="business"
+                      />
+                    </button>
+                  );
+                }
+                return (
+                  <div className="-mt-12 sm:-mt-14 rounded-2xl p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm shrink-0">
+                    <Avatar
+                      src={businessProfile.logoUrl}
+                      name={businessProfile.displayName}
+                      size="xl"
+                      shape="business"
+                    />
+                  </div>
+                );
+              })()}
               <div className="min-w-0 pt-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="font-display text-xl font-bold text-slate-900 dark:text-white inline-flex items-center gap-1.5">
@@ -765,14 +803,26 @@ export function BusinessProfilePage({
         </div>
 
         {canPostAsBusiness && (
-          <button
-            type="button"
-            onClick={() => onCreateBusinessPost(businessProfile)}
-            className="min-h-[38px] px-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Post as {businessProfile.displayName}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {onAddBusinessStory && (
+              <button
+                type="button"
+                onClick={() => onAddBusinessStory(businessProfile)}
+                className="min-h-[38px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                <span>Add Story</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onCreateBusinessPost(businessProfile)}
+              className="min-h-[38px] px-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Post as {businessProfile.displayName}</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -788,6 +838,8 @@ export function BusinessProfilePage({
                 key={post.id}
                 post={post}
                 currentUserId={currentProfile.uid}
+                canManageBusinessIds={canManageBusinessIds}
+                canManagePost={canPostAsBusiness}
                 categories={categories}
                 isLiked={likedPostIds.includes(post.id)}
                 isBookmarked={bookmarkedPostIds.includes(post.id)}
@@ -799,7 +851,7 @@ export function BusinessProfilePage({
                 onUpdatePost={canPostAsBusiness ? onUpdatePost : undefined}
                 onDeletePost={canPostAsBusiness ? onDeletePost : undefined}
                 onDeleteComment={onDeleteComment}
-                onShareToStory={onShareToStory}
+                onShareToStory={canPostAsBusiness ? onShareToStory : undefined}
                 onShareToChat={onShareToChat}
                 onMentionClick={onMentionClick}
                 onSelectHashtag={onSelectHashtag}

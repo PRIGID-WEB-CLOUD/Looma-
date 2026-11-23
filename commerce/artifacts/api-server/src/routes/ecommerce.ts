@@ -11,7 +11,7 @@ import {
   storeCartItemsTable,
   storeWishlistItemsTable,
 } from "@workspace/db";
-import { getSessionUser } from "../middleware/requireAdmin";
+import { getSessionUser, requireAdmin } from "../middleware/requireAdmin";
 import { validate } from "../middleware/validate";
 import { z } from "zod";
 import { type TenantRequest } from "../middleware/tenantContext";
@@ -198,8 +198,8 @@ const getCartDebugHandler = async (req: TenantRequest, res: Response) => {
   });
 };
 
-router.get("/cart/debug", getCartDebugHandler);
-router.get("/cart/diagnostic", getCartDebugHandler);
+router.get("/cart/debug", requireAdmin, getCartDebugHandler);
+router.get("/cart/diagnostic", requireAdmin, getCartDebugHandler);
 
 router.get("/cart", async (req: TenantRequest, res: Response) => {
   const sid = await sessionId(req, res);

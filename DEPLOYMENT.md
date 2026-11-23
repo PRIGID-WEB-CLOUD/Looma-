@@ -66,6 +66,13 @@ Never place server secrets into `VITE_*` variables, `wrangler.jsonc` plaintext `
 | `PUBLIC_APP_URL` | Canonical deployed HTTPS origin | Set in `wrangler.jsonc` |
 | `R2_PUBLIC_URL` | Optional custom public R2 CDN domain (defaults to `/api/storage/file/...` proxy) | Optional |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3 API keys only needed for local Node dev or `/api/storage/presign` (production Worker uses `R2_BUCKET` binding) | Optional in Workers |
+| `COMMERCE_INTERNAL_SSO_SECRET` | Shared HMAC/bearer secret for `/api/internal/*` between Looma Worker and Commerce API (`wrangler secret put COMMERCE_INTERNAL_SSO_SECRET` only — never put in `wrangler.jsonc`) | Yes (for Store Provisioning & Seller SSO) |
+| `COMMERCE_API_URL` | External Commerce API base URL (e.g. `https://looma-commerce-api.onrender.com`) | Yes (for Commerce Proxy & SSO) |
+| `COMMERCE_ADMIN_DASHBOARD_URL` | External Commerce Seller Portal base URL (e.g. `https://looma-commerce-api.onrender.com/seller`) | Yes (for Seller SSO redirect) |
+| `COMMERCE_PUBLISHABLE_KEY` | Optional default storefront publishable key header (`X-Publishable-Key`) | Optional |
+| `COMMERCE_DEFAULT_STORE_ID` | Optional fallback single-store ID (`X-Store-Id`) for unauthenticated storefront proxy calls | Optional |
+
+> **Security Note on Secrets**: If `COMMERCE_INTERNAL_SSO_SECRET` was ever committed to source control or placed in `wrangler.jsonc`, rotate it immediately in both Cloudflare (`npx wrangler secret put COMMERCE_INTERNAL_SSO_SECRET`) and Render (`COMMERCE_INTERNAL_SSO_SECRET`).
 
 ---
 

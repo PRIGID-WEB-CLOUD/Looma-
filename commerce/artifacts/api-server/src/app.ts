@@ -17,6 +17,24 @@ const app: Express = express();
 app.set("trust proxy", true);
 app.disable("x-powered-by");
 
+const configuredLoomaUrl = (
+  process.env.LOOMA_APP_URL ||
+  process.env.PUBLIC_LOOMA_APP_URL ||
+  process.env.VITE_LOOMA_APP_URL ||
+  ""
+).trim();
+let sanitizedLoomaAppUrl = "";
+if (configuredLoomaUrl) {
+  try {
+    const parsedLooma = new URL(configuredLoomaUrl);
+    if (parsedLooma.protocol === "https:" || parsedLooma.protocol === "http:") {
+      sanitizedLoomaAppUrl = parsedLooma.origin + (parsedLooma.pathname === "/" ? "" : parsedLooma.pathname.replace(/\/+$/, ""));
+    }
+  } catch {
+    sanitizedLoomaAppUrl = "";
+  }
+}
+
 const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
@@ -28,7 +46,13 @@ const developmentOrigins = [
   "http://localhost:5173",
   process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "",
 ].filter(Boolean);
-const allowedOrigins = [...new Set([...configuredOrigins, ...developmentOrigins])];
+const allowedOrigins = [
+  ...new Set([
+    ...configuredOrigins,
+    ...(configuredOrigins.length > 0 && sanitizedLoomaAppUrl ? [new URL(sanitizedLoomaAppUrl).origin] : []),
+    ...developmentOrigins,
+  ]),
+];
 
 app.use(
   pinoHttp({
@@ -167,19 +191,42 @@ app.use("/api", tenantResolver, router);
 const adminCandidates = [
   path.resolve(process.cwd(), "dist/seller"),
   path.resolve(process.cwd(), "dist/public/seller"),
+  path.resolve(process.cwd(), "commerce/dist/seller"),
   path.resolve(process.cwd(), "artifacts/luxe-boutique-admin/dist/public"),
+  path.resolve(process.cwd(), "commerce/artifacts/luxe-boutique-admin/dist/public"),
+  path.resolve(process.cwd(), "../luxe-boutique-admin/dist/public"),
 ];
 
 const resolvedAdminDir = adminCandidates.find((d) => fs.existsSync(path.join(d, "index.html")));
 if (resolvedAdminDir) {
-  app.use("/seller", express.static(resolvedAdminDir));
-  app.get(/^\/seller(\/.*)?$/, (_req, res) => {
-    res.sendFile(path.join(resolvedAdminDir, "index.html"));
-  });
+  const sendAdminHtml = (_req: express.Request, res: express.Response) => {
+    const indexPath = path.join(resolvedAdminDir, "index.html");
+    if (!sanitizedLoomaAppUrl) {
+      return res.sendFile(indexPath);
+    }
+    try {
+      const html = fs.readFileSync(indexPath, "utf8");
+      const escapedUrl = sanitizedLoomaAppUrl
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      const metaTag = `<meta name="looma-app-url" content="${escapedUrl}" />`;
+      const injected = html.includes('name="looma-app-url"')
+        ? html
+        : html.replace("</head>", `  ${metaTag}\n</head>`);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(injected);
+    } catch {
+      return res.sendFile(indexPath);
+    }
+  };
+
+  app.use("/seller", express.static(resolvedAdminDir, { index: false }));
+  app.get(/^\/seller(\/.*)?$/, sendAdminHtml);
   // Route root and dashboard paths to the admin portal
-  app.get(["/", "/dashboard", "/login", "/register", "/settings"], (_req, res) => {
-    res.sendFile(path.join(resolvedAdminDir, "index.html"));
-  });
+  app.get(["/", "/dashboard", "/login", "/register", "/settings"], sendAdminHtml);
 } else {
   app.get("/", (_req, res) => {
     res.json({ name: "PRIGID Commerce API & Admin Dashboard", status: "online", apiBase: "/api" });

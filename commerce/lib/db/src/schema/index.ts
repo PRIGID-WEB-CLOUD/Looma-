@@ -42,7 +42,7 @@ export const usersTable = pgTable("users", {
   passwordResetExpiry: timestamp("password_reset_expiry"),
   createdAt:           timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
-  check("users_role_check", sql`${table.role} in ('CUSTOMER', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN')`),
+  check("users_role_check", sql`${table.role} in ('CUSTOMER', 'BUSINESS', 'BUSINESS_OWNER', 'PLATFORM_ADMIN')`),
   uniqueIndex("users_store_email_idx").on(table.storeId, table.email),
 ]);
 

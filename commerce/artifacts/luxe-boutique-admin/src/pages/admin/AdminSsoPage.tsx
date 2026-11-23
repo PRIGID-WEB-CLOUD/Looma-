@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth, type User } from "@/contexts/AuthContext";
+import { getLoomaMarketplaceUrl, getLoomaProfileUrl } from "@/lib/loomaUrl";
 
 export default function AdminSsoPage() {
   const [, navigate] = useLocation();
@@ -8,6 +9,8 @@ export default function AdminSsoPage() {
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const initialCodeRef = useRef<string | null>(null);
+  const profileUrl = getLoomaProfileUrl();
+  const marketplaceUrl = getLoomaMarketplaceUrl();
 
   if (initialCodeRef.current === null && typeof window !== "undefined") {
     const params = new URLSearchParams(window.location.search || "");
@@ -58,7 +61,8 @@ export default function AdminSsoPage() {
         const verifiedUser = await refetch();
         const activeUser = verifiedUser || payload.user || null;
         const role = (activeUser?.role || "").toUpperCase();
-        if (!activeUser || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(role)) {
+        const hasTeamAccess = Boolean(activeUser?.teamRole) || role === "PLATFORM_ADMIN";
+        if (!activeUser || !["BUSINESS", "BUSINESS_OWNER", "PLATFORM_ADMIN"].includes(role) || !hasTeamAccess) {
           setError(
             "Your authorization succeeded, but your merchant session could not be verified. Please return to your Looma Business Profile and relaunch."
           );
@@ -80,18 +84,29 @@ export default function AdminSsoPage() {
             <h1 className="text-xl font-semibold text-white">Seller Portal Authorization Failed</h1>
             <p className="text-sm text-slate-300 leading-relaxed">{error}</p>
             <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-              <a
-                href="/profile"
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 transition-colors"
-              >
-                Return to Business Profile
-              </a>
-              <a
-                href="/marketplace"
-                className="px-4 py-2.5 rounded-xl bg-white text-slate-900 text-xs font-semibold hover:bg-slate-100 transition-colors"
-              >
-                Looma Marketplace
-              </a>
+              {profileUrl ? (
+                <a
+                  href={profileUrl}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 transition-colors"
+                >
+                  Return to Business Profile
+                </a>
+              ) : (
+                <a
+                  href="/seller/login"
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 transition-colors"
+                >
+                  Portal Sign-In Help
+                </a>
+              )}
+              {marketplaceUrl && (
+                <a
+                  href={marketplaceUrl}
+                  className="px-4 py-2.5 rounded-xl bg-white text-slate-900 text-xs font-semibold hover:bg-slate-100 transition-colors"
+                >
+                  Looma Marketplace
+                </a>
+              )}
             </div>
           </>
         ) : (

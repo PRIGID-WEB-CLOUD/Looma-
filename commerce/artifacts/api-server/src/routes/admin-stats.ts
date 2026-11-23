@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { db, ordersTable, productsTable, categoriesTable, usersTable } from "@workspace/db";
 import { and, eq, desc, sql, or } from "drizzle-orm";
-import { getSessionUser } from "../middleware/requireAdmin";
+import { requireAdmin } from "../middleware/requireAdmin";
 import { type TenantRequest } from "../middleware/tenantContext";
 
 const router = Router();
@@ -10,17 +10,16 @@ const router = Router();
  * GET /api/admin/stats
  *
  * Returns a unified stats payload. The shape differs by role:
- *  - SUPER_ADMIN → full financials + customer + team panels
- *  - ADMIN       → operational snapshot (orders queue + catalog health)
+ *  - BUSINESS_OWNER → full financials + customer + team panels
+ *  - BUSINESS       → operational snapshot (orders queue + catalog health)
  */
-router.get("/admin/stats", async (req: TenantRequest, res: Response) => {
-  const user = await getSessionUser(req, req.storeId);
-  if (!user || (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN" && user.role !== "PLATFORM_ADMIN")) {
-    return res.status(403).json({ error: "Admin access required." });
-  }
-
+router.get("/admin/stats", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const user = req.adminUser!;
   const storeId = req.storeId!;
-  const isSuperAdmin = user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN";
+  const isSuperAdmin =
+    user.role === "PLATFORM_ADMIN" ||
+    user.role === "BUSINESS_OWNER" ||
+    req.commerceAuth?.role === "Owner";
 
   // ── Shared: orders + products ──────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ router.get("/admin/stats", async (req: TenantRequest, res: Response) => {
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
-      or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"))
+      or(eq(usersTable.role, "BUSINESS"), eq(usersTable.role, "BUSINESS_OWNER"))
     ));
 
   // Top products by appearance in orders (via items jsonb)

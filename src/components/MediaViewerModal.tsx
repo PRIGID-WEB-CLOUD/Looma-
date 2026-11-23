@@ -45,6 +45,7 @@ interface MediaViewerModalProps {
   entries: MediaGalleryEntry[];
   activePostId: string | null;
   currentUserId?: string;
+  canManageBusinessIds?: string[];
   likedPostIds?: string[];
   bookmarkedPostIds?: string[];
   onClose: () => void;
@@ -62,6 +63,7 @@ export function MediaViewerModal({
   entries,
   activePostId,
   currentUserId = '',
+  canManageBusinessIds = [],
   likedPostIds = [],
   bookmarkedPostIds = [],
   onClose,
@@ -151,7 +153,12 @@ export function MediaViewerModal({
   const { post } = activeEntry;
   const isLiked = likedPostIds.includes(post.id);
   const isBookmarked = bookmarkedPostIds.includes(post.id);
-  const isOwnPost = canSharePostToStory(post.authorId, currentUserId);
+  const isOwnPost = canSharePostToStory(
+    post.authorId,
+    currentUserId,
+    post.businessProfileId,
+    canManageBusinessIds
+  );
   const hasPrev = activeIndex > 0;
   const hasNext = activeIndex < entries.length - 1;
   const isDirectDownloadable =
@@ -229,7 +236,12 @@ export function MediaViewerModal({
           }}
           className="flex items-center gap-3 min-w-0 text-left group cursor-pointer"
         >
-          <Avatar src={post.authorAvatar} name={post.authorName} size="md" />
+          <Avatar
+            src={post.authorAvatar}
+            name={post.authorName}
+            size="md"
+            shape={post.authorType === 'business' ? 'business' : 'circle'}
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white inline-flex items-center gap-1 max-w-full min-w-0 group-hover:text-blue-400 transition-colors">
               <span className="truncate">{post.authorName}</span>

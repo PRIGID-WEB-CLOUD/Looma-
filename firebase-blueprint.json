@@ -607,16 +607,35 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "authorType": {
+          "type": "string",
+          "enum": [
+            "personal",
+            "business"
+          ]
+        },
+        "businessProfileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "authorName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 60
+          "maxLength": 80
         },
         "authorHandle": {
           "type": "string",
           "minLength": 2,
-          "maxLength": 32,
-          "pattern": "^[a-zA-Z0-9_.]+$"
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_.\\-]+$"
         },
         "authorAvatar": {
           "type": "string",

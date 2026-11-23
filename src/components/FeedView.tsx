@@ -129,7 +129,6 @@ export function FeedView({
   useEffect(() => {
     if (!hasMore || !sentinelRef.current) return;
     const node = sentinelRef.current;
-    const rootNode = snapStreamRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
@@ -140,7 +139,7 @@ export function FeedView({
           });
         }
       },
-      { root: rootNode, rootMargin: '180px' }
+      { root: null, rootMargin: '240px' }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -164,7 +163,7 @@ export function FeedView({
           }
         }
       },
-      { root: container, threshold: [0.25, 0.65] }
+      { root: null, threshold: [0.25, 0.65] }
     );
 
     for (const v of videos) {
@@ -195,8 +194,8 @@ export function FeedView({
     setFeedFilter('All');
     setSearchQuery(clean ? `#${clean}` : '');
     onSelectHashtag?.(clean || tag);
-    if (snapStreamRef.current) {
-      snapStreamRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -211,11 +210,13 @@ export function FeedView({
 
   return (
     <section aria-label="Community Post Feed" className="space-y-4">
-      {/* Homefeed Header Stories (Personal social experience) */}
-      {storiesEnabled && platformMode === 'normal' && (
+      {/* Homefeed Header Stories (Personal & Business identities) */}
+      {storiesEnabled && (
         <StoriesStrip
           profile={profile}
-          activeBusinessProfile={null}
+          activeBusinessProfile={
+            platformMode === 'business' ? activeBusinessProfile : null
+          }
           storyGroups={storyGroups}
           onOpenStory={onOpenStory}
           onOpenAddStory={onOpenAddStory}
@@ -224,7 +225,16 @@ export function FeedView({
 
       {/* Quick Post Prompt */}
       <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 flex items-center gap-3">
-        <Avatar src={activeComposerAvatar} name={activeComposerName} size="md" />
+        <Avatar
+          src={activeComposerAvatar}
+          name={activeComposerName}
+          size="md"
+          shape={
+            platformMode === 'business' && activeBusinessProfile
+              ? 'business'
+              : 'circle'
+          }
+        />
         <button
           type="button"
           onClick={onOpenComposer}
@@ -374,47 +384,44 @@ export function FeedView({
         <div
           ref={snapStreamRef}
           data-testid="snap-feed-container"
-          className="h-[calc(100dvh-14.5rem)] overflow-y-auto snap-y snap-mandatory space-y-4 pr-0.5 motion-reduce:snap-none"
+          className="space-y-4 sm:space-y-5"
         >
           {items.map((post) => (
-            <div
+            <PostCard
               key={post.id}
-              className="snap-start snap-always min-h-[calc(100dvh-15.5rem)] flex flex-col justify-center"
-            >
-              <PostCard
-                post={post}
-                currentUserId={profile.uid}
-                canManagePost={
-                  post.authorId === profile.uid ||
-                  (post.authorType === 'business' &&
-                    Boolean(post.businessProfileId) &&
-                    canManageBusinessIds.includes(post.businessProfileId!))
-                }
-                categories={categoryList}
-                isLiked={likedPostIds.includes(post.id)}
-                isBookmarked={bookmarkedPostIds.includes(post.id)}
-                comments={commentsByPost[post.id] || []}
-                shareThreads={shareThreads}
-                onToggleLike={onToggleLike}
-                onToggleBookmark={onToggleBookmark}
-                onAddComment={onAddComment}
-                onOpenComments={onOpenComments}
-                onUpdatePost={onUpdatePost}
-                onDeletePost={onDeletePost}
-                onDeleteComment={onDeleteComment}
-                onShareToStory={storiesEnabled && platformMode === 'normal' ? onShareToStory : undefined}
-                onShareToChat={onShareToChat}
-                onReportPost={onReportPost}
-                onAuthorClick={onAuthorClick}
-                onSelectHashtag={applyHashtagFilter}
-                onMentionClick={onMentionClick}
-                onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
-              />
-            </div>
+              post={post}
+              currentUserId={profile.uid}
+              canManageBusinessIds={canManageBusinessIds}
+              canManagePost={
+                post.authorId === profile.uid ||
+                (post.authorType === 'business' &&
+                  Boolean(post.businessProfileId) &&
+                  canManageBusinessIds.includes(post.businessProfileId!))
+              }
+              categories={categoryList}
+              isLiked={likedPostIds.includes(post.id)}
+              isBookmarked={bookmarkedPostIds.includes(post.id)}
+              comments={commentsByPost[post.id] || []}
+              shareThreads={shareThreads}
+              onToggleLike={onToggleLike}
+              onToggleBookmark={onToggleBookmark}
+              onAddComment={onAddComment}
+              onOpenComments={onOpenComments}
+              onUpdatePost={onUpdatePost}
+              onDeletePost={onDeletePost}
+              onDeleteComment={onDeleteComment}
+              onShareToStory={storiesEnabled ? onShareToStory : undefined}
+              onShareToChat={onShareToChat}
+              onReportPost={onReportPost}
+              onAuthorClick={onAuthorClick}
+              onSelectHashtag={applyHashtagFilter}
+              onMentionClick={onMentionClick}
+              onOpenMedia={(clickedPost) => setActiveMediaPostId(clickedPost.id)}
+            />
           ))}
 
-          {/* Infinite Scroll Sentinel inside Snap Stream */}
-          <div ref={sentinelRef} className="snap-start py-6 text-center">
+          {/* Infinite Scroll Sentinel */}
+          <div ref={sentinelRef} className="py-5 text-center">
             {hasMore ? (
               <button
                 type="button"
@@ -441,13 +448,14 @@ export function FeedView({
         entries={mediaEntries}
         activePostId={activeMediaPostId}
         currentUserId={profile.uid}
+        canManageBusinessIds={canManageBusinessIds}
         likedPostIds={likedPostIds}
         bookmarkedPostIds={bookmarkedPostIds}
         onClose={() => setActiveMediaPostId(null)}
         onSelectPostId={(postId) => setActiveMediaPostId(postId)}
         onToggleLike={onToggleLike}
         onToggleBookmark={onToggleBookmark}
-        onShareToStory={storiesEnabled && platformMode === 'normal' ? onShareToStory : undefined}
+        onShareToStory={storiesEnabled ? onShareToStory : undefined}
         onAuthorClick={onAuthorClick}
         onSelectHashtag={applyHashtagFilter}
         onMentionClick={onMentionClick}

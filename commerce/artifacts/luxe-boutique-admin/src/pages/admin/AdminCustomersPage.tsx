@@ -16,6 +16,7 @@ import {
   MdOutgoingMail,
 } from "react-icons/md";
 import AdminLayout from "./AdminLayout";
+import { getAdminAuthHeaders } from "@/contexts/AuthContext";
 import {
   initAuth,
   googleSignIn,
@@ -121,7 +122,8 @@ export default function AdminCustomersPage() {
     try {
       const res = await fetch("/api/users/bulk", {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: { ...getAdminAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ ids: Array.from(selectedIds) })
       });
       if (!res.ok) throw new Error("Failed to bulk delete users");
@@ -135,30 +137,14 @@ export default function AdminCustomersPage() {
     }
   };
 
-  const handleBulkUpdateRole = async (newRole: "USER" | "ADMIN") => {
-    if (selectedIds.size === 0 || !confirm(`Update ${selectedIds.size} users to ${newRole}?`)) return;
-    setIsBulkLoading(true);
-    try {
-      const res = await fetch("/api/users/bulk", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(selectedIds), role: newRole })
-      });
-      if (!res.ok) throw new Error("Failed to bulk update users");
-      showToast(`Updated ${selectedIds.size} users successfully.`);
-      setSelectedIds(new Set());
-      window.location.reload();
-    } catch (e: any) {
-      showError(e.message);
-    } finally {
-      setIsBulkLoading(false);
-    }
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this user?")) return;
     try {
-      const res = await fetch(`/api/users/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/users/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to delete user");
       showToast("User deleted successfully.");
       window.location.reload();
@@ -189,7 +175,10 @@ export default function AdminCustomersPage() {
   const { data: users = [], isLoading } = useQuery<User[]>({
     queryKey: ["admin-users"],
     queryFn: async () => {
-      const res = await fetch("/api/users");
+      const res = await fetch("/api/users", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to fetch users");
       return res.json();
     },
@@ -262,8 +251,7 @@ export default function AdminCustomersPage() {
     );
   });
 
-  const admins = users.filter((u) => u.role === "ADMIN" || u.role === "SUPER_ADMIN" || u.role === "PLATFORM_ADMIN");
-  const regularUsers = users.filter((u) => u.role !== "ADMIN" && u.role !== "SUPER_ADMIN" && u.role !== "PLATFORM_ADMIN");
+  const regularUsers = users.filter((u) => u.role !== "BUSINESS" && u.role !== "BUSINESS_OWNER" && u.role !== "PLATFORM_ADMIN");
 
   return (
     <AdminLayout sidebar="main">
@@ -362,20 +350,6 @@ export default function AdminCustomersPage() {
             </span>
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => handleBulkUpdateRole("ADMIN")}
-                disabled={isBulkLoading}
-                className="px-3 py-1.5 text-xs font-semibold bg-slate-100 text-[#003399] hover:bg-slate-200 rounded-md transition-colors"
-              >
-                Make Admin
-              </button>
-              <button 
-                onClick={() => handleBulkUpdateRole("USER")}
-                disabled={isBulkLoading}
-                className="px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md transition-colors"
-              >
-                Make User
-              </button>
-              <button 
                 onClick={handleBulkDelete}
                 disabled={isBulkLoading}
                 className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 rounded-md transition-colors"
@@ -442,7 +416,7 @@ export default function AdminCustomersPage() {
                       <td className="px-6 py-4">
                         <span
                           className={`px-2 py-1 rounded text-xs font-bold ${
-                            u.role === "ADMIN"
+                            u.role === "BUSINESS" || u.role === "BUSINESS_OWNER"
                               ? "bg-[#dce9ff] text-[#003399]"
                               : "bg-slate-100 text-slate-600"
                           }`}

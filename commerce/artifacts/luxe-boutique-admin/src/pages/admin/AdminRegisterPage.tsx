@@ -1,14 +1,19 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { Building2, ExternalLink, PlusCircle, ShoppingBag, Store } from "lucide-react";
+import { getLoomaMarketplaceUrl, getLoomaProfileUrl } from "@/lib/loomaUrl";
+import { ExternalLink, PlusCircle, ShoppingBag, Store } from "lucide-react";
 
 export default function AdminRegisterPage() {
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
+  const profileUrl = getLoomaProfileUrl();
+  const marketplaceUrl = getLoomaMarketplaceUrl();
 
   useEffect(() => {
-    if (!authLoading && (user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" || user?.role === "PLATFORM_ADMIN")) {
+    const hasAdminRole = user?.role === "BUSINESS" || user?.role === "BUSINESS_OWNER" || user?.role === "PLATFORM_ADMIN";
+    const hasTeamRole = Boolean(user?.teamRole) || user?.role === "PLATFORM_ADMIN";
+    if (!authLoading && hasAdminRole && hasTeamRole) {
       navigate("/");
     }
   }, [user, authLoading, navigate]);
@@ -60,21 +65,29 @@ export default function AdminRegisterPage() {
 
         {/* Action Buttons */}
         <div className="space-y-2.5 pt-1">
-          <a
-            href="/"
-            className="w-full min-h-[44px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-lg shadow-emerald-950/50"
-          >
-            <PlusCircle className="w-4 h-4" aria-hidden="true" />
-            <span>Create Business in Looma</span>
-            <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-          </a>
-          <a
-            href="/marketplace"
-            className="w-full min-h-[44px] px-4 rounded-xl border border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
-          >
-            <ShoppingBag className="w-4 h-4" aria-hidden="true" />
-            <span>Browse Looma Marketplace</span>
-          </a>
+          {profileUrl ? (
+            <a
+              href={profileUrl}
+              className="w-full min-h-[44px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-lg shadow-emerald-950/50"
+            >
+              <PlusCircle className="w-4 h-4" aria-hidden="true" />
+              <span>Create Business in Looma</span>
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+            </a>
+          ) : (
+            <p className="text-[11px] text-amber-300 bg-amber-950/50 border border-amber-800/60 rounded-xl px-3.5 py-2.5 text-center">
+              Looma return URL is not configured (set VITE_LOOMA_APP_URL or LOOMA_APP_URL). Open Looma directly to create a Business Profile.
+            </p>
+          )}
+          {marketplaceUrl && (
+            <a
+              href={marketplaceUrl}
+              className="w-full min-h-[44px] px-4 rounded-xl border border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4" aria-hidden="true" />
+              <span>Browse Looma Marketplace</span>
+            </a>
+          )}
         </div>
       </div>
     </div>

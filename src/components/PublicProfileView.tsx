@@ -39,6 +39,7 @@ import { VerifiedBadge } from './VerifiedBadge';
 interface PublicProfileViewProps {
   creator: UserProfile;
   currentUserId?: string;
+  canManageBusinessIds?: string[];
   loading?: boolean;
   fullScreen?: boolean;
   ownerBusinesses?: BusinessProfile[];
@@ -83,6 +84,7 @@ interface PublicProfileViewProps {
 export function PublicProfileView({
   creator,
   currentUserId = '',
+  canManageBusinessIds = [],
   loading = false,
   fullScreen = false,
   ownerBusinesses = [],
@@ -454,7 +456,7 @@ export function PublicProfileView({
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-start gap-3 min-w-0">
-                      <Avatar src={biz.logoUrl} name={biz.displayName} size="md" />
+                      <Avatar src={biz.logoUrl} name={biz.displayName} size="md" shape="business" />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-slate-900 dark:text-white inline-flex items-center gap-1.5 max-w-full">
                           <span className="truncate">{biz.displayName}</span>
@@ -557,6 +559,7 @@ export function PublicProfileView({
               key={post.id}
               post={post}
               currentUserId={currentUserId}
+              canManageBusinessIds={canManageBusinessIds}
               categories={categories}
               isLiked={likedPostIds.includes(post.id)}
               isBookmarked={bookmarkedPostIds.includes(post.id)}
@@ -585,6 +588,7 @@ export function PublicProfileView({
         entries={creatorMediaEntries}
         activePostId={activeMediaPostId}
         currentUserId={currentUserId}
+        canManageBusinessIds={canManageBusinessIds}
         likedPostIds={likedPostIds}
         bookmarkedPostIds={bookmarkedPostIds}
         onClose={() => setActiveMediaPostId(null)}

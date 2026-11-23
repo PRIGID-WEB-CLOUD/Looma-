@@ -158,6 +158,41 @@ export function resolveStoryGroupsIdentity(
   maps: IdentityLookupMaps
 ): StoryGroup[] {
   return groups.map((group) => {
+    if (group.authorType === 'business' || group.businessProfileId) {
+      const bpId = group.businessProfileId || group.authorId;
+      const biz = maps.businessesById.get(bpId);
+      if (!biz) return group;
+
+      const nextName = biz.displayName.trim() || group.authorName;
+      const nextHandle = biz.slug.trim() || group.authorHandle;
+      const nextAvatar = normalizeAssetUrl(biz.logoUrl || '');
+      const nextVerified = Boolean(biz.verified);
+
+      if (
+        group.authorName === nextName &&
+        group.authorHandle === nextHandle &&
+        group.authorAvatar === nextAvatar &&
+        Boolean(group.authorVerified) === nextVerified
+      ) {
+        return group;
+      }
+
+      return {
+        ...group,
+        authorName: nextName,
+        authorHandle: nextHandle,
+        authorAvatar: nextAvatar,
+        authorVerified: nextVerified,
+        items: group.items.map((item) => ({
+          ...item,
+          authorName: nextName,
+          authorHandle: nextHandle,
+          authorAvatar: nextAvatar,
+          authorVerified: nextVerified,
+        })),
+      };
+    }
+
     const user =
       maps.currentProfile && maps.currentProfile.uid === group.authorId
         ? maps.currentProfile

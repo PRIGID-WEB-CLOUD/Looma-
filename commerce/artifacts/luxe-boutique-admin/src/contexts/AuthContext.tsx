@@ -5,6 +5,9 @@ export type User = {
   name: string;
   email: string;
   role?: string;
+  teamRole?: string;
+  storeId?: string | null;
+  businessProfileId?: string | null;
 };
 
 const SELLER_TOKEN_KEY = "looma_seller_session_token";
@@ -19,11 +22,8 @@ export function readSellerSessionToken(): string {
         inMemorySessionToken = fromSession;
         return fromSession;
       }
-      const fromLocal = window.localStorage?.getItem(SELLER_TOKEN_KEY);
-      if (fromLocal) {
-        inMemorySessionToken = fromLocal;
-        return fromLocal;
-      }
+      // Clean up any legacy localStorage token from prior builds
+      try { window.localStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
     }
   } catch {
     // Ignore storage errors in restricted contexts
@@ -35,12 +35,11 @@ export function setSellerSessionToken(token: string | null): void {
   inMemorySessionToken = token || "";
   try {
     if (typeof window === "undefined") return;
+    try { window.localStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
     if (token) {
       try { window.sessionStorage?.setItem(SELLER_TOKEN_KEY, token); } catch {}
-      try { window.localStorage?.setItem(SELLER_TOKEN_KEY, token); } catch {}
     } else {
       try { window.sessionStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
-      try { window.localStorage?.removeItem(SELLER_TOKEN_KEY); } catch {}
     }
   } catch {
     // Ignore storage errors in sandboxed iframes

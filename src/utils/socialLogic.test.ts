@@ -91,6 +91,11 @@ import {
   validatePasswordResetEmail,
   TYPING_STALE_MS,
 } from './socialLogic';
+import {
+  buildIdentityMaps,
+  resolveStoryGroupsIdentity,
+} from './identityResolver';
+import type { BusinessProfile } from '../types/business';
 import type {
   AppNotification,
   ChatMessage,
@@ -2108,7 +2113,108 @@ test('enrichNotificationWithAuthor and enrichVerificationRequestWithUser propaga
   assert.equal(resolvedGroup.partnerAvatar, '');
 });
 
+test('Business Profile stories group by businessProfileId, support manageableBusinessIds share-to-story, and resolve live business identity', () => {
+  const now = 1_750_000_000_000;
+  const biz: BusinessProfile = {
+    id: 'bp_atelier',
+    slug: 'atelier-loom',
+    displayName: 'Atelier Loom',
+    bio: 'Architectural lighting studio',
+    logoUrl: '/api/storage/file/uploads/bp_atelier/logo.png',
+    bannerUrl: '',
+    category: 'Design',
+    location: 'Tokyo',
+    websiteUrl: 'https://atelier.example.com',
+    ownerUid: 'u_owner',
+    verified: true,
+    followersCount: 42,
+    currency: 'USD',
+    status: 'ACTIVE',
+    createdAtMs: now - 10_000,
+    updatedAtMs: now,
+  };
 
+  const personalStory: StoryItem = {
+    id: 'st_personal',
+    authorId: 'u_creator',
+    authorType: 'personal',
+    authorName: 'Maya Lin',
+    authorHandle: 'maya.lin',
+    authorAvatar: '',
+    authorVerified: false,
+    imageUrl: '/images/personal.jpg',
+    caption: 'Sketchbook',
+    createdAtMs: now - 1_000,
+    expiresAtMs: now + 80_000,
+  };
 
+  const businessStory: StoryItem = {
+    id: 'st_biz',
+    authorId: 'bp_atelier',
+    authorType: 'business',
+    businessProfileId: 'bp_atelier',
+    actorUid: 'u_editor',
+    authorName: 'Old Atelier Name',
+    authorHandle: 'atelier-loom',
+    authorAvatar: '/images/old-logo.png',
+    authorVerified: false,
+    imageUrl: '/images/lamp.jpg',
+    caption: 'New luminaire preview',
+    createdAtMs: now - 2_000,
+    expiresAtMs: now + 80_000,
+  };
 
+  const groups = groupStoriesByAuthor(
+    [personalStory, businessStory],
+    'u_editor',
+    [],
+    now,
+    'bp_atelier'
+  );
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].authorId, 'bp_atelier');
+  assert.equal(groups[0].authorType, 'business');
+  assert.equal(groups[0].businessProfileId, 'bp_atelier');
+  assert.equal(groups[0].items[0].actorUid, 'u_editor');
 
+  // Share post to story supports both personal ownership and managed business memberships
+  assert.equal(canSharePostToStory('u_editor', 'u_editor'), true);
+  assert.equal(
+    canSharePostToStory('bp_atelier', 'u_editor', 'bp_atelier', ['bp_atelier']),
+    true
+  );
+  assert.equal(
+    canSharePostToStory('bp_atelier', 'u_viewer', 'bp_atelier', []),
+    false
+  );
+
+  // Verified author enrichment propagates BusinessProfile snapshot fields
+  const verifiedEnriched = enrichStoryGroupsWithVerifiedAuthors(
+    groups,
+    [],
+    null,
+    [
+      {
+        id: biz.id,
+        displayName: biz.displayName,
+        slug: biz.slug,
+        logoUrl: biz.logoUrl,
+        verified: biz.verified,
+      },
+    ]
+  );
+  const bizGroup = verifiedEnriched.find((g) => g.authorId === 'bp_atelier')!;
+  assert.equal(bizGroup.authorName, 'Atelier Loom');
+  assert.equal(bizGroup.authorHandle, 'atelier-loom');
+  assert.equal(bizGroup.authorVerified, true);
+  assert.equal(bizGroup.authorAvatar, biz.logoUrl);
+
+  // resolveStoryGroupsIdentity resolves BusinessProfile identity while preserving slug hyphens
+  const maps = buildIdentityMaps([], null, [biz]);
+  const [resolvedBizGroup] = resolveStoryGroupsIdentity([groups[0]], maps);
+  assert.equal(resolvedBizGroup.authorName, 'Atelier Loom');
+  assert.equal(resolvedBizGroup.authorHandle, 'atelier-loom');
+  assert.equal(resolvedBizGroup.authorAvatar, biz.logoUrl);
+  assert.equal(resolvedBizGroup.authorVerified, true);
+  assert.equal(resolvedBizGroup.items[0].authorHandle, 'atelier-loom');
+});

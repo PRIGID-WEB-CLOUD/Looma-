@@ -4,6 +4,7 @@ interface AvatarProps {
   src?: string;
   name: string;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  shape?: 'circle' | 'business';
   online?: boolean;
 }
 
@@ -15,6 +16,14 @@ const SIZE_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
   xl: 'w-20 h-20 text-xl',
 };
 
+const BUSINESS_RADIUS_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
+  xs: 'rounded-md',
+  sm: 'rounded-lg',
+  md: 'rounded-xl',
+  lg: 'rounded-2xl',
+  xl: 'rounded-2xl',
+};
+
 const DOT_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
   xs: 'w-2 h-2',
   sm: 'w-2.5 h-2.5',
@@ -23,10 +32,18 @@ const DOT_CLASSES: Record<NonNullable<AvatarProps['size']>, string> = {
   xl: 'w-4 h-4',
 };
 
-export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) {
+export function Avatar({
+  src,
+  name,
+  size = 'md',
+  shape = 'circle',
+  online = false,
+}: AvatarProps) {
   const cleanSrc = src?.trim() || '';
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const failed = Boolean(cleanSrc) && failedSrc === cleanSrc;
+  const radiusClass =
+    shape === 'business' ? BUSINESS_RADIUS_CLASSES[size] : 'rounded-full';
   const initials =
     name
       .split(' ')
@@ -39,7 +56,7 @@ export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) 
     !cleanSrc || failed ? (
       <div
         aria-hidden="true"
-        className={`${SIZE_CLASSES[size]} shrink-0 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-display font-semibold flex items-center justify-center border border-slate-300/70 dark:border-slate-700`}
+        className={`${SIZE_CLASSES[size]} ${radiusClass} shrink-0 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-display font-semibold flex items-center justify-center border border-slate-300/70 dark:border-slate-700`}
       >
         {initials}
       </div>
@@ -49,7 +66,7 @@ export function Avatar({ src, name, size = 'md', online = false }: AvatarProps) 
         alt={name}
         referrerPolicy="no-referrer"
         onError={() => setFailedSrc(cleanSrc || null)}
-        className={`${SIZE_CLASSES[size]} shrink-0 rounded-full object-cover bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-700`}
+        className={`${SIZE_CLASSES[size]} ${radiusClass} shrink-0 object-cover bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-700`}
       />
     );
 

@@ -20,6 +20,7 @@ interface ProfileViewProps {
   profile: UserProfile;
   profileSwitcherSlot?: ReactNode;
   posts: Post[];
+  canManageBusinessIds?: string[];
   followersCount?: number;
   followingCount?: number;
   friendsCount: number;
@@ -57,6 +58,7 @@ export function ProfileView({
   profile,
   profileSwitcherSlot,
   posts,
+  canManageBusinessIds = [],
   followersCount,
   followingCount,
   friendsCount,
@@ -284,6 +286,7 @@ export function ProfileView({
               key={post.id}
               post={post}
               currentUserId={profile.uid}
+              canManageBusinessIds={canManageBusinessIds}
               canManagePost={post.authorId === profile.uid}
               categories={categories}
               isLiked={likedPostIds.includes(post.id)}
@@ -314,6 +317,7 @@ export function ProfileView({
         entries={activeGalleryEntries}
         activePostId={activeMediaPostId}
         currentUserId={profile.uid}
+        canManageBusinessIds={canManageBusinessIds}
         likedPostIds={likedPostIds}
         bookmarkedPostIds={bookmarkedPostIds}
         onClose={() => setActiveMediaPostId(null)}

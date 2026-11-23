@@ -1827,9 +1827,13 @@ export function useSocialStore() {
       (snapshot) => {
         const mapped: StoryItem[] = snapshot.docs.map((docSnap) => {
           const d = docSnap.data();
+          const isBusiness = d.authorType === 'business' || Boolean(d.businessProfileId);
           return {
             id: d.id || docSnap.id,
             authorId: d.authorId,
+            authorType: isBusiness ? 'business' : 'personal',
+            ...(d.businessProfileId ? { businessProfileId: String(d.businessProfileId) } : {}),
+            ...(d.actorUid ? { actorUid: String(d.actorUid) } : {}),
             authorName: d.authorName,
             authorHandle: d.authorHandle,
             authorAvatar: d.authorAvatar,
@@ -5048,7 +5052,19 @@ export function useSocialStore() {
   }, [firebaseUser, notifications]);
 
   const addStory = useCallback(
-    async (caption: string, imageUrl: string) => {
+    async (
+      caption: string,
+      imageUrl: string,
+      options?: {
+        businessAuthor?: {
+          id: string;
+          slug: string;
+          displayName: string;
+          logoUrl: string;
+          verified?: boolean;
+        } | null;
+      }
+    ) => {
       requireAuthorized();
       requireModerationAllowed('story');
       if (!featureFlags.storiesEnabled) {
@@ -5061,16 +5077,24 @@ export function useSocialStore() {
         trimmedCaption.length > 280
           ? `${trimmedCaption.slice(0, 277).trimEnd()}...`
           : trimmedCaption;
-      const isAuthorVerified = Boolean(
-        (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
-          profile.isVerified
-      );
+      const businessAuthor = options?.businessAuthor || null;
+      const isBusiness = Boolean(businessAuthor);
+      const isAuthorVerified = isBusiness
+        ? Boolean(businessAuthor!.verified)
+        : Boolean(
+            (firebaseUser?.email && isAllowlistedAdminEmail(firebaseUser.email)) ||
+              profile.isVerified
+          );
       const newStory: StoryItem = {
         id: storyId,
-        authorId: profile.uid,
-        authorName: profile.displayName,
-        authorHandle: profile.handle,
-        authorAvatar: profile.avatarUrl,
+        authorId: isBusiness ? businessAuthor!.id : profile.uid,
+        authorType: isBusiness ? 'business' : 'personal',
+        ...(isBusiness
+          ? { businessProfileId: businessAuthor!.id, actorUid: profile.uid }
+          : {}),
+        authorName: isBusiness ? businessAuthor!.displayName : profile.displayName,
+        authorHandle: isBusiness ? businessAuthor!.slug : profile.handle,
+        authorAvatar: isBusiness ? businessAuthor!.logoUrl : profile.avatarUrl,
         authorVerified: isAuthorVerified,
         imageUrl,
         caption: safeCaption,
@@ -5081,10 +5105,14 @@ export function useSocialStore() {
         try {
           await setDoc(doc(db, 'stories', storyId), {
             id: storyId,
-            authorId: firebaseUser.uid,
-            authorName: profile.displayName,
-            authorHandle: profile.handle,
-            authorAvatar: profile.avatarUrl,
+            authorId: isBusiness ? businessAuthor!.id : firebaseUser.uid,
+            authorType: isBusiness ? 'business' : 'personal',
+            ...(isBusiness
+              ? { businessProfileId: businessAuthor!.id, actorUid: firebaseUser.uid }
+              : {}),
+            authorName: newStory.authorName,
+            authorHandle: newStory.authorHandle,
+            authorAvatar: newStory.authorAvatar,
             authorVerified: isAuthorVerified,
             imageUrl: newStory.imageUrl,
             caption: newStory.caption,
@@ -5098,12 +5126,24 @@ export function useSocialStore() {
         setLocalStories((prev) => [...prev, newStory]);
         broadcastRef.current?.postMessage({ type: 'story:new', story: newStory });
       }
+      if (isBusiness && businessAuthor) {
+        void emitBusinessNotification({
+          bpId: businessAuthor.id,
+          actorId: profile.uid,
+          actorName: profile.displayName,
+          actorAvatar: profile.avatarUrl,
+          type: 'system',
+          title: 'Business story published',
+          body: newStory.caption || `Published a 24h story for ${businessAuthor.displayName}.`,
+          targetId: storyId,
+        }).catch(() => {});
+      }
       await triggerNotification({
         actorId: profile.uid,
         actorName: profile.displayName,
         actorAvatar: profile.avatarUrl,
         type: 'system',
-        title: 'Story added to your header',
+        title: isBusiness ? `${businessAuthor!.displayName} story added` : 'Story added to your header',
         body: newStory.caption || 'Shared a new 24h visual story.',
         targetPostId: '',
       });
@@ -5127,9 +5167,40 @@ export function useSocialStore() {
         throw new Error('Stories are currently paused by platform administrators.');
       }
       const { imageUrl, caption } = buildStoryFromPost(post);
-      return await addStory(caption, imageUrl);
+      let businessAuthor: {
+        id: string;
+        slug: string;
+        displayName: string;
+        logoUrl: string;
+        verified?: boolean;
+      } | null = null;
+      if (post.authorType === 'business' && post.businessProfileId) {
+        const liveBiz = allActiveBusinesses.find((b) => b.id === post.businessProfileId);
+        businessAuthor = liveBiz
+          ? {
+              id: liveBiz.id,
+              slug: liveBiz.slug,
+              displayName: liveBiz.displayName,
+              logoUrl: liveBiz.logoUrl,
+              verified: liveBiz.verified,
+            }
+          : {
+              id: post.businessProfileId,
+              slug: post.authorHandle,
+              displayName: post.authorName,
+              logoUrl: post.authorAvatar,
+              verified: post.authorVerified,
+            };
+      }
+      return await addStory(caption, imageUrl, { businessAuthor });
     },
-    [addStory, featureFlags.storiesEnabled, requireAuthorized, requireModerationAllowed]
+    [
+      addStory,
+      allActiveBusinesses,
+      featureFlags.storiesEnabled,
+      requireAuthorized,
+      requireModerationAllowed,
+    ]
   );
 
   const markStoryViewed = useCallback((storyId: string) => {
@@ -5141,7 +5212,11 @@ export function useSocialStore() {
   const deleteStory = useCallback(
     async (story: StoryItem) => {
       requireAuthorized();
-      if (story.authorId !== profile.uid) {
+      const isPersonalOwner =
+        story.authorId === profile.uid || story.actorUid === profile.uid;
+      const isBusinessStory =
+        story.authorType === 'business' && Boolean(story.businessProfileId);
+      if (!isPersonalOwner && !isBusinessStory) {
         throw new Error('You can only delete your own stories.');
       }
       if (firebaseUser) {
@@ -5842,7 +5917,8 @@ export function useSocialStore() {
     enrichStoryGroupsWithVerifiedAuthors(
       groupStoriesByAuthor(stories, profile.uid, viewedStoryIds),
       communityUsers,
-      profile
+      profile,
+      allActiveBusinesses
     ),
     identityMaps
   );

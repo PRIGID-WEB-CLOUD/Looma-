@@ -38,6 +38,7 @@ const COMMERCE_SELLER_API_PREFIXES = [
   '/api/wishlist',
   '/api/cart',
   '/api/blog',
+  '/api/posts',
   '/api/media',
   '/api/store',
   '/api/showroom-locations',
@@ -100,6 +101,30 @@ export function parseCommerceConfig(env?: {
     adminDashboardUrl: adminDashboardUrl || (apiUrl ? `${apiUrl}/seller` : ''),
     internalSsoSecret: (safeEnv.COMMERCE_INTERNAL_SSO_SECRET || '').trim(),
   };
+}
+
+export function resolveCommerceSsoRedirectUrl(
+  cfg: Pick<CommerceEnvConfig, 'apiUrl' | 'adminDashboardUrl'>,
+  code: string
+): string | null {
+  const trimmedCode = (code || '').trim();
+  if (!trimmedCode) return null;
+
+  const baseCandidate = cfg.adminDashboardUrl || (cfg.apiUrl ? `${cfg.apiUrl}/seller` : '');
+  const sanitizedBase = cleanCommerceEnvUrl(baseCandidate);
+  if (!sanitizedBase) return null;
+
+  try {
+    const parsed = new URL(sanitizedBase);
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+    parsed.pathname = normalizedPath.endsWith('/sso')
+      ? normalizedPath
+      : `${normalizedPath}/sso`;
+    parsed.searchParams.set('code', trimmedCode);
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 export function isBlockedPublicCommercePath(subpath: string): boolean {

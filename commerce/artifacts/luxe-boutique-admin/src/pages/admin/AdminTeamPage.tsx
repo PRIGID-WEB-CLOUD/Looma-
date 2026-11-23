@@ -26,6 +26,7 @@ import {
   MdError
 } from "react-icons/md";
 import AdminLayout from "./AdminLayout";
+import { getAdminAuthHeaders } from "@/contexts/AuthContext";
 
 type TeamMember = {
   id: string;
@@ -40,14 +41,14 @@ type TeamMember = {
   createdAt: string;
 };
 
-const ROLES = ["Owner", "Seller", "Editor", "Viewer"] as const;
+const ROLES = ["Owner", "Business", "Editor", "Viewer"] as const;
 type Role = typeof ROLES[number];
 
 const ROLE_META: Record<Role, { color: string; bg: string; icon: any; desc: string }> = {
-  Owner:  { color: "text-[#b45309]", bg: "bg-amber-50 border-amber-200",   icon: <MdShield />,  desc: "Full access — billing, team, and all settings." },
-  Seller: { color: "text-[#006c49]", bg: "bg-[#e6f7f1] border-[#c3eed8]", icon: <MdAdminPanelSettings />, desc: "Manage products, orders, customers, and channels." },
-  Editor: { color: "text-[#1d4ed8]", bg: "bg-blue-50 border-blue-200",    icon: <MdEditNote />,      desc: "Create and edit catalog, blog, and newsletters." },
-  Viewer: { color: "text-[#7c839b]", bg: "bg-[#f0f2ff] border-[#c6c6cd]", icon: <MdVisibility />,     desc: "Read-only access to all admin sections." },
+  Owner:    { color: "text-[#b45309]", bg: "bg-amber-50 border-amber-200",   icon: <MdShield />,            desc: "Full access — billing, team, and all settings." },
+  Business: { color: "text-[#006c49]", bg: "bg-[#e6f7f1] border-[#c3eed8]", icon: <MdAdminPanelSettings />, desc: "Manage products, orders, customers, and channels." },
+  Editor:   { color: "text-[#1d4ed8]", bg: "bg-blue-50 border-blue-200",    icon: <MdEditNote />,           desc: "Create and edit catalog, blog, and newsletters." },
+  Viewer:   { color: "text-[#7c839b]", bg: "bg-[#f0f2ff] border-[#c6c6cd]", icon: <MdVisibility />,         desc: "Read-only access to all business sections." },
 };
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string; icon: any }> = {
@@ -112,12 +113,15 @@ export default function AdminTeamPage() {
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["team"],
     queryFn: async () => {
-      const r = await fetch("/api/team");
+      const r = await fetch("/api/team", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!r.ok) throw new Error("Failed");
       const list = await r.json() as TeamMember[];
       return list.map(m => ({
         ...m,
-        role: m.role === "Admin" ? "Seller" : m.role
+        role: m.role === "Admin" || m.role === "Seller" ? "Business" : m.role
       }));
     },
   });
@@ -126,8 +130,9 @@ export default function AdminTeamPage() {
     mutationFn: async () => {
       const r = await fetch("/api/team/invite", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail, name: inviteName || undefined, role: inviteRole === "Seller" ? "Admin" : inviteRole }),
+        credentials: "include",
+        headers: { ...getAdminAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, name: inviteName || undefined, role: inviteRole }),
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.error ?? "Failed"); }
       return r.json() as Promise<TeamMember & { inviteLink: string; emailSent: boolean; emailError?: string }>;
@@ -144,8 +149,9 @@ export default function AdminTeamPage() {
     mutationFn: async ({ id, role }: { id: string; role: string }) => {
       const r = await fetch(`/api/team/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: role === "Seller" ? "Admin" : role }),
+        credentials: "include",
+        headers: { ...getAdminAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
       });
       if (!r.ok) throw new Error("Failed");
       return r.json();
@@ -157,7 +163,8 @@ export default function AdminTeamPage() {
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       const r = await fetch(`/api/team/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: { ...getAdminAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
       if (!r.ok) throw new Error("Failed");
@@ -171,7 +178,11 @@ export default function AdminTeamPage() {
 
   const removeMut = useMutation({
     mutationFn: async (id: string) => {
-      const r = await fetch(`/api/team/${id}`, { method: "DELETE" });
+      const r = await fetch(`/api/team/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!r.ok) throw new Error("Failed");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team"] }); setRemoveId(null); showToast("Member removed."); },
@@ -179,7 +190,11 @@ export default function AdminTeamPage() {
 
   const resendMut = useMutation({
     mutationFn: async (id: string) => {
-      const r = await fetch(`/api/team/${id}/resend`, { method: "POST" });
+      const r = await fetch(`/api/team/${id}/resend`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!r.ok) throw new Error("Failed");
       return r.json() as Promise<TeamMember & { inviteLink: string; emailSent: boolean; emailError?: string }>;
     },
@@ -217,7 +232,7 @@ export default function AdminTeamPage() {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
           <div>
             <h1 className="text-[32px] font-serif font-semibold text-black leading-tight">Team</h1>
-            <p className="text-sm font-[Manrope] text-[#7c839b] mt-1">Invite staff, assign roles, and manage admin access.</p>
+            <p className="text-sm font-[Manrope] text-[#7c839b] mt-1">Invite staff, assign roles, and manage business access.</p>
           </div>
           <button onClick={() => { setShowInvite(true); setNewLink(null); }}
             className="flex items-center gap-2 px-6 py-3 bg-black text-white font-[Manrope] font-bold text-xs tracking-widest uppercase hover:bg-[#006c49] transition-all rounded-lg shadow">
@@ -564,7 +579,7 @@ export default function AdminTeamPage() {
             <div>
               <p className="font-serif text-[20px] font-semibold mb-1">Remove Member?</p>
               <p className="text-sm font-[Manrope] text-[#7c839b]">
-                This will permanently remove {members.find(m => m.id === removeId)?.email} from the team. They'll lose all admin access immediately.
+                This will permanently remove {members.find(m => m.id === removeId)?.email} from the team. They'll lose all business access immediately.
               </p>
             </div>
             <div className="flex gap-3 pt-2">

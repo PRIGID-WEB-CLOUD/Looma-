@@ -42,6 +42,7 @@ interface SearchViewProps {
   shareThreads: ChatThread[];
   categories: string[];
   currentUserId: string;
+  canManageBusinessIds?: string[];
   onBack: () => void;
   onQueryChange?: (q: string) => void;
   onOpenPublicProfile: (uid: string) => void;
@@ -86,6 +87,7 @@ export function SearchView({
   shareThreads,
   categories,
   currentUserId,
+  canManageBusinessIds = [],
   onBack,
   onQueryChange,
   onOpenPublicProfile,
@@ -413,7 +415,7 @@ export function SearchView({
                   }}
                   className="text-left flex items-center gap-3 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition-colors cursor-pointer"
                 >
-                  <Avatar src={biz.logoUrl} name={biz.displayName} size="md" />
+                  <Avatar src={biz.logoUrl} name={biz.displayName} size="md" shape="business" />
                   <div className="min-w-0 flex-1 text-xs">
                     <p className="font-bold text-slate-900 dark:text-white inline-flex items-center gap-1 truncate max-w-full">
                       <span className="truncate">{biz.displayName}</span>
@@ -562,6 +564,7 @@ export function SearchView({
                   key={`vid_${post.id}`}
                   post={post}
                   currentUserId={currentUserId}
+                  canManageBusinessIds={canManageBusinessIds}
                   categories={categories}
                   isLiked={likedPostIds.includes(post.id)}
                   isBookmarked={bookmarkedPostIds.includes(post.id)}
@@ -598,6 +601,7 @@ export function SearchView({
                   key={post.id}
                   post={post}
                   currentUserId={currentUserId}
+                  canManageBusinessIds={canManageBusinessIds}
                   categories={categories}
                   isLiked={likedPostIds.includes(post.id)}
                   isBookmarked={bookmarkedPostIds.includes(post.id)}

@@ -15,10 +15,43 @@ import {
 import { buildTenantUrl, sanitizeTenantSlug } from "@workspace/tenant-routing";
 import { ADMIN_IDLE_TTL_MS, SESSION_COOKIE } from "../middleware/requireAdmin";
 import { reconcileStoreOutbox } from "../services/firestoreSyncWorker";
+import { isRateLimited } from "./auth";
 
 const router = Router();
 const SSO_CODE_TTL_MS = 60 * 1000;
 const ADMIN_SESSION_ABS_TTL_MS = 24 * 60 * 60 * 1000;
+const ssoExchangeMemoryRate = new Map<string, { windowStart: number; count: number }>();
+
+function sanitizePublicLoomaUrl(raw?: string | null): string | null {
+  const trimmed = (raw || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    return parsed.origin + (parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, ""));
+  } catch {
+    return null;
+  }
+}
+
+async function isSsoExchangeRateLimited(req: Request): Promise<boolean> {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const clientIp = forwarded || req.ip || "unknown";
+  const key = `looma_sso_exchange:${clientIp}`;
+  try {
+    return await isRateLimited(key, 20, 60_000);
+  } catch {
+    const now = Date.now();
+    const existing = ssoExchangeMemoryRate.get(key);
+    if (!existing || now - existing.windowStart >= 60_000) {
+      ssoExchangeMemoryRate.set(key, { windowStart: now, count: 1 });
+      return false;
+    }
+    if (existing.count >= 20) return true;
+    existing.count += 1;
+    return false;
+  }
+}
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -55,19 +88,21 @@ function verifyInternalSecret(req: Request, res: Response): boolean {
   return true;
 }
 
-function mapLoomaRoleToCommerce(role: "OWNER" | "ADMIN" | "EDITOR" | "VIEWER"): {
-  systemRole: "SUPER_ADMIN" | "ADMIN";
-  teamRole: "Owner" | "Admin" | "Editor" | "Viewer";
+export function mapLoomaRoleToCommerce(role: string): {
+  systemRole: "BUSINESS_OWNER" | "BUSINESS";
+  teamRole: "Owner" | "Business" | "Editor" | "Viewer";
 } {
-  switch (role) {
+  switch ((role || "").trim().toUpperCase()) {
     case "OWNER":
-      return { systemRole: "SUPER_ADMIN", teamRole: "Owner" };
+      return { systemRole: "BUSINESS_OWNER", teamRole: "Owner" };
     case "ADMIN":
-      return { systemRole: "ADMIN", teamRole: "Admin" };
+      return { systemRole: "BUSINESS", teamRole: "Business" };
     case "EDITOR":
-      return { systemRole: "ADMIN", teamRole: "Editor" };
+      return { systemRole: "BUSINESS", teamRole: "Editor" };
     case "VIEWER":
-      return { systemRole: "ADMIN", teamRole: "Viewer" };
+      return { systemRole: "BUSINESS", teamRole: "Viewer" };
+    default:
+      throw new Error(`Unsupported Looma role for Commerce SSO: ${role}`);
   }
 }
 
@@ -149,7 +184,7 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
         firebaseUid: ownerFirebaseUid,
         name: ownerName,
         email: ownerEmail,
-        role: "SUPER_ADMIN",
+        role: "BUSINESS_OWNER",
         passwordHash: "",
       });
 
@@ -361,7 +396,18 @@ const exchangeCodeSchema = z.object({
   code: z.string().trim().min(16).max(256),
 });
 
+router.get("/auth/looma/config", (_req: Request, res: Response) => {
+  const loomaAppUrl = sanitizePublicLoomaUrl(
+    process.env.LOOMA_APP_URL || process.env.PUBLIC_LOOMA_APP_URL || process.env.VITE_LOOMA_APP_URL
+  );
+  return res.json({ loomaAppUrl });
+});
+
 router.post("/auth/looma/exchange", async (req: Request, res: Response) => {
+  if (await isSsoExchangeRateLimited(req)) {
+    return res.status(429).json({ error: "Too many authorization attempts. Please wait a moment." });
+  }
+
   const parsed = exchangeCodeSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Valid one-time authorization code is required." });

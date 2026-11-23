@@ -21,7 +21,7 @@ type OrderItem = { name: string; qty: number; price: number };
 type Order = { id: string; total: number; status: string; createdAt: string; items: OrderItem[] };
 
 type Stats = {
-  role: "ADMIN" | "SUPER_ADMIN" | "PLATFORM_ADMIN";
+  role: "BUSINESS" | "BUSINESS_OWNER" | "PLATFORM_ADMIN";
   totalRevenue: number;
   totalOrders: number;
   avgOrderValue: number;
@@ -176,7 +176,7 @@ function SuperAdminPanel({ stats, isPlatformAdmin }: { stats: Stats; isPlatformA
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <MetricCard label="Registered Customers" value={(stats.totalUsers ?? 0).toString()} icon={<MdGroup />} />
-        <MetricCard label="Admin Users"          value={(stats.adminCount ?? 0).toString()} icon={<MdGroup />} />
+        <MetricCard label="Business Team"        value={(stats.adminCount ?? 0).toString()} icon={<MdGroup />} />
         <MetricCard label="Categories"           value={(stats.categoryCount ?? 0).toString()} icon={<MdCategory />} />
         <MetricCard label="Low-Stock Items"      value={stats.lowStockProducts.length.toString()} sub={stats.lowStockProducts.length > 0 ? stats.lowStockProducts.slice(0, 2).map(p => p.name).join(", ") : undefined} icon={<MdWarning />} />
       </section>
@@ -456,9 +456,9 @@ export default function AdminDashboardPage() {
   });
 
   const isPlatformAdmin = user?.role === "PLATFORM_ADMIN";
-  const isSuperAdmin    = user?.role === "SUPER_ADMIN" || isPlatformAdmin;
+  const isSuperAdmin    = user?.role === "BUSINESS_OWNER" || isPlatformAdmin;
   const title           = isPlatformAdmin ? "Platform Command Center" : isSuperAdmin ? "Executive Overview" : "Operations Dashboard";
-  const badge           = isPlatformAdmin ? "Platform Admin" : isSuperAdmin ? "Super Admin" : "Admin";
+  const badge           = isPlatformAdmin ? "Platform Admin" : isSuperAdmin ? "Business Owner" : "Business";
   const badgeColor      = isPlatformAdmin
     ? "bg-purple-100 text-purple-800"
     : isSuperAdmin

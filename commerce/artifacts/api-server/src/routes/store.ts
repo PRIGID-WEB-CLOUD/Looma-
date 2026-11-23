@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import {
   db, productsTable, categoriesTable, ordersTable, productVariantsTable,
-  mediaItemsTable, blogPostsTable, couponsTable, usersTable, teamMembersTable,
+  mediaItemsTable, blogPostsTable, couponsTable, usersTable, teamMembersTable, sessionsTable,
   paymentTransactionsTable, orderItemsTable, appSettingsTable, providerPluginsTable,
   messagesTable, showroomLocationsTable, storesTable,
   type AddressSnapshot, type OrderItem,
@@ -123,7 +123,7 @@ router.get("/store/branding", async (req: TenantRequest, res: Response) => {
     if (!store) return res.status(404).json({ error: "Store not found" });
 
     const user = await getSessionUser(req, store.id).catch(() => null);
-    const isAdmin = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
+    const isAdmin = user && (user.role === "BUSINESS" || user.role === "BUSINESS_OWNER" || user.role === "PLATFORM_ADMIN");
 
     const rows = await db
       .select()
@@ -294,7 +294,7 @@ const variantSchema = z.object({
 router.get("/products", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
   const user = await getSessionUser(req, storeId);
-  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
+  const canManage = user && (user.role === "BUSINESS" || user.role === "BUSINESS_OWNER" || user.role === "PLATFORM_ADMIN");
 
   const prods = await db.select().from(productsTable)
     .where(and(
@@ -338,7 +338,7 @@ router.get("/products/:id", async (req: TenantRequest, res: Response) => {
   const productId = req.params.id as string;
   const storeId = req.storeId!;
   const user = await getSessionUser(req, storeId);
-  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
+  const canManage = user && (user.role === "BUSINESS" || user.role === "BUSINESS_OWNER" || user.role === "PLATFORM_ADMIN");
 
   const rows = await db.select().from(productsTable).where(and(
     eq(productsTable.id, productId),
@@ -1266,8 +1266,8 @@ router.get("/users", requireAdmin, async (req: TenantRequest, res: Response) => 
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
-      ne(usersTable.role, "ADMIN"),
-      ne(usersTable.role, "SUPER_ADMIN"),
+      ne(usersTable.role, "BUSINESS"),
+      ne(usersTable.role, "BUSINESS_OWNER"),
       ne(usersTable.role, "PLATFORM_ADMIN")
     ))
     .orderBy(desc(usersTable.createdAt));
@@ -1294,13 +1294,14 @@ router.put("/users/bulk", requireAdmin, async (req: TenantRequest, res: Response
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: "No user IDs provided" });
   }
-  if (!role) {
-    return res.status(400).json({ error: "No role provided to update" });
+  const normalizedRole = (role || "").trim().toUpperCase();
+  if (normalizedRole !== "CUSTOMER") {
+    return res.status(403).json({ error: "Customer bulk updates cannot assign privileged merchant roles." });
   }
   try {
     await db.update(usersTable)
-      .set({ role })
-      .where(and(inArray(usersTable.id, ids), eq(usersTable.storeId, storeId)));
+      .set({ role: "CUSTOMER" })
+      .where(and(inArray(usersTable.id, ids), eq(usersTable.storeId, storeId), eq(usersTable.role, "CUSTOMER")));
     return res.json({ success: true, message: `Updated ${ids.length} users` });
   } catch (err) {
     return res.status(500).json({ error: String(err) });
@@ -1375,13 +1376,49 @@ function normalizeTeamStatus(rawStatus?: string | null): string {
   return s;
 }
 
+function normalizeValidatedTeamRole(rawRole?: string): "Owner" | "Business" | "Editor" | "Viewer" | null {
+  switch ((rawRole || "").trim().toLowerCase()) {
+    case "owner":
+      return "Owner";
+    case "business":
+    case "admin":
+    case "seller":
+      return "Business";
+    case "editor":
+      return "Editor";
+    case "viewer":
+      return "Viewer";
+    default:
+      return null;
+  }
+}
+
+function normalizeValidatedTeamStatus(rawStatus?: string): "Active" | "Invited" | "Disabled" | "Revoked" | null {
+  switch ((rawStatus || "").trim().toLowerCase()) {
+    case "active":
+      return "Active";
+    case "invited":
+    case "pending":
+      return "Invited";
+    case "disabled":
+    case "suspended":
+      return "Disabled";
+    case "revoked":
+    case "removed":
+      return "Revoked";
+    default:
+      return null;
+  }
+}
+
 router.get("/team", requireAdmin, async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
+  const canViewInviteTokens = req.commerceAuth?.role === "Owner";
   const [teamDb, adminUsers] = await Promise.all([
     db.select().from(teamMembersTable).where(eq(teamMembersTable.storeId, storeId)),
     db.select().from(usersTable).where(and(
       eq(usersTable.storeId, storeId),
-      or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"))
+      or(eq(usersTable.role, "BUSINESS"), eq(usersTable.role, "BUSINESS_OWNER"))
     )),
   ]);
 
@@ -1392,11 +1429,11 @@ router.get("/team", requireAdmin, async (req: TenantRequest, res: Response) => {
       id: m.id,
       email: m.email,
       name: m.name || "Team Member",
-      role: m.role || "Editor",
+      role: m.role === "Admin" ? "Business" : (m.role || "Editor"),
       status: normalizeTeamStatus(m.status),
       invitedBy: null,
-      inviteToken: m.inviteToken,
-      inviteLink: m.inviteToken ? `/seller/accept-invite?token=${m.inviteToken}` : undefined,
+      inviteToken: canViewInviteTokens ? m.inviteToken : null,
+      inviteLink: canViewInviteTokens && m.inviteToken ? `/seller/accept-invite?token=${m.inviteToken}` : undefined,
       lastLoginAt: null,
       createdAt: m.invitedAt,
     };
@@ -1407,8 +1444,8 @@ router.get("/team", requireAdmin, async (req: TenantRequest, res: Response) => {
     .map((user) => ({
       id: user.id,
       email: user.email,
-      name: user.name || "Administrator",
-      role: user.role === "SUPER_ADMIN" ? "Owner" : "Admin",
+      name: user.name || "Business Member",
+      role: user.role === "BUSINESS_OWNER" ? "Owner" : "Business",
       status: "active",
       invitedBy: null,
       inviteToken: null,
@@ -1434,6 +1471,11 @@ router.post("/team/invite", requireAdmin, async (req: TenantRequest, res: Respon
     return res.status(400).json({ error: "Email address is required." });
   }
 
+  const cleanRole = role !== undefined ? normalizeValidatedTeamRole(role) : "Editor";
+  if (!cleanRole) {
+    return res.status(400).json({ error: "Invalid team role. Allowed roles: Owner, Business, Editor, Viewer." });
+  }
+
   const normalizedEmail = email.trim().toLowerCase();
   const [existing] = await db.select().from(teamMembersTable)
     .where(and(eq(teamMembersTable.storeId, storeId), eq(teamMembersTable.email, normalizedEmail)))
@@ -1444,7 +1486,6 @@ router.post("/team/invite", requireAdmin, async (req: TenantRequest, res: Respon
 
   const id = randomUUID();
   const token = randomUUID();
-  const cleanRole = role?.trim() || "Editor";
   const [created] = await db.insert(teamMembersTable).values({
     id,
     storeId,
@@ -1480,8 +1521,20 @@ router.put("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) 
   const { role, status } = req.body as { role?: string; status?: string };
 
   const updates: Partial<typeof teamMembersTable.$inferInsert> = {};
-  if (role !== undefined) updates.role = role;
-  if (status !== undefined) updates.status = status;
+  if (role !== undefined) {
+    const validatedRole = normalizeValidatedTeamRole(role);
+    if (!validatedRole) {
+      return res.status(400).json({ error: "Invalid team role. Allowed roles: Owner, Business, Editor, Viewer." });
+    }
+    updates.role = validatedRole;
+  }
+  if (status !== undefined) {
+    const validatedStatus = normalizeValidatedTeamStatus(status);
+    if (!validatedStatus) {
+      return res.status(400).json({ error: "Invalid team status." });
+    }
+    updates.status = validatedStatus;
+  }
 
   const [updated] = await db.update(teamMembersTable)
     .set(updates)
@@ -1489,12 +1542,24 @@ router.put("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) 
     .returning();
 
   if (updated) {
-    if (role !== undefined) {
-      const targetUserRole = updated.role.toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+    const [targetUser] = await db.select()
+      .from(usersTable)
+      .where(and(eq(usersTable.storeId, storeId), eq(usersTable.email, updated.email)))
+      .limit(1);
+
+    if (updates.role !== undefined && targetUser) {
+      const targetUserRole = updated.role.toLowerCase() === "owner" ? "BUSINESS_OWNER" : "BUSINESS";
       await db.update(usersTable)
         .set({ role: targetUserRole })
-        .where(and(eq(usersTable.storeId, storeId), eq(usersTable.email, updated.email)));
+        .where(and(eq(usersTable.storeId, storeId), eq(usersTable.id, targetUser.id)));
     }
+
+    if ((updates.status === "Disabled" || updates.status === "Revoked") && targetUser) {
+      await db.update(sessionsTable)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(sessionsTable.storeId, storeId), eq(sessionsTable.userId, targetUser.id)));
+    }
+
     return res.json({
       id: updated.id,
       email: updated.email,
@@ -1508,9 +1573,9 @@ router.put("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) 
     });
   }
 
-  // Also support role update if member row corresponds directly to an admin user in usersTable
-  if (role !== undefined) {
-    const targetUserRole = role.toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+  // Also support role update if member row corresponds directly to a business user in usersTable
+  if (updates.role !== undefined) {
+    const targetUserRole = updates.role.toLowerCase() === "owner" ? "BUSINESS_OWNER" : "BUSINESS";
     const [updatedUser] = await db.update(usersTable)
       .set({ role: targetUserRole })
       .where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)))
@@ -1520,7 +1585,7 @@ router.put("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) 
         id: updatedUser.id,
         email: updatedUser.email,
         name: updatedUser.name,
-        role: updatedUser.role === "SUPER_ADMIN" ? "Owner" : "Admin",
+        role: updatedUser.role === "BUSINESS_OWNER" ? "Owner" : "Business",
         status: "active",
         invitedBy: null,
         inviteToken: null,
@@ -1579,7 +1644,7 @@ router.delete("/team/:id", requireAdmin, async (req: TenantRequest, res: Respons
     .where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)))
     .limit(1);
   if (!adminUser) return res.status(404).json({ error: "Team member not found" });
-  if (adminUser.role === "SUPER_ADMIN") {
+  if (adminUser.role === "BUSINESS_OWNER") {
     return res.status(400).json({ error: "Store owner cannot be removed." });
   }
   await db.delete(usersTable).where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)));
@@ -1638,7 +1703,7 @@ router.post("/team/accept", async (req: TenantRequest, res: Response) => {
     .returning();
   if (!member) return res.status(404).json({ error: "Invite not found or expired" });
 
-  const assignedRole = (member.role || "").toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+  const assignedRole = (member.role || "").toLowerCase() === "owner" ? "BUSINESS_OWNER" : "BUSINESS";
 
   // Auto-register into usersTable under the inviting store
   await db.insert(usersTable).values({

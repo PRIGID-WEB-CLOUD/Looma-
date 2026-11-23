@@ -39,3 +39,16 @@ jobs:
 
       - name: Build production bundle
         run: npm run build
+
+      - name: Install Commerce workspace dependencies
+        run: bun install --cwd commerce
+
+      - name: Commerce typecheck & integration tests
+        run: |
+          npm --prefix commerce run typecheck:all
+          npx --yes tsx --test commerce/artifacts/api-server/src/routes/sso.test.ts commerce/artifacts/luxe-boutique-admin/src/lib/loomaUrl.test.ts
+
+      - name: Build Commerce production bundle
+        env:
+          VITE_LOOMA_APP_URL: https://looma.prigidcollection.workers.dev
+        run: npm --prefix commerce run build

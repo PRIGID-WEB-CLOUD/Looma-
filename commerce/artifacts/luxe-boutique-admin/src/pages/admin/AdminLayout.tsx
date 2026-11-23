@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation } from "wouter";
-import { useAuth } from "../../contexts/AuthContext";
+import { useAuth, getAdminAuthHeaders } from "../../contexts/AuthContext";
 import { 
   MdDashboard, 
   MdLocationOn,
@@ -371,7 +371,22 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
   const notifRef = useRef<HTMLDivElement>(null);
   const userRef  = useRef<HTMLDivElement>(null);
 
-  const navItems = sidebar === "channels" ? channelNavItems : mainNavItems;
+  const normalizedTeamRole = (user?.teamRole || "").toLowerCase();
+  const isPlatformAdmin = user?.role === "PLATFORM_ADMIN";
+  const isOwnerRole = isPlatformAdmin || user?.role === "BUSINESS_OWNER" || normalizedTeamRole === "owner";
+
+  const filteredMainNavItems = mainNavItems.filter((item) => {
+    if (isOwnerRole) return true;
+    if (normalizedTeamRole === "editor") {
+      return ["/", "/catalog", "/categories", "/coupons", "/media", "/blog", "/newsletter"].includes(item.href);
+    }
+    if (normalizedTeamRole === "viewer" || normalizedTeamRole === "business" || normalizedTeamRole === "admin") {
+      return !["/team", "/settings"].includes(item.href);
+    }
+    return false;
+  });
+
+  const navItems = sidebar === "channels" ? channelNavItems : filteredMainNavItems;
   
   // Responsive sidebar width/margin logic
   const sidebarW = collapsed ? "w-[68px]" : "w-64";
@@ -384,14 +399,20 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
   // ── Initial fetch ──────────────────────────────────────────────────────────
   const fetchOrders = useCallback(async () => {
     try {
-      const res = await fetch("/api/orders");
+      const res = await fetch("/api/orders", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) setOrders(await res.json());
     } catch { /* silently ignore */ }
   }, []);
 
   const fetchLowStock = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/low-stock");
+      const res = await fetch("/api/admin/low-stock", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) {
         const { products, threshold } = await res.json() as { products: LowStockProduct[]; threshold: number };
         const activeOnly = (products || []).filter((p) => (p.stock ?? 0) <= threshold);
@@ -416,7 +437,10 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
   const fetchDbUnreadCount = useCallback(async () => {
     try {
       const seenArray = Array.from(seenIds);
-      const res = await fetch(`/api/admin/notifications/unread-count?seenIds=${encodeURIComponent(seenArray.join(","))}`);
+      const res = await fetch(`/api/admin/notifications/unread-count?seenIds=${encodeURIComponent(seenArray.join(","))}`, {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json() as { unreadCount: number; actionableIds?: string[] };
         setDbUnreadCount(data.unreadCount);
@@ -429,28 +453,37 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
 
   const fetchChannelEvents = useCallback(async () => {
     try {
-      const res = await fetch("/api/channels/events");
+      const res = await fetch("/api/channels/events", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) {
         setChannelEvents(await res.json());
       }
     } catch { /* silently ignore */ }
   }, []);
 
-  useEffect(() => { 
-    fetchOrders(); 
-    fetchLowStock(); 
+  useEffect(() => {
+    if (!user) return;
+    fetchOrders();
+    fetchLowStock();
     fetchDbUnreadCount();
     fetchChannelEvents();
-  }, [fetchOrders, fetchLowStock, fetchDbUnreadCount, fetchChannelEvents]);
+  }, [user, fetchOrders, fetchLowStock, fetchDbUnreadCount, fetchChannelEvents]);
 
   useEffect(() => {
+    if (!user) return;
     fetchDbUnreadCount();
-  }, [orders, seenIds, fetchDbUnreadCount]);
+  }, [user, orders, seenIds, fetchDbUnreadCount]);
 
   const checkNow = useCallback(async () => {
     setCheckingStock(true);
     try {
-      const res = await fetch("/api/admin/low-stock/check", { method: "POST" });
+      const res = await fetch("/api/admin/low-stock/check", {
+        method: "POST",
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (res.ok) {
         const { products, threshold } = await res.json() as { products: LowStockProduct[]; threshold: number };
         setLowStockAlerts(products);
@@ -470,6 +503,7 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
 
   // ── SSE real-time connection ──────────────────────────────────────────────
   useEffect(() => {
+    if (!user) return;
     let es: EventSource | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retryDelay = 2000;
@@ -554,7 +588,7 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
       es?.close();
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, []);
+  }, [user]);
 
   // ── Close dropdowns on outside click ────────────────────────────────────
   useEffect(() => {
@@ -775,10 +809,12 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
             </>
           ) : (
             <>
-              <Link href="/settings" title="Settings" className={`flex items-center gap-3 py-3.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-all font-serif text-sm uppercase tracking-wider rounded-sm ${collapsed ? "justify-center px-2" : "px-5"}`}>
-                <MdSettings className="text-xl shrink-0" />
-                {!collapsed && <span className="sidebar-label">Settings</span>}
-              </Link>
+              {isOwnerRole && (
+                <Link href="/settings" title="Settings" className={`flex items-center gap-3 py-3.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-all font-serif text-sm uppercase tracking-wider rounded-sm ${collapsed ? "justify-center px-2" : "px-5"}`}>
+                  <MdSettings className="text-xl shrink-0" />
+                  {!collapsed && <span className="sidebar-label">Settings</span>}
+                </Link>
+              )}
               <a href="#" title="Help" className={`flex items-center gap-3 py-3.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-all font-serif text-sm uppercase tracking-wider rounded-sm ${collapsed ? "justify-center px-2" : "px-5"}`}>
                 <MdHelp className="text-xl shrink-0" />
                 {!collapsed && <span className="sidebar-label">Help</span>}
@@ -1123,14 +1159,18 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-serif font-semibold text-[15px] text-[#0b1c30] truncate">
-                      {user?.name ?? "Seller"}
+                      {user?.name ?? "Business"}
                     </p>
                     <p className="font-[Manrope] text-[11px] text-[#7c839b] truncate mt-0.5">
                       {user?.email}
                     </p>
                     <span className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-[#eff4ff] text-[#006c49] text-[9px] font-[Manrope] font-bold uppercase tracking-widest rounded-full">
                       <MdVerified className="text-[10px]" />
-                      {(user?.role === "Admin" || user?.role === "ADMIN") ? "Seller" : (user?.role === "SUPER_ADMIN" ? "Owner" : (user?.role ?? "Seller"))}
+                      {user?.role === "PLATFORM_ADMIN"
+                        ? "Platform Admin"
+                        : user?.teamRole === "Admin" || user?.teamRole === "Business"
+                        ? "Business"
+                        : user?.teamRole || (user?.role === "BUSINESS_OWNER" ? "Owner" : "Business")}
                     </span>
                   </div>
                 </div>
@@ -1142,12 +1182,14 @@ export default function AdminLayout({ children, sidebar = "main" }: AdminLayoutP
                       <span className="font-[Manrope] text-sm text-[#0b1c30]">Dashboard</span>
                     </div>
                   </Link>
-                  <Link href="/settings" onClick={() => setShowUser(false)}>
-                    <div className="flex items-center gap-3 px-5 py-2.5 hover:bg-slate-50 cursor-pointer transition-colors">
-                      <MdSettings className="text-slate-400 text-base" />
-                      <span className="font-[Manrope] text-sm text-[#0b1c30]">Settings</span>
-                    </div>
-                  </Link>
+                  {isOwnerRole && (
+                    <Link href="/settings" onClick={() => setShowUser(false)}>
+                      <div className="flex items-center gap-3 px-5 py-2.5 hover:bg-slate-50 cursor-pointer transition-colors">
+                        <MdSettings className="text-slate-400 text-base" />
+                        <span className="font-[Manrope] text-sm text-[#0b1c30]">Settings</span>
+                      </div>
+                    </Link>
+                  )}
                 </div>
 
                 <div className="border-t border-slate-100 py-2">

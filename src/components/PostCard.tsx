@@ -11,6 +11,7 @@ import {
   Maximize2,
   MessageCircle,
   MessageSquare,
+  MoreHorizontal,
   Music,
   Pencil,
   PlusCircle,
@@ -52,6 +53,7 @@ import { VerifiedBadge } from './VerifiedBadge';
 interface PostCardProps {
   post: Post;
   currentUserId?: string;
+  canManageBusinessIds?: string[];
   canManagePost?: boolean;
   isLiked: boolean;
   isBookmarked: boolean;
@@ -84,6 +86,7 @@ interface PostCardProps {
 export function PostCard({
   post,
   currentUserId = '',
+  canManageBusinessIds = [],
   canManagePost,
   isLiked,
   isBookmarked,
@@ -143,9 +146,11 @@ export function PostCard({
   const [reportingPost, setReportingPost] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportSubmitted, setReportSubmitted] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -156,10 +161,42 @@ export function PostCard({
     }
   }, [playbackSpeed]);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [menuOpen]);
+
   const isOwnPost =
     typeof canManagePost === 'boolean'
       ? canManagePost
-      : canSharePostToStory(post.authorId, currentUserId);
+      : canSharePostToStory(
+          post.authorId,
+          currentUserId,
+          post.businessProfileId,
+          canManageBusinessIds
+        );
+
+  const hasOverflowActions = Boolean(
+    (isOwnPost && onUpdatePost && !editingPost) ||
+      (isOwnPost && onShareToStory) ||
+      (!isOwnPost && onReportPost) ||
+      (isOwnPost && onDeletePost)
+  );
 
   const handleSubmitComment = async (e: FormEvent) => {
     e.preventDefault();
@@ -402,78 +439,171 @@ export function PostCard({
       data-testid="post-card"
       className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 transition-colors"
     >
-      {/* Author Header with unboxed metadata */}
-      <div className="flex items-center justify-between gap-3">
+      {/* Author Header with unboxed metadata & consolidated overflow menu */}
+      <div className="flex items-start justify-between gap-3">
         <button
           type="button"
           onClick={() => onAuthorClick?.(post)}
           aria-label={`View ${post.authorName}'s profile`}
           className="flex items-center gap-3 text-left min-w-0 cursor-pointer group"
         >
-          <Avatar src={post.authorAvatar} name={post.authorName} size="md" />
+          <Avatar
+            src={post.authorAvatar}
+            name={post.authorName}
+            size="md"
+            shape={post.authorType === 'business' ? 'business' : 'circle'}
+          />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1.5">
-              <span>{post.authorName}</span>
+            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors inline-flex items-center gap-1.5 max-w-full">
+              <span className="truncate">{post.authorName}</span>
               {post.authorVerified && <VerifiedBadge size={14} />}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
               <span>@{post.authorHandle}</span>
-              <span className="mx-1" aria-hidden="true">·</span>
+              <span className="mx-1.5" aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAtMs)}</span>
-              <span className="mx-1" aria-hidden="true">·</span>
+              <span className="mx-1.5" aria-hidden="true">·</span>
               <span>{post.category}</span>
+              {post.updatedAtMs - post.createdAtMs > 5000 && (
+                <>
+                  <span className="mx-1.5" aria-hidden="true">·</span>
+                  <span>Edited</span>
+                </>
+              )}
             </p>
           </div>
         </button>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {isOwnPost && onUpdatePost && !editingPost && !confirmingDeletePost && (
+        {hasOverflowActions && (
+          <div ref={menuRef} className="relative shrink-0">
             <button
               type="button"
-              onClick={handleOpenEdit}
-              aria-label="Edit post"
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+              onClick={() => setMenuOpen((prev) => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Post actions for ${post.authorName}`}
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <Pencil className="w-4 h-4" aria-hidden="true" />
+              <MoreHorizontal className="w-4 h-4" aria-hidden="true" />
             </button>
-          )}
 
-          {isOwnPost && onDeletePost && (
-            confirmingDeletePost ? (
-              <div className="flex items-center gap-1.5 mr-1">
-                <button
-                  type="button"
-                  disabled={deletingPost}
-                  onClick={handleConfirmDeletePost}
-                  className="min-h-[34px] px-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
-                >
-                  {deletingPost ? 'Deleting...' : 'Confirm'}
-                </button>
-                <button
-                  type="button"
-                  disabled={deletingPost}
-                  onClick={() => {
-                    setConfirmingDeletePost(false);
-                    setDeleteError(null);
-                  }}
-                  className="min-h-[34px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmingDeletePost(true)}
-                aria-label="Delete post"
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+            {menuOpen && (
+              <div
+                role="menu"
+                aria-label="Post options"
+                className="absolute right-0 top-full mt-1.5 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-1.5 z-30 space-y-0.5"
               >
-                <Trash2 className="w-4 h-4" aria-hidden="true" />
-              </button>
-            )
-          )}
-        </div>
+                {isOwnPost && onUpdatePost && !editingPost && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      handleOpenEdit();
+                    }}
+                    className="w-full min-h-[40px] px-3 rounded-xl text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+                    <span>Edit Post</span>
+                  </button>
+                )}
+
+                {isOwnPost && onShareToStory && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={sharingToStory}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void handleShareToStory();
+                    }}
+                    className="w-full min-h-[40px] px-3 rounded-xl text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer disabled:opacity-60 transition-colors"
+                  >
+                    {sharedToStory ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                    ) : (
+                      <PlusCircle className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                    )}
+                    <span>
+                      {sharingToStory
+                        ? 'Sharing to Story...'
+                        : sharedToStory
+                          ? 'Added to Story'
+                          : 'Share to Story'}
+                    </span>
+                  </button>
+                )}
+
+                {!isOwnPost && onReportPost && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setReportError(null);
+                      setReportSubmitted(false);
+                      setReportModalOpen(true);
+                    }}
+                    className="w-full min-h-[40px] px-3 rounded-xl text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <Flag className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Report Post</span>
+                  </button>
+                )}
+
+                {isOwnPost && onDeletePost && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDeleteError(null);
+                      setConfirmingDeletePost(true);
+                    }}
+                    className="w-full min-h-[40px] px-3 rounded-xl text-left text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Delete Post</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {confirmingDeletePost && isOwnPost && onDeletePost && (
+        <div
+          role="alertdialog"
+          aria-label="Confirm post deletion"
+          className="mt-3 p-3 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/30 flex flex-wrap items-center justify-between gap-2 text-xs"
+        >
+          <span className="font-medium text-red-800 dark:text-red-200">
+            Delete this post permanently?
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={deletingPost}
+              onClick={() => {
+                setConfirmingDeletePost(false);
+                setDeleteError(null);
+              }}
+              className="min-h-[34px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deletingPost}
+              onClick={handleConfirmDeletePost}
+              className="min-h-[34px] px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold cursor-pointer disabled:opacity-60"
+            >
+              {deletingPost ? 'Deleting...' : 'Confirm Delete'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {deleteError && (
         <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
@@ -884,9 +1014,9 @@ export function PostCard({
         </div>
       )}
 
-      {/* Action Bar */}
-      <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-1.5 sm:gap-2">
-        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+      {/* Balanced 4-Action Footer Bar */}
+      <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
           <button
             type="button"
             onClick={() => onToggleLike(post)}
@@ -895,10 +1025,10 @@ export function PostCard({
                 ? `Unlike post by ${post.authorName} (${post.likesCount} likes)`
                 : `Like post by ${post.authorName} (${post.likesCount} likes)`
             }
-            className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+            className={`min-h-[44px] min-w-[44px] px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               isLiked
                 ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Heart
@@ -919,65 +1049,19 @@ export function PostCard({
             }}
             aria-expanded={onOpenComments ? undefined : commentsOpen}
             aria-label={`Comments on ${post.authorName}'s post (${comments.length || post.commentsCount})`}
-            className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >
             <MessageCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>{Math.max(post.commentsCount, comments.length)}</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {isOwnPost && onShareToStory && (
-            <button
-              type="button"
-              disabled={sharingToStory}
-              onClick={handleShareToStory}
-              aria-label="Share post to story"
-              className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-60 ${
-                sharedToStory
-                  ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              {sharedToStory ? (
-                <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
-              ) : (
-                <PlusCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-              )}
-              <span className="hidden sm:inline">
-                {sharingToStory
-                  ? 'Sharing...'
-                  : sharedToStory
-                    ? 'In Story'
-                    : 'To Story'}
-              </span>
-              <span className="sm:hidden">
-                {sharingToStory ? '...' : sharedToStory ? 'Added' : 'Story'}
-              </span>
-            </button>
-          )}
-
-          {!isOwnPost && onReportPost && (
-            <button
-              type="button"
-              onClick={() => {
-                setReportError(null);
-                setReportSubmitted(false);
-                setReportModalOpen(true);
-              }}
-              aria-label={`Report post by ${post.authorName}`}
-              className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-            >
-              <Flag className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="hidden sm:inline">Report</span>
-            </button>
-          )}
-
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={handleOpenShareModal}
             aria-label={`Share post by ${post.authorName}`}
-            className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >
             <Share2 className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span className="hidden sm:inline">Share</span>
@@ -991,10 +1075,10 @@ export function PostCard({
                 ? `Remove bookmark for post by ${post.authorName}`
                 : `Bookmark post by ${post.authorName}`
             }
-            className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+            className={`min-h-[44px] min-w-[44px] px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               isBookmarked
                 ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
-                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Bookmark
@@ -1381,6 +1465,7 @@ export function PostCard({
           entries={[{ post, media: localMediaDescriptor }]}
           activePostId={post.id}
           currentUserId={currentUserId}
+          canManageBusinessIds={canManageBusinessIds}
           likedPostIds={isLiked ? [post.id] : []}
           bookmarkedPostIds={isBookmarked ? [post.id] : []}
           onClose={() => setLocalViewerOpen(false)}

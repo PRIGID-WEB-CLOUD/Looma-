@@ -39,10 +39,7 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.startsWith("/api") || url.includes("/api/")) {
     let token = "";
     try {
-      token =
-        window.sessionStorage?.getItem("looma_seller_session_token") ||
-        window.localStorage?.getItem("looma_seller_session_token") ||
-        "";
+      token = window.sessionStorage?.getItem("looma_seller_session_token") || "";
     } catch {
       token = "";
     }

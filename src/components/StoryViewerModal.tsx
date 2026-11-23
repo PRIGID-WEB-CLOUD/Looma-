@@ -15,10 +15,11 @@ interface StoryViewerModalProps {
   groups: StoryGroup[];
   activeAuthorId: string | null;
   currentUid: string;
+  canManageBusinessIds?: string[];
   onClose: () => void;
   onSelectAuthor: (authorId: string) => void;
   onMarkViewed: (storyId: string) => void;
-  onOpenAuthorProfile: (authorId: string) => void;
+  onOpenAuthorProfile: (group: StoryGroup) => void;
   onReplyToStory: (group: StoryGroup, text: string) => Promise<void>;
   onDeleteStory?: (story: StoryItem) => Promise<void>;
 }
@@ -27,6 +28,7 @@ export function StoryViewerModal({
   groups,
   activeAuthorId,
   currentUid,
+  canManageBusinessIds = [],
   onClose,
   onSelectAuthor,
   onMarkViewed,
@@ -103,7 +105,13 @@ export function StoryViewerModal({
 
   if (!activeGroup || !activeItem) return null;
 
-  const isOwnStory = activeGroup.authorId === currentUid;
+  const isBusinessStory = activeGroup.authorType === 'business';
+  const managedBusinessId = activeGroup.businessProfileId || activeGroup.authorId;
+  const isOwnStory =
+    activeGroup.authorId === currentUid ||
+    (isBusinessStory &&
+      (canManageBusinessIds.includes(managedBusinessId) ||
+        activeGroup.items.some((item) => item.actorUid === currentUid)));
 
   const handleSubmitReply = async (e: FormEvent) => {
     e.preventDefault();
@@ -168,7 +176,7 @@ export function StoryViewerModal({
             type="button"
             onClick={() => {
               onClose();
-              onOpenAuthorProfile(activeGroup.authorId);
+              onOpenAuthorProfile(activeGroup);
             }}
             className="flex items-center gap-3 min-w-0 text-left cursor-pointer group min-h-[44px]"
           >
@@ -176,6 +184,7 @@ export function StoryViewerModal({
               src={activeGroup.authorAvatar}
               name={activeGroup.authorName}
               size="md"
+              shape={isBusinessStory ? 'business' : 'circle'}
             />
             <div className="min-w-0">
               <p className="font-display text-sm sm:text-base font-semibold text-white inline-flex items-center gap-1 max-w-full min-w-0 group-hover:underline">
@@ -244,6 +253,13 @@ export function StoryViewerModal({
           >
             {groups.map((grp) => {
               const selected = grp.authorId === activeGroup.authorId;
+              const grpIsBiz = grp.authorType === 'business';
+              const grpShortName =
+                grp.authorId === currentUid
+                  ? 'Your Story'
+                  : grpIsBiz
+                    ? grp.authorName
+                    : grp.authorName.split(' ')[0];
               return (
                 <button
                   key={grp.authorId}
@@ -260,13 +276,10 @@ export function StoryViewerModal({
                     src={grp.authorAvatar}
                     name={grp.authorName}
                     size="sm"
+                    shape={grpIsBiz ? 'business' : 'circle'}
                   />
-                  <span className="text-xs inline-flex items-center gap-1 max-w-[116px] min-w-0">
-                    <span className="truncate">
-                      {grp.authorId === currentUid
-                        ? 'Your Story'
-                        : grp.authorName.split(' ')[0]}
-                    </span>
+                  <span className="text-xs inline-flex items-center gap-1 max-w-[128px] min-w-0">
+                    <span className="truncate">{grpShortName}</span>
                     {grp.authorVerified && <VerifiedBadge size={11} />}
                   </span>
                 </button>
@@ -365,8 +378,8 @@ export function StoryViewerModal({
               onChange={(e) => setReplyText(e.target.value)}
               placeholder={
                 sentNotice
-                  ? `Reply sent to ${activeGroup.authorName.split(' ')[0]}!`
-                  : `Reply to ${activeGroup.authorName.split(' ')[0]}...`
+                  ? `Reply sent to ${isBusinessStory ? activeGroup.authorName : activeGroup.authorName.split(' ')[0]}!`
+                  : `Reply to ${isBusinessStory ? activeGroup.authorName : activeGroup.authorName.split(' ')[0]}...`
               }
               maxLength={400}
               className="flex-1 min-h-[48px] px-4 rounded-2xl bg-slate-900 border border-slate-700 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"

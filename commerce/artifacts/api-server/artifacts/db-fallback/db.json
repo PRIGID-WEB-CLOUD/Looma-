@@ -1870,7 +1870,7 @@
       "id": "user-super-admin",
       "name": "LUXE Admin",
       "email": "admin@luxeboutique.com",
-      "role": "SUPER_ADMIN",
+      "role": "BUSINESS_OWNER",
       "passwordHash": "",
       "createdAt": "2026-09-14T12:29:29.479Z",
       "updatedAt": "2026-09-14T12:29:29.479Z"

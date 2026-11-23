@@ -275,13 +275,17 @@ service cloud.firestore {
           'imageUrl', 'caption', 'expiresAtMs', 'createdAt'
         ])
         && data.keys().hasOnly([
-          'id', 'authorId', 'authorName', 'authorHandle', 'authorAvatar',
-          'authorVerified', 'imageUrl', 'caption', 'expiresAtMs', 'createdAt'
+          'id', 'authorId', 'authorType', 'businessProfileId', 'actorUid',
+          'authorName', 'authorHandle', 'authorAvatar', 'authorVerified',
+          'imageUrl', 'caption', 'expiresAtMs', 'createdAt'
         ])
         && isValidId(data.id)
         && isValidId(data.authorId)
-        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
-        && isValidHandle(data.authorHandle)
+        && (!('authorType' in data) || data.authorType in ['personal', 'business'])
+        && (!('businessProfileId' in data) || isValidId(data.businessProfileId))
+        && (!('actorUid' in data) || isValidId(data.actorUid))
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && (isValidHandle(data.authorHandle) || isValidMarketplaceSlug(data.authorHandle))
         && data.authorAvatar is string && data.authorAvatar.size() <= 250000
         && (!('authorVerified' in data) || data.authorVerified is bool)
         && data.imageUrl is string && data.imageUrl.size() <= 600000
@@ -1488,20 +1492,50 @@ service cloud.firestore {
         && isValidId(storyId)
         && isValidStory(incoming())
         && incoming().id == storyId
-        && incoming().authorId == request.auth.uid
         && incoming().expiresAtMs > request.time.toMillis()
         && incoming().expiresAtMs <= request.time.toMillis() + 90000000
         && incoming().createdAt == request.time
         && (
-          !('authorVerified' in incoming())
-          || incoming().authorVerified == false
-          || isAdmin()
-          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+          (
+            (!('authorType' in incoming()) || incoming().authorType == 'personal')
+            && incoming().authorId == request.auth.uid
+            && (!('actorUid' in incoming()) || incoming().actorUid == request.auth.uid)
+            && !('businessProfileId' in incoming())
+            && (
+              !('authorVerified' in incoming())
+              || incoming().authorVerified == false
+              || isAdmin()
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true
+            )
+          )
+          || (
+            incoming().authorType == 'business'
+            && 'businessProfileId' in incoming()
+            && incoming().authorId == incoming().businessProfileId
+            && incoming().actorUid == request.auth.uid
+            && canPublishBusinessPost(incoming().businessProfileId)
+            && get(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.status == 'ACTIVE'
+            && (
+              !('authorVerified' in incoming())
+              || incoming().authorVerified == false
+              || isAdmin()
+              || get(/databases/$(database)/documents/businessProfiles/$(incoming().businessProfileId)).data.verified == true
+            )
+          )
         );
       allow update: if false;
       allow delete: if isVerifiedUser()
         && isValidId(storyId)
-        && (existing().authorId == request.auth.uid || isAdmin());
+        && (
+          existing().authorId == request.auth.uid
+          || (
+            'authorType' in existing()
+            && existing().authorType == 'business'
+            && 'businessProfileId' in existing()
+            && canPublishBusinessPost(existing().businessProfileId)
+          )
+          || isAdmin()
+        );
     }
 
     match /presence/{userId} {

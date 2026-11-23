@@ -626,7 +626,7 @@ export async function seed() {
   const { eq, or } = await import("drizzle-orm");
   const existing = await db.select({ id: usersTable.id })
     .from(usersTable)
-    .where(or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"), eq(usersTable.role, "PLATFORM_ADMIN")))
+    .where(or(eq(usersTable.role, "BUSINESS"), eq(usersTable.role, "BUSINESS_OWNER"), eq(usersTable.role, "PLATFORM_ADMIN")))
     .limit(1);
   // Note: Merchant admins are provisioned dynamically via Looma Business Profiles SSO.
   console.log("✓ seed complete: merchant users are managed via Looma Business Profiles");

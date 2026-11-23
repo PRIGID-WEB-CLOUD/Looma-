@@ -1,5 +1,6 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { ArrowLeft, ImagePlus, Sparkles } from 'lucide-react';
+import type { BusinessProfile } from '../types/business';
 import {
   ASSET_POST_ALPINE,
   ASSET_POST_ARCH,
@@ -9,9 +10,11 @@ import {
   deleteUploadedMedia,
   uploadMediaToCloudflareR2,
 } from '../services/storage';
+import { Avatar } from './Avatar';
 
 interface AddStoryModalProps {
   open: boolean;
+  activeBusinessProfile?: BusinessProfile | null;
   onClose: () => void;
   onCreateStory: (caption: string, imageUrl: string) => Promise<void>;
 }
@@ -24,6 +27,7 @@ const STORY_PRESETS = [
 
 export function AddStoryModal({
   open,
+  activeBusinessProfile = null,
   onClose,
   onCreateStory,
 }: AddStoryModalProps) {
@@ -38,6 +42,7 @@ export function AddStoryModal({
 
   const handleClose = () => {
     void deleteUploadedMedia(imageUrl);
+    setCaption('');
     setImageUrl(ASSET_POST_ARCH);
     setError(null);
     onClose();
@@ -110,15 +115,27 @@ export function AddStoryModal({
             <ArrowLeft className="w-5 h-5" aria-hidden="true" />
             <span className="hidden sm:inline text-xs font-semibold">Back</span>
           </button>
+          {activeBusinessProfile && (
+            <Avatar
+              src={activeBusinessProfile.logoUrl}
+              name={activeBusinessProfile.displayName}
+              size="sm"
+              shape="business"
+            />
+          )}
           <div className="min-w-0">
             <h2
               id="add-story-title"
               className="font-display text-base sm:text-lg font-bold text-white truncate"
             >
-              Create Story
+              {activeBusinessProfile
+                ? `Create Story · ${activeBusinessProfile.displayName}`
+                : 'Create Story'}
             </h2>
             <p className="text-[11px] text-slate-400 truncate">
-              Full-screen frame · Visible for 24 hours
+              {activeBusinessProfile
+                ? `Business Story (@${activeBusinessProfile.slug}) · Visible for 24 hours`
+                : 'Full-screen frame · Visible for 24 hours'}
             </p>
           </div>
         </div>
