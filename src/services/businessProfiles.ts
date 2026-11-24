@@ -80,6 +80,8 @@ function mapBusinessProfile(id: string, d: Record<string, unknown>): BusinessPro
     bannerUrl: String(d.bannerUrl || ''),
     ...(typeof d.websiteUrl === 'string' && d.websiteUrl ? { websiteUrl: d.websiteUrl } : {}),
     ...(typeof d.location === 'string' && d.location ? { location: d.location } : {}),
+    ...(typeof d.country === 'string' && d.country ? { country: d.country } : {}),
+    ...(typeof d.countryCode === 'string' && d.countryCode ? { countryCode: d.countryCode } : {}),
     currency: String(d.currency || 'USD'),
     ownerUid: String(d.ownerUid || ''),
     ...(typeof d.commerceStoreId === 'string' && d.commerceStoreId

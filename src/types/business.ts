@@ -14,6 +14,8 @@ export interface BusinessProfile {
   bannerUrl: string;
   websiteUrl?: string;
   location?: string;
+  country?: string;
+  countryCode?: string;
   currency: string;
   ownerUid: string;
   commerceStoreId?: string;

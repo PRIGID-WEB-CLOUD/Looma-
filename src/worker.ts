@@ -2390,6 +2390,10 @@ export function createWorkerApp() {
     return forwardCommerceRequest(c, '/api/marketplace');
   });
 
+  app.all('/api/uploads/*', async (c) => {
+    return forwardCommerceRequest(c, '/api');
+  });
+
   app.all('/api/commerce/admin/*', async (c) => {
     const rate = rateLimiter.check(`commerce_admin:${getRateLimitClientKey(c)}`, 180, 60_000);
     if (!rate.allowed) {
