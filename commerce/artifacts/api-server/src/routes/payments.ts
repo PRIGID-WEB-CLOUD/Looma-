@@ -63,7 +63,9 @@ const initializePaymentSchema = z.object({
   provider: providerParamSchema.optional(),
   currency: z.string().trim().max(10).optional(),
   exchangeRate: z.number().positive().optional(),
+  shippingCents: z.number().int().min(0).max(500000).optional(),
   couponCode: z.string().trim().max(64).optional(),
+  note: z.string().trim().max(500).optional(),
   shippingAddress: z.union([z.string().trim().min(5).max(1000), checkoutAddressSchema]),
   billingAddress: checkoutAddressSchema.optional(),
   callbackUrl: z.string().url().max(1000),
@@ -580,7 +582,9 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
     }
   }
 
-  const amount = Math.max(0, subtotal - discount) * 100;
+  const baseCurrency = (storeRecord.currency || "USD").toUpperCase();
+  const shippingFee = Math.max(0, Number(parsed.data.shippingCents || 0)) / 100;
+  const amount = Math.max(0, Math.round((subtotal + shippingFee - discount) * 100));
   const reference = `LUXE_${Date.now()}_${randomBytes(6).toString("hex").toUpperCase()}`;
   const primarySessionId = candidateSessionIds[0] || (rawCookie ? `anon:${rawCookie}` : "session-guest");
   const reservationExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -595,7 +599,10 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
     customerName: parsed.data.customerName,
     customerEmail: parsed.data.customerEmail,
     items,
+    baseCurrency,
+    shippingFee,
     couponCode: parsed.data.couponCode,
+    note: parsed.data.note || "",
     shippingAddress: addressSnapshot(parsed.data.shippingAddress),
     billingAddress: parsed.data.billingAddress ? addressSnapshot(parsed.data.billingAddress) : undefined,
   };
@@ -606,7 +613,8 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
       provider: parsed.data.provider,
       reference,
       amount,
-      currency: (parsed.data.currency || storeRecord.currency || "USD").toUpperCase(),
+      baseCurrency,
+      currency: (parsed.data.currency || baseCurrency).toUpperCase(),
       customerEmail: parsed.data.customerEmail,
       customerName: parsed.data.customerName,
       items,
@@ -725,6 +733,7 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
       const businessProfileId = meta.businessProfileId || storeRecord?.businessProfileId || null;
       const buyerFirebaseUid = typeof meta.buyerFirebaseUid === "string" ? meta.buyerFirebaseUid : null;
       const reservationExpiresAt = meta.reservationExpiresAt ? new Date(meta.reservationExpiresAt) : null;
+      const shippingFee = Math.max(0, Number(meta.shippingFee || 0));
 
       const [created] = await tx.insert(ordersTable).values({
         id: randomUUID(),
@@ -735,7 +744,10 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         customerName: meta.customerName || "Customer",
         customerId: meta.customerId,
         customerEmail: meta.customerEmail || transaction.email,
-        total: Math.max(0, subtotal - discount),
+        total: Math.max(0, subtotal + shippingFee - discount),
+        shippingCents: Math.round(shippingFee * 100),
+        paymentMethod: "card",
+        note: typeof meta.note === "string" ? meta.note : "",
         status: "PROCESSING",
         paymentStatus: "PAID",
         paymentProvider: transaction.provider,

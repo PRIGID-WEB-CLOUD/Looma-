@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Armchair,
   ArrowLeft,
@@ -56,6 +56,7 @@ import type { BusinessProfile } from '../types/business';
 import type { ChatThread, UserProfile } from '../types/social';
 import type {
   CartItem,
+  CheckoutPaymentConfig,
   CommerceProxyStatus,
   MarketplaceInboxFilter,
   MarketplaceInboxRole,
@@ -64,30 +65,42 @@ import type {
   MarketplaceStore,
   OrderStatus,
   PaymentMethod,
+  PaymentProviderId,
   PaymentStatus,
 } from '../types/marketplace';
 import {
   cancelMarketplaceOrderBuyer,
   createMarketplaceOrderRecord,
+  createUpstreamOfflineOrder,
   deleteMarketplaceProductRecord,
   fetchCommerceProxyStatus,
+  fetchStoreCheckoutConfig,
+  fetchUpstreamBuyerOrders,
   fetchUpstreamMarketplaceCatalog,
+  fetchUpstreamSellerOrders,
   submitUpstreamProxyCheckout,
   subscribeActiveMarketplaceProducts,
   subscribeBuyerMarketplaceOrders,
   subscribePublishedMarketplaceStores,
   subscribeSellerMarketplaceOrders,
   updateSellerMarketplaceOrderStatus,
+  updateUpstreamOrderStatus,
+  verifyUpstreamProxyPayment,
 } from '../services/commerce';
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
+import { COUNTRY_OPTIONS, resolveCountryOption } from '../utils/countries';
 import {
   ALL_MARKETPLACE_CATEGORIES,
   MARKETPLACE_INBOX_FILTERS,
   RADIUS_OPTIONS_KM,
   TOP_MARKETPLACE_CATEGORIES,
+  calculateMarketplaceShippingCents,
   filterMarketplaceProducts,
   formatListingTimestamp,
   getSuggestedStorefronts,
+  mergeMarketplaceOrders,
+  mergeMarketplaceProducts,
+  mergeMarketplaceStores,
   removeRecentSearch,
   resolveListingImages,
   resolveMarketplaceInboxEntries,
@@ -133,10 +146,12 @@ interface MarketplaceViewProps {
   onOpenInbox?: () => void;
   onOpenChatThread?: (threadId?: string) => void;
   onOpenSellerProfile: (sellerUid: string) => void;
-  onOpenBusinessProfile?: (slug: string) => void;
+  onOpenBusinessProfile?: (slug: string, tab?: 'posts' | 'shop' | 'team') => void;
   onOpenProductDetail?: (productId: string) => void;
   onRequireAuth?: () => void;
 }
+
+const PENDING_COMMERCE_CHECKOUT_KEY = 'looma_pending_commerce_checkout_v1';
 
 type MarketplaceSubView =
   | 'home'
@@ -614,12 +629,41 @@ export function MarketplaceView({
   const [viewHistory, setViewHistory] = useState<MarketplaceSubView[]>([]);
 
   const [proxyStatus, setProxyStatus] = useState<CommerceProxyStatus | null>(null);
-  const [stores, setStores] = useState<MarketplaceStore[]>([]);
-  const [products, setProducts] = useState<MarketplaceProduct[]>([]);
-  const [orders, setOrders] = useState<MarketplaceOrder[]>([]);
+  const [upstreamStores, setUpstreamStores] = useState<MarketplaceStore[]>([]);
+  const [firestoreStores, setFirestoreStores] = useState<MarketplaceStore[]>([]);
+  const [upstreamProducts, setUpstreamProducts] = useState<MarketplaceProduct[]>([]);
+  const [firestoreProducts, setFirestoreProducts] = useState<MarketplaceProduct[]>([]);
+  const [upstreamOrders, setUpstreamOrders] = useState<MarketplaceOrder[]>([]);
+  const [upstreamSellerOrders, setUpstreamSellerOrders] = useState<MarketplaceOrder[]>([]);
+  const [firestoreOrders, setFirestoreOrders] = useState<MarketplaceOrder[]>([]);
   const [sellerOrders, setSellerOrders] = useState<MarketplaceOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const verifiedPaymentRefsRef = useRef<Set<string>>(new Set());
+
+  const stores = useMemo(
+    () => mergeMarketplaceStores(upstreamStores, firestoreStores),
+    [upstreamStores, firestoreStores]
+  );
+  const products = useMemo(
+    () => mergeMarketplaceProducts(upstreamProducts, firestoreProducts),
+    [upstreamProducts, firestoreProducts]
+  );
+  const orders = useMemo(
+    () => mergeMarketplaceOrders(upstreamOrders, firestoreOrders),
+    [upstreamOrders, firestoreOrders]
+  );
+  const mergedSellerOrders = useMemo(
+    () => mergeMarketplaceOrders(upstreamSellerOrders, sellerOrders),
+    [upstreamSellerOrders, sellerOrders]
+  );
+  const storesById = useMemo(() => {
+    const map: Record<string, MarketplaceStore> = {};
+    for (const s of stores) {
+      map[s.id] = s;
+    }
+    return map;
+  }, [stores]);
 
   // Marketplace Inbox state
   const [inboxRole, setInboxRole] = useState<MarketplaceInboxRole>('selling');
@@ -642,6 +686,18 @@ export function MarketplaceView({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchDraft, setSearchDraft] = useState('');
   const [localOnly, setLocalOnly] = useState(false);
+  const [selectedCountry, setSelectedCountry] = useState<string>(() => {
+    try {
+      const raw = window.localStorage.getItem(prefsStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { country?: string };
+        if (parsed.country) return parsed.country;
+      }
+    } catch {
+      // ignore
+    }
+    return 'ALL';
+  });
 
   // Location & persisted marketplace preferences
   const [marketLocation, setMarketLocation] = useState<string>(() => {
@@ -709,6 +765,7 @@ export function MarketplaceView({
   // Location modal
   const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [locationInput, setLocationInput] = useState(marketLocation);
+  const [countryInput, setCountryInput] = useState(selectedCountry);
   const [radiusInput, setRadiusInput] = useState(radiusKm);
 
   // Selected listing & seller
@@ -735,8 +792,13 @@ export function MarketplaceView({
   const [shippingPhone, setShippingPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingCity, setShippingCity] = useState(profile.location || '');
+  const [shippingCountry, setShippingCountry] = useState('GH');
+  const [shippingState, setShippingState] = useState('');
+  const [shippingPostalCode, setShippingPostalCode] = useState('');
   const [orderNote, setOrderNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
+  const [checkoutConfig, setCheckoutConfig] = useState<CheckoutPaymentConfig | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<PaymentProviderId | undefined>(undefined);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<{
@@ -746,8 +808,6 @@ export function MarketplaceView({
     storeName: string;
   } | null>(null);
 
-
-
   // Persist prefs & bag
   useEffect(() => {
     try {
@@ -755,6 +815,7 @@ export function MarketplaceView({
         prefsStorageKey,
         JSON.stringify({
           location: marketLocation,
+          country: selectedCountry,
           radiusKm,
           recentSearches,
           savedSearches,
@@ -767,6 +828,7 @@ export function MarketplaceView({
   }, [
     prefsStorageKey,
     marketLocation,
+    selectedCountry,
     radiusKm,
     recentSearches,
     savedSearches,
@@ -814,23 +876,157 @@ export function MarketplaceView({
       setProxyStatus(status);
       if (status.upstreamConfigured) {
         setPaymentMethod('card');
-        void fetchUpstreamMarketplaceCatalog(status.defaultStoreId || undefined).then(
-          (res) => {
-            if (!active || !res.ok) return;
-            if (res.stores && res.stores.length > 0) {
-              setStores((prev) => (prev.length > 0 ? prev : res.stores!));
-            }
-            if (res.products && res.products.length > 0) {
-              setProducts((prev) => (prev.length > 0 ? prev : res.products!));
-            }
-          }
-        );
+        void fetchUpstreamMarketplaceCatalog().then((res) => {
+          if (!active || !res.ok) return;
+          if (res.stores) setUpstreamStores(res.stores);
+          if (res.products) setUpstreamProducts(res.products);
+          setLoading(false);
+        });
       }
     });
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!proxyStatus?.upstreamConfigured || !isAuthorized) {
+      setUpstreamOrders([]);
+      setUpstreamSellerOrders([]);
+      return;
+    }
+    let active = true;
+    void Promise.all([
+      fetchUpstreamBuyerOrders(),
+      fetchUpstreamSellerOrders(),
+    ]).then(([fetchedOrders, fetchedSellerOrders]) => {
+      if (!active) return;
+      setUpstreamOrders(fetchedOrders);
+      setUpstreamSellerOrders(fetchedSellerOrders);
+    });
+    return () => {
+      active = false;
+    };
+  }, [proxyStatus?.upstreamConfigured, isAuthorized, profile.uid]);
+
+  // Verify returning payment redirect (?checkout=verify&reference=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('checkout') !== 'verify') return;
+
+    const reference =
+      params.get('reference') || params.get('trxref') || params.get('tx_ref') || '';
+    if (!reference) return;
+    if (verifiedPaymentRefsRef.current.has(reference)) return;
+
+    let pendingCtx: {
+      storeId?: string;
+      storeName?: string;
+      clearBag?: boolean;
+    } = {};
+    try {
+      const rawPending = window.sessionStorage.getItem(PENDING_COMMERCE_CHECKOUT_KEY);
+      if (rawPending) {
+        pendingCtx = JSON.parse(rawPending) as typeof pendingCtx;
+      }
+    } catch {
+      // ignore
+    }
+
+    const queryParams: Record<string, string> = {};
+    params.forEach((value, key) => {
+      queryParams[key] = value;
+    });
+
+    const targetStoreId =
+      params.get('storeId') ||
+      pendingCtx.storeId ||
+      proxyStatus?.defaultStoreId ||
+      bagItems[0]?.storeId ||
+      '';
+    if (!targetStoreId && proxyStatus === null) {
+      // Wait for proxyStatus load to provide defaultStoreId fallback
+      return;
+    }
+
+    verifiedPaymentRefsRef.current.add(reference);
+    let active = true;
+    void verifyUpstreamProxyPayment({
+      storeId: targetStoreId,
+      reference,
+      queryParams,
+    }).then((result) => {
+      if (!active) return;
+      try {
+        window.sessionStorage.removeItem(PENDING_COMMERCE_CHECKOUT_KEY);
+      } catch {
+        // ignore
+      }
+      const nextUrl = new URL(window.location.href);
+      for (const key of ['checkout', 'reference', 'trxref', 'tx_ref', 'transaction_id', 'session_id', 'provider', 'status', 'storeId']) {
+        nextUrl.searchParams.delete(key);
+      }
+      window.history.replaceState({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+
+      if (result.ok && result.order) {
+        const verifiedOrder = result.order;
+        setUpstreamOrders((prev) => mergeMarketplaceOrders([verifiedOrder, ...prev], []));
+        if (pendingCtx.clearBag !== false) {
+          setBagItems([]);
+        }
+        setConfirmedOrder({
+          id: verifiedOrder.id,
+          totalCents: verifiedOrder.totalCents,
+          currency: verifiedOrder.currency,
+          storeName: pendingCtx.storeName || verifiedOrder.storeName,
+        });
+        setCheckoutError(null);
+        setBagOpen(true);
+        setToastNotice('Payment verified and order confirmed.');
+      } else {
+        setCheckoutError(result.error || 'Could not confirm payment. Please contact support or retry.');
+        setBagOpen(true);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [proxyStatus]);
+
+  // Fetch per-store gateway capabilities whenever the active checkout store changes
+  const activeBagStore = useMemo(() => {
+    const firstStoreId = bagItems[0]?.storeId;
+    if (!firstStoreId) return null;
+    return stores.find((s) => s.id === firstStoreId) || null;
+  }, [bagItems, stores]);
+
+  useEffect(() => {
+    if (!proxyStatus?.upstreamConfigured || !activeBagStore) {
+      setCheckoutConfig(null);
+      setSelectedProvider(undefined);
+      return;
+    }
+    let active = true;
+    const targetStoreId = activeBagStore.externalStoreId || activeBagStore.id;
+    void fetchStoreCheckoutConfig(targetStoreId).then((cfg) => {
+      if (!active) return;
+      setCheckoutConfig(cfg);
+      if (cfg && cfg.activeProviders.length > 0) {
+        setSelectedProvider((prev) =>
+          prev && cfg.activeProviders.some((p) => p.provider === prev)
+            ? prev
+            : cfg.activeProvider
+        );
+      } else {
+        setSelectedProvider(undefined);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [proxyStatus?.upstreamConfigured, activeBagStore?.id, activeBagStore?.externalStoreId]);
 
   useEffect(() => {
     if (!isFirebaseBacked || !profile.uid) {
@@ -843,7 +1039,7 @@ export function MarketplaceView({
 
     const unsubStores = subscribePublishedMarketplaceStores(
       (nextStores) => {
-        setStores(nextStores);
+        setFirestoreStores(nextStores);
         setLoading(false);
       },
       (err) => {
@@ -856,7 +1052,7 @@ export function MarketplaceView({
 
     const unsubProducts = subscribeActiveMarketplaceProducts(
       (nextProducts) => {
-        setProducts(nextProducts);
+        setFirestoreProducts(nextProducts);
         setLoading(false);
       },
       (err) => {
@@ -870,7 +1066,7 @@ export function MarketplaceView({
     const unsubOrders = subscribeBuyerMarketplaceOrders(
       profile.uid,
       (nextOrders) => {
-        setOrders(nextOrders);
+        setFirestoreOrders(nextOrders);
       },
       () => {
         // Non-fatal
@@ -992,8 +1188,10 @@ export function MarketplaceView({
         query: searchQuery,
         locationQuery: marketLocation,
         localOnly,
+        country: selectedCountry,
+        storesById,
       }),
-    [products, selectedStoreId, selectedCategory, searchQuery, marketLocation, localOnly]
+    [products, selectedStoreId, selectedCategory, searchQuery, marketLocation, localOnly, selectedCountry, storesById]
   );
 
   const searchLiveResults = useMemo(
@@ -1019,6 +1217,11 @@ export function MarketplaceView({
     [products, savedListingIds]
   );
 
+  const ownedBusinessIds = useMemo(
+    () => allBusinesses.filter((b) => b.ownerUid === profile.uid).map((b) => b.id),
+    [allBusinesses, profile.uid]
+  );
+
   const inboxEntries = useMemo(
     () =>
       resolveMarketplaceInboxEntries({
@@ -1026,24 +1229,26 @@ export function MarketplaceView({
         role: inboxRole,
         filter: inboxFilter,
         buyerOrders: orders,
-        sellerOrders,
+        sellerOrders: mergedSellerOrders,
         threads,
         products,
         stores,
         knownUsers,
         threadHints: inboxThreadHints,
+        ownedBusinessIds,
       }),
     [
       profile.uid,
       inboxRole,
       inboxFilter,
       orders,
-      sellerOrders,
+      mergedSellerOrders,
       threads,
       products,
       stores,
       knownUsers,
       inboxThreadHints,
+      ownedBusinessIds,
     ]
   );
 
@@ -1100,10 +1305,27 @@ export function MarketplaceView({
     updates: { status?: OrderStatus; paymentStatus?: PaymentStatus },
     noticeText: string
   ) => {
-    if (!isFirebaseBacked || updatingInboxOrderId) return;
+    if (updatingInboxOrderId) return;
     setUpdatingInboxOrderId(orderId);
     try {
-      await updateSellerMarketplaceOrderStatus(orderId, updates);
+      let updatedUpstream = false;
+      if (proxyStatus?.upstreamConfigured) {
+        const upRes = await updateUpstreamOrderStatus(orderId, updates);
+        if (upRes.ok && upRes.order) {
+          updatedUpstream = true;
+          const updatedOrder = upRes.order;
+          setUpstreamSellerOrders((prev) =>
+            mergeMarketplaceOrders([updatedOrder], prev)
+          );
+        }
+      }
+      if (isFirebaseBacked) {
+        try {
+          await updateSellerMarketplaceOrderStatus(orderId, updates);
+        } catch (fsErr) {
+          if (!updatedUpstream) throw fsErr;
+        }
+      }
       setToastNotice(noticeText);
     } catch (err) {
       setToastNotice(
@@ -1125,7 +1347,11 @@ export function MarketplaceView({
   );
 
   const bagCurrency = bagItems[0]?.currency || activeStore?.currency || 'USD';
-  const shippingCents = bagItems.length > 0 && bagSubtotalCents < 25000 ? 1500 : 0;
+  const shippingCents = calculateMarketplaceShippingCents(
+    bagSubtotalCents,
+    bagCurrency,
+    shippingCountry
+  );
   const bagTotalCents = bagSubtotalCents + shippingCents;
 
   const handleAddToBag = (product: MarketplaceProduct, quantity: number = 1) => {
@@ -1204,7 +1430,13 @@ export function MarketplaceView({
     }
     if (bagItems.length === 0) return;
 
-    if (!shippingName.trim() || !shippingPhone.trim() || !shippingAddress.trim() || !shippingCity.trim()) {
+    if (
+      !shippingName.trim() ||
+      !shippingPhone.trim() ||
+      !shippingAddress.trim() ||
+      !shippingCity.trim() ||
+      !shippingCountry.trim()
+    ) {
       setCheckoutError('Please complete all recipient and delivery address fields.');
       return;
     }
@@ -1216,28 +1448,96 @@ export function MarketplaceView({
       return;
     }
 
+    const countryMeta = resolveCountryOption(shippingCountry);
+    const countryName = countryMeta?.name || shippingCountry.trim();
+    const countryCode = countryMeta?.code || shippingCountry.trim().toUpperCase();
+
     setSubmittingOrder(true);
     setCheckoutError(null);
     try {
       if (paymentMethod === 'card' && proxyStatus?.upstreamConfigured) {
+        const upstreamStoreId = orderStore.externalStoreId || orderStore.id;
         const proxyResult = await submitUpstreamProxyCheckout({
-          storeId: orderStore.externalStoreId || orderStore.id,
+          storeId: upstreamStoreId,
           items: bagItems,
           shippingName,
           shippingPhone,
           shippingAddress,
           shippingCity,
+          shippingCountry: countryName,
+          shippingCountryCode: countryCode,
+          shippingState,
+          shippingPostalCode,
+          shippingCents,
           note: orderNote,
           paymentMethod,
+          provider: selectedProvider,
           customerEmail: accountEmail || undefined,
           currency: bagCurrency,
         });
         if (!proxyResult.ok) {
-          throw new Error(proxyResult.error || 'Upstream checkout proxy failed.');
+          throw new Error(proxyResult.error || 'Online payment initialization failed.');
         }
         if (proxyResult.checkoutUrl && typeof window !== 'undefined') {
+          try {
+            window.sessionStorage.setItem(
+              PENDING_COMMERCE_CHECKOUT_KEY,
+              JSON.stringify({
+                storeId: upstreamStoreId,
+                storeName: orderStore.name,
+                clearBag: true,
+                createdAtMs: Date.now(),
+              })
+            );
+          } catch {
+            // ignore sessionStorage write errors
+          }
           window.location.assign(proxyResult.checkoutUrl);
           return;
+        }
+        throw new Error('Payment gateway did not return a checkout URL. Try another payment method.');
+      }
+
+      if (proxyStatus?.upstreamConfigured && (paymentMethod === 'cod' || paymentMethod === 'wallet')) {
+        const upstreamStoreId = orderStore.externalStoreId || orderStore.id;
+        const offlineRes = await createUpstreamOfflineOrder({
+          storeId: upstreamStoreId,
+          customerName: shippingName.trim() || profile.displayName || 'Looma Buyer',
+          customerEmail: accountEmail || undefined,
+          paymentMethod,
+          shippingCents,
+          note: orderNote,
+          shippingAddress: {
+            name: shippingName.trim(),
+            phone: shippingPhone.trim(),
+            address: shippingAddress.trim(),
+            city: shippingCity.trim(),
+            country: countryName,
+            countryCode,
+            ...(shippingState.trim() ? { state: shippingState.trim() } : {}),
+            ...(shippingPostalCode.trim() ? { postalCode: shippingPostalCode.trim() } : {}),
+          },
+          items: bagItems.map((i) => ({
+            productId: i.productId,
+            ...(i.variantId ? { variantId: i.variantId } : {}),
+            quantity: i.quantity,
+          })),
+        });
+        if (offlineRes.ok && offlineRes.order) {
+          const createdOrder = offlineRes.order;
+          setUpstreamOrders((prev) => mergeMarketplaceOrders([createdOrder], prev));
+          setConfirmedOrder({
+            id: createdOrder.id,
+            totalCents: createdOrder.totalCents,
+            currency: createdOrder.currency,
+            storeName: orderStore.name,
+          });
+          setBagItems([]);
+          return;
+        }
+        // If storefront does not exist in Commerce Postgres (legacy native Firestore store), allow Firestore fallback
+        if (offlineRes.error && !offlineRes.error.toLowerCase().includes('storefront not found')) {
+          throw new Error(offlineRes.error);
         }
       }
 
@@ -1248,7 +1548,8 @@ export function MarketplaceView({
           buyerEmail: accountEmail || '',
           storeId: orderStore.id,
           storeName: orderStore.name,
-          storeOwnerUid: orderStore.ownerUid,
+          storeOwnerUid: orderStore.ownerUid || profile.uid,
+          storeBusinessProfileId: orderStore.businessProfileId,
           items: bagItems,
           shippingCents,
           currency: bagCurrency,
@@ -1257,6 +1558,10 @@ export function MarketplaceView({
           shippingPhone,
           shippingAddress,
           shippingCity,
+          shippingCountry: countryName,
+          shippingCountryCode: countryCode,
+          shippingState,
+          shippingPostalCode,
           note: orderNote,
         });
 
@@ -1275,6 +1580,7 @@ export function MarketplaceView({
           buyerEmail: accountEmail || '',
           storeId: orderStore.id,
           storeName: orderStore.name,
+          storeBusinessProfileId: orderStore.businessProfileId,
           items: bagItems.map((i) => ({
             productId: i.productId,
             title: i.title,
@@ -1293,11 +1599,15 @@ export function MarketplaceView({
           shippingPhone,
           shippingAddress,
           shippingCity,
+          shippingCountry: countryName,
+          shippingCountryCode: countryCode,
+          shippingState,
+          shippingPostalCode,
           note: orderNote,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         };
-        setOrders((prev) => [localOrder, ...prev]);
+        setUpstreamOrders((prev) => [localOrder, ...prev]);
         setConfirmedOrder({
           id: localOrder.id,
           totalCents: bagTotalCents,
@@ -1341,9 +1651,9 @@ export function MarketplaceView({
     try {
       if (isFirebaseBacked) {
         await deleteMarketplaceProductRecord(product.id);
-      } else {
-        setProducts((prev) => prev.filter((p) => p.id !== product.id));
       }
+      setUpstreamProducts((prev) => prev.filter((p) => p.id !== product.id));
+      setFirestoreProducts((prev) => prev.filter((p) => p.id !== product.id));
       setToastNotice(`Removed "${product.title}" from Marketplace.`);
       if (selectedProductId === product.id) {
         setSelectedProductId(null);
@@ -1374,7 +1684,8 @@ export function MarketplaceView({
     selectedCategory !== 'All' ||
     selectedStoreId !== 'all' ||
     Boolean(searchQuery.trim()) ||
-    localOnly;
+    localOnly ||
+    selectedCountry !== 'ALL';
 
   return (
     <div
@@ -2455,7 +2766,23 @@ export function MarketplaceView({
                       </h3>
                       <button
                         type="button"
-                        onClick={() => openSellerView(selectedProduct.ownerUid)}
+                        onClick={() => {
+                          const matchedBiz = resolveBusinessForProductOrSeller(
+                            selectedProduct,
+                            selectedProduct.ownerUid
+                          );
+                          if (matchedBiz && onOpenBusinessProfile) {
+                            onOpenBusinessProfile(matchedBiz.slug, 'shop');
+                            return;
+                          }
+                          if (selectedProduct.ownerUid) {
+                            openSellerView(selectedProduct.ownerUid);
+                          } else {
+                            setSelectedStoreId(selectedProduct.storeId);
+                            setViewHistory([]);
+                            setSubView('home');
+                          }
+                        }}
                         className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                       >
                         Seller details
@@ -2465,7 +2792,23 @@ export function MarketplaceView({
                     <div className="flex items-center justify-between gap-3">
                       <button
                         type="button"
-                        onClick={() => openSellerView(selectedProduct.ownerUid)}
+                        onClick={() => {
+                          const matchedBiz = resolveBusinessForProductOrSeller(
+                            selectedProduct,
+                            selectedProduct.ownerUid
+                          );
+                          if (matchedBiz && onOpenBusinessProfile) {
+                            onOpenBusinessProfile(matchedBiz.slug, 'shop');
+                            return;
+                          }
+                          if (selectedProduct.ownerUid) {
+                            openSellerView(selectedProduct.ownerUid);
+                          } else {
+                            setSelectedStoreId(selectedProduct.storeId);
+                            setViewHistory([]);
+                            setSubView('home');
+                          }
+                        }}
                         className="flex items-center gap-3 text-left min-w-0 cursor-pointer"
                       >
                         <AvatarFallback
@@ -2747,7 +3090,17 @@ export function MarketplaceView({
 
                   <button
                     type="button"
-                    onClick={() => onOpenSellerProfile(activeSellerProfile.uid)}
+                    onClick={() => {
+                      const matchedBiz = resolveBusinessForProductOrSeller(
+                        null,
+                        activeSellerProfile.uid
+                      );
+                      if (matchedBiz && onOpenBusinessProfile) {
+                        onOpenBusinessProfile(matchedBiz.slug);
+                      } else {
+                        onOpenSellerProfile(activeSellerProfile.uid);
+                      }
+                    }}
                     className="flex flex-col items-center gap-1.5 cursor-pointer"
                   >
                     <span className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center transition-colors">
@@ -3103,6 +3456,7 @@ export function MarketplaceView({
                     setSearchQuery('');
                     setSearchDraft('');
                     setLocalOnly(false);
+                    setSelectedCountry('ALL');
                   }}
                   aria-label="Reset Marketplace filters"
                   className="min-h-[36px] min-w-[36px] rounded-full flex items-center justify-center text-slate-800 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
@@ -3205,6 +3559,11 @@ export function MarketplaceView({
                 <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
                 {selectedCategory !== 'All' && <span>Category: {selectedCategory}</span>}
                 {activeStore && <span>Storefront: {activeStore.name}</span>}
+                {selectedCountry !== 'ALL' && (
+                  <span>
+                    Country: {resolveCountryOption(selectedCountry)?.name || selectedCountry}
+                  </span>
+                )}
                 {localOnly && <span>Local only ({marketLocation})</span>}
                 {searchQuery && <span>Search: &ldquo;{searchQuery}&rdquo;</span>}
               </div>
@@ -3216,6 +3575,7 @@ export function MarketplaceView({
                   setSearchQuery('');
                   setSearchDraft('');
                   setLocalOnly(false);
+                  setSelectedCountry('ALL');
                 }}
                 className="font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
               >
@@ -3237,6 +3597,7 @@ export function MarketplaceView({
               type="button"
               onClick={() => {
                 setLocationInput(marketLocation);
+                setCountryInput(selectedCountry);
                 setRadiusInput(radiusKm);
                 setLocationModalOpen(true);
               }}
@@ -3244,7 +3605,9 @@ export function MarketplaceView({
             >
               <MapPin className="w-4 h-4" aria-hidden="true" />
               <span>
-                {marketLocation} · {radiusKm} km
+                {selectedCountry !== 'ALL'
+                  ? `${resolveCountryOption(selectedCountry)?.name || selectedCountry} · ${marketLocation}`
+                  : `${marketLocation} · ${radiusKm} km`}
               </span>
             </button>
           </div>
@@ -3285,6 +3648,7 @@ export function MarketplaceView({
                         setSearchQuery('');
                         setSearchDraft('');
                         setLocalOnly(false);
+                        setSelectedCountry('ALL');
                       }}
                       className="min-h-[38px] px-4 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer"
                     >
@@ -3334,6 +3698,28 @@ export function MarketplaceView({
             </div>
 
             <div className="space-y-1.5">
+              <label
+                htmlFor="marketplace-filter-country"
+                className="text-xs font-semibold text-slate-700 dark:text-slate-300"
+              >
+                Country / Region
+              </label>
+              <select
+                id="marketplace-filter-country"
+                value={countryInput}
+                onChange={(e) => setCountryInput(e.target.value)}
+                className="w-full min-h-[42px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm"
+              >
+                <option value="ALL">All Countries Worldwide</option>
+                {COUNTRY_OPTIONS.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 City or Neighborhood
               </label>
@@ -3380,6 +3766,7 @@ export function MarketplaceView({
                 type="button"
                 onClick={() => {
                   setMarketLocation(locationInput.trim() || 'Local');
+                  setSelectedCountry(countryInput);
                   setRadiusKm(radiusInput);
                   setLocationModalOpen(false);
                 }}
@@ -3648,21 +4035,79 @@ export function MarketplaceView({
                         required
                         value={shippingCity}
                         onChange={(e) => setShippingCity(e.target.value)}
-                        placeholder="City & postal code"
+                        placeholder="City / Town"
                         className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
                       />
+                      <select
+                        value={shippingCountry}
+                        onChange={(e) => setShippingCountry(e.target.value)}
+                        aria-label="Shipping country"
+                        required
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      >
+                        {COUNTRY_OPTIONS.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name} ({c.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="text"
+                        value={shippingState}
+                        onChange={(e) => setShippingState(e.target.value)}
+                        placeholder="State / Region (optional)"
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={shippingPostalCode}
+                        onChange={(e) => setShippingPostalCode(e.target.value)}
+                        placeholder="Postal / ZIP code (optional)"
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <select
                         value={paymentMethod}
                         onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
                         aria-label="Payment method"
                         className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
                       >
-                        {proxyStatus?.upstreamConfigured && (
-                          <option value="card">Card / Online Proxy Checkout</option>
-                        )}
+                        {proxyStatus?.upstreamConfigured &&
+                          (!checkoutConfig || checkoutConfig.activeProviders.length > 0) && (
+                            <option value="card">Card / Mobile Money (Online)</option>
+                          )}
                         <option value="cod">Cash on Delivery (COD)</option>
                         <option value="wallet">Direct Invoice / Wallet</option>
                       </select>
+                      {paymentMethod === 'card' &&
+                      checkoutConfig &&
+                      checkoutConfig.activeProviders.length > 0 ? (
+                        <select
+                          value={selectedProvider || checkoutConfig.activeProvider}
+                          onChange={(e) =>
+                            setSelectedProvider(e.target.value as PaymentProviderId)
+                          }
+                          aria-label="Payment gateway provider"
+                          className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                        >
+                          {checkoutConfig.activeProviders.map((prov) => (
+                            <option key={prov.provider} value={prov.provider}>
+                              {prov.provider.toUpperCase()} — {prov.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-500 dark:text-slate-400 flex items-center">
+                          {paymentMethod === 'card' &&
+                          checkoutConfig &&
+                          checkoutConfig.activeProviders.length === 0
+                            ? 'No online gateway configured for this store; use COD.'
+                            : 'Secured order settlement'}
+                        </div>
+                      )}
                     </div>
                     <textarea
                       rows={2}

@@ -45,6 +45,7 @@ interface PublicProfileViewProps {
   ownerBusinesses?: BusinessProfile[];
   loadingBusinesses?: boolean;
   onOpenBusinessProfile?: (slug: string) => void;
+  onOpenBusinessShop?: (slug: string) => void;
   isFollowing: boolean;
   followersCount?: number;
   followingCount?: number;
@@ -90,6 +91,7 @@ export function PublicProfileView({
   ownerBusinesses = [],
   loadingBusinesses = false,
   onOpenBusinessProfile,
+  onOpenBusinessShop,
   isFollowing,
   followersCount,
   followingCount,
@@ -468,15 +470,29 @@ export function PublicProfileView({
                       </div>
                     </div>
 
-                    {onOpenBusinessProfile && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenBusinessProfile(biz.slug)}
-                        className="min-h-[36px] px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        <Store className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                        <span>View Business Profile</span>
-                      </button>
+                    {(onOpenBusinessProfile || onOpenBusinessShop) && (
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {onOpenBusinessShop && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenBusinessShop(biz.slug)}
+                            className="min-h-[36px] px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <Store className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>Visit Shop</span>
+                          </button>
+                        )}
+                        {onOpenBusinessProfile && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenBusinessProfile(biz.slug)}
+                            className="min-h-[36px] px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <Building2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                            <span>View Business Profile</span>
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
 

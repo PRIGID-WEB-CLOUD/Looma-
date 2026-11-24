@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { db, paymentProviderConnectionsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { convertFromUSD, getExchangeRate } from "../exchangeRate";
+import { getExchangeRate } from "../exchangeRate";
 import type {
   IPaymentProvider,
   PaymentProviderType,
@@ -187,7 +187,8 @@ export class PaystackPaymentProvider implements IPaymentProvider {
     }
 
     const supportedCurrencies = ["GHS", "NGN", "USD", "ZAR", "KES"];
-    const requestedCurrency = (params.currency || "").toUpperCase();
+    const baseCurrency = (params.baseCurrency || "USD").toUpperCase();
+    const requestedCurrency = (params.currency || baseCurrency).toUpperCase();
     const accountCurrency = (connection.accountCurrency || "GHS").toUpperCase();
 
     // Determine target currency: prefer requested if supported by Paystack, otherwise use merchant account currency
@@ -195,9 +196,11 @@ export class PaystackPaymentProvider implements IPaymentProvider {
       ? requestedCurrency
       : (supportedCurrencies.includes(accountCurrency) ? accountCurrency : "GHS");
 
-    // Convert base USD amount (params.amount in cents) to target currency minor units via live exchange rates
-    const conversion = await convertFromUSD(params.amount, initialCurrency);
-    const payloadAmount = conversion.convertedAmount;
+    // Convert store baseCurrency amount (minor units) to target currency minor units
+    const initialRate = initialCurrency === baseCurrency ? 1.0 : await getExchangeRate(initialCurrency, baseCurrency);
+    const payloadAmount = initialCurrency === baseCurrency
+      ? Math.round(params.amount)
+      : Math.max(100, Math.round(params.amount * initialRate));
 
     const payload: Record<string, unknown> = {
       email: params.customerEmail,
@@ -209,15 +212,16 @@ export class PaystackPaymentProvider implements IPaymentProvider {
         storeId,
         orderId: params.orderId,
         customerName: params.customerName,
-        baseAmountUSD: params.amount / 100,
-        exchangeRate: conversion.rate,
+        baseCurrency,
+        baseAmount: params.amount / 100,
+        exchangeRate: initialRate,
         chargedCurrency: initialCurrency,
         chargedAmount: payloadAmount / 100,
         custom_fields: [
           { display_name: "Store ID", variable_name: "store_id", value: storeId },
           { display_name: "Order Reference", variable_name: "order_reference", value: params.reference },
-          { display_name: "Base USD Price", variable_name: "base_usd_price", value: `$${(params.amount / 100).toFixed(2)}` },
-          { display_name: "Exchange Rate", variable_name: "exchange_rate", value: `1 USD = ${conversion.rate.toFixed(4)} ${initialCurrency}` },
+          { display_name: "Base Price", variable_name: "base_price", value: `${baseCurrency} ${(params.amount / 100).toFixed(2)}` },
+          { display_name: "Exchange Rate", variable_name: "exchange_rate", value: `1 ${baseCurrency} = ${initialRate.toFixed(4)} ${initialCurrency}` },
         ],
       },
     };
@@ -238,12 +242,15 @@ export class PaystackPaymentProvider implements IPaymentProvider {
     // convert to merchant's account currency using live exchange rate and retry
     if (!response.ok && (body.code === "unsupported_currency" || String(body.message).toLowerCase().includes("currency not supported"))) {
       const fallbackCurrency = supportedCurrencies.includes(accountCurrency) ? accountCurrency : "GHS";
-      const fallbackConversion = await convertFromUSD(params.amount, fallbackCurrency);
+      const fallbackRate = fallbackCurrency === baseCurrency ? 1.0 : await getExchangeRate(fallbackCurrency, baseCurrency);
+      const fallbackAmount = fallbackCurrency === baseCurrency
+        ? Math.round(params.amount)
+        : Math.max(100, Math.round(params.amount * fallbackRate));
 
       const fallbackPayload = {
         ...payload,
         currency: fallbackCurrency,
-        amount: fallbackConversion.convertedAmount,
+        amount: fallbackAmount,
       };
 
       response = await fetch("https://api.paystack.co/transaction/initialize", {

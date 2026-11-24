@@ -102,7 +102,7 @@ export async function enqueueStoreOutboxSnapshot(
       ? "SUSPENDED"
       : store.isPublished || store.publishStatus === "PUBLISHED"
         ? "PUBLISHED"
-        : "UNPUBLISHED";
+        : "DRAFT";
 
   await enqueueOutboxEvent(
     {
@@ -117,9 +117,13 @@ export async function enqueueStoreOutboxSnapshot(
         tagline: settings.brand_tagline || "",
         ownerUid: store.ownerFirebaseUid || store.ownerId || "",
         ownerHandle: store.slug,
+        businessProfileId: store.businessProfileId || null,
         logoUrl: settings.brand_logo_url || "",
         bannerUrl: settings.brand_hero_image || "",
         category: settings.brand_category || "General",
+        country: settings.store_country || settings.country || "",
+        countryCode: (settings.store_country_code || settings.country_code || "").toUpperCase(),
+        location: settings.store_location || settings.store_city || settings.brand_location || settings.store_country || "",
         currency: store.currency || "USD",
         publishStatus,
         externalStoreId: store.id,
@@ -192,13 +196,23 @@ export async function enqueueProductOutboxSnapshot(
         storeId,
         storeName: settings.store_name || store.name,
         storeSlug: store.slug,
+        businessProfileId: store.businessProfileId || null,
         ownerUid: store.ownerFirebaseUid || store.ownerId || "",
+        country: settings.store_country || settings.country || "",
+        countryCode: (settings.store_country_code || settings.country_code || "").toUpperCase(),
+        location: settings.store_location || settings.store_city || settings.brand_location || settings.store_country || "",
         title: product.name,
         description: product.description || "",
         category: categoryName,
         priceCents: Math.round(Number(product.price || 0) * 100),
+        ...(typeof product.compareAtPrice === "number" && product.compareAtPrice > 0
+          ? { compareAtPriceCents: Math.round(product.compareAtPrice * 100) }
+          : {}),
         currency: store.currency || "USD",
         imageUrl: product.imageUrl || "",
+        ...(Array.isArray(product.images) && product.images.length > 0
+          ? { galleryUrls: product.images.filter((u) => typeof u === "string" && u.trim()).slice(0, 4) }
+          : {}),
         stock: Number(product.stock || 0),
         status: storeIsPublished ? product.status : "DRAFT",
         featured: false,

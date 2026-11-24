@@ -93,6 +93,7 @@ import {
   resolveTenantForwardHeaders,
   sanitizeProxyHeaders,
 } from './utils/commerceProxyLogic.ts';
+import { resolveCountryOption } from './utils/countries.ts';
 import {
   buildFallbackLinkPreview,
   extractLinkMetadataFromHtml,
@@ -1721,6 +1722,19 @@ export function createWorkerApp() {
     return res.ok;
   }
 
+  function resolveCountryFromLocation(rawLocation: string): { country: string; countryCode: string } {
+    const clean = rawLocation.trim();
+    if (!clean) return { country: '', countryCode: '' };
+    const direct = resolveCountryOption(clean);
+    if (direct) return { country: direct.name, countryCode: direct.code };
+    const parts = clean.split(/[,/|]+/).map((p) => p.trim()).filter(Boolean).reverse();
+    for (const part of parts) {
+      const match = resolveCountryOption(part);
+      if (match) return { country: match.name, countryCode: match.code };
+    }
+    return { country: '', countryCode: '' };
+  }
+
   async function verifyBusinessMembershipServer(
     env: WorkerEnv,
     bpId: string,
@@ -1737,6 +1751,13 @@ export function createWorkerApp() {
           ownerUid: string;
           commerceStoreId: string;
           commerceStoreSlug: string;
+          bio: string;
+          location: string;
+          country: string;
+          countryCode: string;
+          logoUrl: string;
+          bannerUrl: string;
+          category: string;
         };
       }
     | { ok: false; status: number; error: string }
@@ -1793,6 +1814,9 @@ export function createWorkerApp() {
       };
     }
 
+    const rawLocation = bpFields.location?.stringValue || '';
+    const parsedCountry = resolveCountryFromLocation(rawLocation);
+
     return {
       ok: true,
       role,
@@ -1803,6 +1827,13 @@ export function createWorkerApp() {
         ownerUid,
         commerceStoreId: bpFields.commerceStoreId?.stringValue || '',
         commerceStoreSlug: bpFields.commerceStoreSlug?.stringValue || '',
+        bio: bpFields.bio?.stringValue || '',
+        location: rawLocation,
+        country: parsedCountry.country,
+        countryCode: parsedCountry.countryCode,
+        logoUrl: bpFields.logoUrl?.stringValue || '',
+        bannerUrl: bpFields.bannerUrl?.stringValue || '',
+        category: bpFields.category?.stringValue || 'General',
       },
     };
   }
@@ -1879,6 +1910,13 @@ export function createWorkerApp() {
           slug: verifiedMembership.bp.slug,
           name: verifiedMembership.bp.displayName,
           currency: verifiedMembership.bp.currency || 'USD',
+          tagline: verifiedMembership.bp.bio,
+          location: verifiedMembership.bp.location,
+          country: verifiedMembership.bp.country,
+          countryCode: verifiedMembership.bp.countryCode,
+          logoUrl: verifiedMembership.bp.logoUrl,
+          bannerUrl: verifiedMembership.bp.bannerUrl,
+          category: verifiedMembership.bp.category,
         }),
       });
       const data = (await upstream.json().catch(() => ({}))) as {
@@ -1917,6 +1955,84 @@ export function createWorkerApp() {
     } catch (err) {
       console.error('[worker/provision-store] Upstream error:', err);
       return c.json({ error: 'Unable to reach Commerce store provisioning service.' }, 502);
+    }
+  });
+
+  app.post('/api/business-profiles/:bpId/sync-store', requireVerifiedAuth, async (c) => {
+    const authUser = c.get('authUser');
+    const authToken = c.get('authToken');
+    const bpId = (c.req.param('bpId') || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(bpId)) {
+      return c.json({ error: 'Invalid Business Profile ID.' }, 400);
+    }
+
+    const cfg = parseCommerceConfig(c.env);
+    if (!cfg.apiUrl || !cfg.internalSsoSecret) {
+      return c.json({ ok: true, skipped: true });
+    }
+
+    const verifiedMembership = await verifyBusinessMembershipServer(
+      c.env,
+      bpId,
+      authUser.uid,
+      authToken
+    );
+    if (!verifiedMembership.ok) {
+      return c.json({ error: verifiedMembership.error }, verifiedMembership.status as 403);
+    }
+
+    if (verifiedMembership.role !== 'OWNER' && verifiedMembership.role !== 'ADMIN') {
+      return c.json(
+        { error: 'Only Business Profile owners or admins can sync Commerce store metadata.' },
+        403
+      );
+    }
+
+    try {
+      const upstream = await fetch(`${cfg.apiUrl}/api/internal/stores/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Looma-Internal-Secret': cfg.internalSsoSecret,
+        },
+        body: JSON.stringify({
+          businessProfileId: bpId,
+          storeId: verifiedMembership.bp.commerceStoreId || undefined,
+          ownerFirebaseUid: verifiedMembership.bp.ownerUid || authUser.uid,
+          slug: verifiedMembership.bp.slug,
+          name: verifiedMembership.bp.displayName,
+          currency: verifiedMembership.bp.currency || 'USD',
+          tagline: verifiedMembership.bp.bio,
+          location: verifiedMembership.bp.location,
+          country: verifiedMembership.bp.country,
+          countryCode: verifiedMembership.bp.countryCode,
+          logoUrl: verifiedMembership.bp.logoUrl,
+          bannerUrl: verifiedMembership.bp.bannerUrl,
+          category: verifiedMembership.bp.category,
+        }),
+      });
+      const data = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!upstream.ok) {
+        return c.json({ ok: false, skipped: upstream.status === 404, ...data });
+      }
+      if (
+        typeof data.storeId === 'string' &&
+        data.storeId &&
+        data.storeId !== verifiedMembership.bp.commerceStoreId
+      ) {
+        await commitBusinessStoreLink(
+          c.env,
+          bpId,
+          data.storeId,
+          typeof data.storeSlug === 'string' && data.storeSlug
+            ? data.storeSlug
+            : verifiedMembership.bp.slug,
+          authToken
+        );
+      }
+      return c.json({ ok: true, ...data });
+    } catch {
+      return c.json({ ok: false, error: 'Unable to reach Commerce store sync service.' }, 502);
     }
   });
 
@@ -1980,6 +2096,13 @@ export function createWorkerApp() {
           slug: verifiedMembership.bp.slug,
           name: verifiedMembership.bp.displayName,
           currency: verifiedMembership.bp.currency || 'USD',
+          tagline: verifiedMembership.bp.bio,
+          location: verifiedMembership.bp.location,
+          country: verifiedMembership.bp.country,
+          countryCode: verifiedMembership.bp.countryCode,
+          logoUrl: verifiedMembership.bp.logoUrl,
+          bannerUrl: verifiedMembership.bp.bannerUrl,
+          category: verifiedMembership.bp.category,
         }),
       });
       const provData = (await provRes.json().catch(() => ({}))) as {
@@ -2255,7 +2378,8 @@ export function createWorkerApp() {
     if (!rate.allowed) {
       return c.json({ error: 'Marketplace rate limit exceeded.' }, 429);
     }
-    if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    const isProtectedOrderRoute = c.req.path.startsWith('/api/marketplace/orders/');
+    if (isProtectedOrderRoute || (c.req.method !== 'GET' && c.req.method !== 'HEAD')) {
       return requireVerifiedAuth(c, async () => {
         return;
       }).then((maybeDenied) => {

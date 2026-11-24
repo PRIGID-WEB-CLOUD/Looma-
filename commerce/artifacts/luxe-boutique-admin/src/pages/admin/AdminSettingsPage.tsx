@@ -64,6 +64,39 @@ type ApiKey = {
 
 const MASK = "●●●●●●●●●●●●";
 
+const COUNTRY_OPTIONS: Array<{ code: string; name: string }> = [
+  { code: "GH", name: "Ghana" },
+  { code: "NG", name: "Nigeria" },
+  { code: "US", name: "United States" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "CA", name: "Canada" },
+  { code: "KE", name: "Kenya" },
+  { code: "ZA", name: "South Africa" },
+  { code: "FR", name: "France" },
+  { code: "DE", name: "Germany" },
+  { code: "IT", name: "Italy" },
+  { code: "ES", name: "Spain" },
+  { code: "NL", name: "Netherlands" },
+  { code: "CH", name: "Switzerland" },
+  { code: "SE", name: "Sweden" },
+  { code: "AE", name: "United Arab Emirates" },
+  { code: "SA", name: "Saudi Arabia" },
+  { code: "EG", name: "Egypt" },
+  { code: "MA", name: "Morocco" },
+  { code: "CI", name: "Côte d'Ivoire" },
+  { code: "SN", name: "Senegal" },
+  { code: "RW", name: "Rwanda" },
+  { code: "AU", name: "Australia" },
+  { code: "NZ", name: "New Zealand" },
+  { code: "JP", name: "Japan" },
+  { code: "KR", name: "South Korea" },
+  { code: "SG", name: "Singapore" },
+  { code: "IN", name: "India" },
+  { code: "BR", name: "Brazil" },
+  { code: "MX", name: "Mexico" },
+  { code: "JM", name: "Jamaica" },
+];
+
 type CredField = { key: string; label: string; isSecret: boolean; hint: string };
 
 function ChannelCredsPanel({
@@ -598,6 +631,9 @@ export default function AdminSettingsPage() {
   const [storeEmail,    setStoreEmail]    = useState("");
   const [storeCurrency, setStoreCurrency] = useState("USD");
   const [storeTimezone, setStoreTimezone] = useState("UTC");
+  const [storeCountry, setStoreCountry] = useState("");
+  const [storeCountryCode, setStoreCountryCode] = useState("");
+  const [storeLocation, setStoreLocation] = useState("");
   const [storeSubdomain, setStoreSubdomain] = useState("");
   const [storeCustomDomain, setStoreCustomDomain] = useState("");
   const [storeIsPublished, setStoreIsPublished] = useState(false);
@@ -717,6 +753,9 @@ export default function AdminSettingsPage() {
     setStoreEmail(s.store_email   ?? "");
     setStoreCurrency(s.store_currency ?? "USD");
     setStoreTimezone(s.store_timezone ?? "UTC");
+    setStoreCountry(s.store_country ?? s.country ?? "");
+    setStoreCountryCode((s.store_country_code ?? s.country_code ?? "").toUpperCase());
+    setStoreLocation(s.store_location ?? s.store_city ?? s.brand_location ?? "");
     setBrandPrimaryColor(s.brand_primary_color ?? "#006c49");
     setBrandBgColor(s.brand_bg_color ?? "#0f172a");
     setBrandLogoUrl(s.brand_logo_url ?? "");
@@ -794,8 +833,13 @@ export default function AdminSettingsPage() {
 
     setSavingDomain(false);
     saveMutation.mutate({
-      store_name: storeName, store_email: storeEmail,
-      store_currency: storeCurrency, store_timezone: storeTimezone,
+      store_name: storeName,
+      store_email: storeEmail,
+      store_currency: storeCurrency,
+      store_timezone: storeTimezone,
+      store_country: storeCountry,
+      store_country_code: storeCountryCode,
+      store_location: storeLocation,
     });
   };
 
@@ -1088,6 +1132,33 @@ export default function AdminSettingsPage() {
                               "Africa/Lagos", "Africa/Nairobi", "Africa/Johannesburg", "Australia/Sydney",
                             ].map(tz => <option key={tz} value={tz}>{tz}</option>)}
                           </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-[Manrope] font-bold uppercase tracking-widest text-[#45464d] block mb-2">Country</label>
+                          <select
+                            value={storeCountryCode || COUNTRY_OPTIONS.find((c) => c.name.toLowerCase() === storeCountry.toLowerCase())?.code || ""}
+                            onChange={e => {
+                              const code = e.target.value;
+                              const match = COUNTRY_OPTIONS.find((c) => c.code === code);
+                              setStoreCountryCode(code);
+                              setStoreCountry(match ? match.name : "");
+                            }}
+                            className="w-full bg-[#f8f9ff] border border-[#c6c6cd] rounded-lg px-4 py-3 font-[Manrope] text-sm outline-none focus:border-black transition-colors"
+                          >
+                            <option value="">Global / Unspecified</option>
+                            {COUNTRY_OPTIONS.map(c => (
+                              <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <Field
+                            label="City / Dispatch Location"
+                            value={storeLocation}
+                            onChange={setStoreLocation}
+                            placeholder="e.g. Accra, Ghana"
+                            hint="Shown on Looma Marketplace listings."
+                          />
                         </div>
                         <div className="sm:col-span-2 border-t border-[#e5eeff] pt-5">
                           <h3 className="text-sm font-serif font-bold text-black mb-1">Storefront Publication Status</h3>

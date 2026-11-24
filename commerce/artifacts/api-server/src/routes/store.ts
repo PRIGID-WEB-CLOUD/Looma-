@@ -158,6 +158,9 @@ router.get("/store/branding", async (req: TenantRequest, res: Response) => {
       store_email: settings.store_email || "",
       store_currency: settings.store_currency || store.currency || meta.currency || "USD",
       store_timezone: settings.store_timezone || "UTC",
+      store_country: settings.store_country || settings.country || "",
+      store_country_code: (settings.store_country_code || settings.country_code || "").toUpperCase(),
+      store_location: settings.store_location || settings.store_city || settings.brand_location || "",
       isPublished: store.publishStatus === "PUBLISHED" || store.isPublished === true,
       isAdmin: Boolean(isAdmin),
       brand_primary_color: settings.brand_primary_color || meta.primary_color,
@@ -267,9 +270,28 @@ const productSchema = z.object({
     (val) => (val === "" || val == null ? null : typeof val === "string" ? parseFloat(val) || null : typeof val === "number" ? val : null),
     z.number().nullable().optional()
   ),
-  images: z.union([z.array(z.string()), z.string()]).nullable().optional(),
-  seoTitle: z.string().nullable().optional(),
-  seoDescription: z.string().nullable().optional(),
+  images: z.preprocess((val) => {
+    if (Array.isArray(val)) return val.map((item) => String(item || "").trim()).filter(Boolean);
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (!trimmed) return [];
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      } catch {
+        return [trimmed];
+      }
+    }
+    return undefined;
+  }, z.array(z.string()).nullable().optional()),
+  seoTitle: z.preprocess(
+    (val) => (val === "" || val == null ? null : String(val)),
+    z.string().nullable().optional()
+  ),
+  seoDescription: z.preprocess(
+    (val) => (val === "" || val == null ? null : String(val)),
+    z.string().nullable().optional()
+  ),
 });
 
 const variantSchema = z.object({
@@ -317,7 +339,11 @@ router.post("/products", requireAdmin, validate(productSchema), async (req: Tena
   }
 
   const body = req.body as z.infer<typeof productSchema>;
-  const allowed = ["name", "price", "categoryId", "stock", "trackQuantity", "status", "imageUrl", "description", "tags", "metaSyncEnabled", "eproloProductId"];
+  const allowed = [
+    "name", "price", "compareAtPrice", "categoryId", "stock", "trackQuantity",
+    "status", "imageUrl", "images", "description", "tags", "seoTitle", "seoDescription",
+    "metaSyncEnabled", "eproloProductId",
+  ];
   const insertData: Record<string, unknown> = { 
     id: randomUUID(),
     storeId,
@@ -358,7 +384,11 @@ router.put("/products/:id", requireAdmin, async (req: TenantRequest, res: Respon
     const issueDetails = parsed.error.issues.map(i => `${i.path.join(".") || "field"}: ${i.message}`).join(", ");
     return res.status(400).json({ error: `Invalid product fields: ${issueDetails}`, details: parsed.error.flatten(), issues: parsed.error.issues });
   }
-  const allowed = ["name", "price", "categoryId", "stock", "trackQuantity", "status", "imageUrl", "description", "tags", "metaSyncEnabled", "eproloProductId"];
+  const allowed = [
+    "name", "price", "compareAtPrice", "categoryId", "stock", "trackQuantity",
+    "status", "imageUrl", "images", "description", "tags", "seoTitle", "seoDescription",
+    "metaSyncEnabled", "eproloProductId",
+  ];
   const updates: Record<string, unknown> = {};
   for (const k of allowed) {
     if (k in parsed.data && (parsed.data as Record<string, unknown>)[k] !== undefined) {
@@ -393,7 +423,7 @@ router.post("/products/:id/sync", requireAdmin, async (req: TenantRequest, res: 
   const rows = await db.select().from(productsTable).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId))).limit(1);
   if (!rows[0]) return res.status(404).json({ error: "Product not found" });
   const updates = req.body as Partial<typeof productsTable.$inferInsert>;
-  const allowed = ["name", "price", "stock", "status", "imageUrl", "description", "tags"];
+  const allowed = ["name", "price", "compareAtPrice", "stock", "status", "imageUrl", "images", "description", "tags", "seoTitle", "seoDescription"];
   const patch: Record<string, unknown> = {};
   for (const k of allowed) if (k in updates) patch[k] = (updates as Record<string, unknown>)[k];
   const [updated] = await db.update(productsTable).set(patch).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId))).returning();
@@ -806,13 +836,15 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
       if (!redeemed) throw Object.assign(new Error("The paid checkout coupon is no longer available; payment requires manual review."), { statusCode: 409 });
     }
 
-    const expectedAmount = Math.max(0, subtotal - discount) * 100;
+    const shippingFee = Math.max(0, Number((metadata as any).shippingFee || 0));
+    const expectedAmount = Math.max(0, Math.round((subtotal + shippingFee - discount) * 100));
     if (expectedAmount !== transaction.amount) {
       throw Object.assign(new Error("The catalog total changed after payment; payment requires manual review."), { statusCode: 409 });
     }
     const [storeRecord] = await tx.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
     const businessProfileId = (metadata as any).businessProfileId || storeRecord?.businessProfileId || null;
     const buyerFirebaseUid = typeof (metadata as any).buyerFirebaseUid === "string" ? (metadata as any).buyerFirebaseUid : null;
+    const orderNote = typeof (metadata as any).note === "string" ? (metadata as any).note : "";
 
     const [created] = await tx.insert(ordersTable).values({
       id: randomUUID(),
@@ -822,7 +854,10 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
       customerName: metadata.customerName,
       customerId: metadata.customerId,
       customerEmail: metadata.customerEmail,
-      total: Math.max(0, subtotal - discount),
+      total: Math.max(0, subtotal + shippingFee - discount),
+      shippingCents: Math.round(shippingFee * 100),
+      paymentMethod: "card",
+      note: orderNote,
       status: "PROCESSING",
       paymentStatus: "PAID",
       paymentProvider: transaction.provider,

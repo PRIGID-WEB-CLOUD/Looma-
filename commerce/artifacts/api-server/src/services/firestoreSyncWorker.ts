@@ -183,9 +183,13 @@ async function commitOutboxToFirestore(
       "tagline",
       "ownerUid",
       "ownerHandle",
+      "businessProfileId",
       "logoUrl",
       "bannerUrl",
       "category",
+      "country",
+      "countryCode",
+      "location",
       "currency",
       "publishStatus",
       "externalStoreId",
@@ -217,7 +221,11 @@ async function commitOutboxToFirestore(
         "storeId",
         "storeName",
         "storeSlug",
+        "businessProfileId",
         "ownerUid",
+        "country",
+        "countryCode",
+        "location",
         "title",
         "description",
         "category",
@@ -403,9 +411,13 @@ export async function reconcileStoreOutbox(storeId: string): Promise<{
       tagline: settings.brand_tagline || "",
       ownerUid: store.ownerFirebaseUid || store.ownerId || "",
       ownerHandle: store.slug,
+      businessProfileId: store.businessProfileId || null,
       logoUrl: settings.brand_logo_url || "",
       bannerUrl: settings.brand_hero_image || "",
       category: settings.brand_category || "General",
+      country: settings.store_country || settings.country || "",
+      countryCode: (settings.store_country_code || settings.country_code || "").toUpperCase(),
+      location: settings.store_location || settings.store_city || settings.brand_location || settings.store_country || "",
       currency: store.currency || "USD",
       publishStatus,
       externalStoreId: store.id,
@@ -416,6 +428,9 @@ export async function reconcileStoreOutbox(storeId: string): Promise<{
 
   for (const prod of products) {
     const categoryName = prod.categoryId ? categoryMap.get(prod.categoryId) || "General" : "General";
+    const galleryUrls = Array.isArray(prod.images)
+      ? prod.images.filter((u) => typeof u === "string" && u.trim()).slice(0, 4)
+      : [];
     await enqueueOutboxEvent({
       aggregateType: "PRODUCT",
       aggregateId: prod.id,
@@ -426,13 +441,21 @@ export async function reconcileStoreOutbox(storeId: string): Promise<{
         storeId: store.id,
         storeName: settings.store_name || store.name,
         storeSlug: store.slug,
+        businessProfileId: store.businessProfileId || null,
         ownerUid: store.ownerFirebaseUid || store.ownerId || "",
+        country: settings.store_country || settings.country || "",
+        countryCode: (settings.store_country_code || settings.country_code || "").toUpperCase(),
+        location: settings.store_location || settings.store_city || settings.brand_location || settings.store_country || "",
         title: prod.name,
         description: prod.description || "",
         category: categoryName,
         priceCents: Math.round(Number(prod.price || 0) * 100),
+        ...(typeof prod.compareAtPrice === "number" && prod.compareAtPrice > 0
+          ? { compareAtPriceCents: Math.round(prod.compareAtPrice * 100) }
+          : {}),
         currency: store.currency || "USD",
         imageUrl: prod.imageUrl || "",
+        ...(galleryUrls.length > 0 ? { galleryUrls } : {}),
         stock: Number(prod.stock || 0),
         status: publishStatus === "PUBLISHED" ? prod.status : "DRAFT",
         featured: false,

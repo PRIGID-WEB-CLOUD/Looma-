@@ -1,3 +1,4 @@
+import { getExchangeRate } from "../exchangeRate";
 import type {
   IPaymentProvider,
   PaymentProviderType,
@@ -158,13 +159,20 @@ export class FlutterwavePaymentProvider implements IPaymentProvider {
       throw new Error("Flutterwave credentials not configured for this store.");
     }
 
+    const baseCurrency = (params.baseCurrency || "USD").toUpperCase();
+    const targetCurrency = (params.currency || baseCurrency).toUpperCase();
+    const rate = targetCurrency === baseCurrency ? 1.0 : await getExchangeRate(targetCurrency, baseCurrency);
+    const convertedMinor = targetCurrency === baseCurrency
+      ? Math.round(params.amount)
+      : Math.max(100, Math.round(params.amount * rate));
+
     // Flutterwave accepts standard amount (e.g. 10.50 instead of 1050 cents)
-    const decimalAmount = (params.amount / 100).toFixed(2);
+    const decimalAmount = (convertedMinor / 100).toFixed(2);
 
     const payload: Record<string, unknown> = {
       tx_ref: params.reference,
       amount: decimalAmount,
-      currency: params.currency.toUpperCase(),
+      currency: targetCurrency,
       redirect_url: `${params.callbackUrl}${params.callbackUrl.includes("?") ? "&" : "?"}reference=${params.reference}&provider=flutterwave`,
       customer: {
         email: params.customerEmail,

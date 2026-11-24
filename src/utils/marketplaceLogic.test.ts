@@ -10,9 +10,13 @@ import {
   ALL_MARKETPLACE_CATEGORIES,
   MARKETPLACE_INBOX_FILTERS,
   TOP_MARKETPLACE_CATEGORIES,
+  calculateMarketplaceShippingCents,
   filterMarketplaceProducts,
   formatListingTimestamp,
   getSuggestedStorefronts,
+  mergeMarketplaceOrders,
+  mergeMarketplaceProducts,
+  mergeMarketplaceStores,
   removeRecentSearch,
   resolveListingImages,
   resolveMarketplaceInboxEntries,
@@ -376,3 +380,213 @@ test('resolveMarketplaceInboxEntries separates Selling vs Buying chats & orders 
   assert.equal(buyingAll[0].thread?.id, 'dm_user_1_user_2');
   assert.equal(buyingAll[0].listingTitle, 'UK Used Laptops Mini · GHS3,200');
 });
+
+test('filterMarketplaceProducts filters by country code, country name, and store metadata fallback', () => {
+  const storesById = {
+    store_a: { country: 'Ghana', countryCode: 'GH', location: 'Accra, Ghana' },
+    store_b: { country: 'United Kingdom', countryCode: 'GB', location: 'London, UK' },
+  };
+
+  const ghanaByCode = filterMarketplaceProducts(PRODUCTS, {
+    country: 'GH',
+    storesById,
+  });
+  assert.deepEqual(
+    ghanaByCode.map((p) => p.id),
+    ['p1']
+  );
+
+  const ukByName = filterMarketplaceProducts(PRODUCTS, {
+    country: 'United Kingdom',
+    storesById,
+  });
+  assert.deepEqual(
+    ukByName.map((p) => p.id),
+    ['p2']
+  );
+
+  const ngOnProduct = filterMarketplaceProducts(
+    [
+      ...PRODUCTS,
+      {
+        ...PRODUCTS[0],
+        id: 'p3',
+        storeId: 'store_c',
+        country: 'Nigeria',
+        countryCode: 'NG',
+        location: 'Lagos',
+      },
+    ],
+    { country: 'NG', storesById }
+  );
+  assert.deepEqual(
+    ngOnProduct.map((p) => p.id),
+    ['p3']
+  );
+});
+
+test('mergeMarketplaceStores, mergeMarketplaceProducts, and mergeMarketplaceOrders deduplicate while preserving Commerce and Firestore fields', () => {
+  const firestoreStore: MarketplaceStore = {
+    ...STORE_A,
+    ownerUid: 'user_1',
+    businessProfileId: 'bp_1',
+    logoUrl: 'https://cdn.example.com/fs-logo.jpg',
+    country: 'Ghana',
+    countryCode: 'GH',
+    updatedAtMs: 1000,
+  };
+  const upstreamStore: MarketplaceStore = {
+    ...STORE_A,
+    ownerUid: '',
+    logoUrl: '',
+    name: 'XTRA MARKET LIVE',
+    tagline: 'Updated live from Commerce',
+    updatedAtMs: 5000,
+  };
+
+  const mergedStores = mergeMarketplaceStores([upstreamStore, STORE_B], [firestoreStore]);
+  assert.equal(mergedStores.length, 2);
+  const storeA = mergedStores.find((s) => s.id === 'store_a');
+  assert.equal(storeA?.name, 'XTRA MARKET LIVE');
+  assert.equal(storeA?.businessProfileId, 'bp_1');
+  assert.equal(storeA?.countryCode, 'GH');
+  assert.equal(storeA?.logoUrl, 'https://cdn.example.com/fs-logo.jpg');
+
+  const mergedProducts = mergeMarketplaceProducts(
+    [{ ...PRODUCTS[0], title: 'Live Jersey', priceCents: 18000, countryCode: '' }],
+    [{ ...PRODUCTS[0], businessProfileId: 'bp_1', country: 'Ghana', countryCode: 'GH' }, PRODUCTS[1]]
+  );
+  assert.equal(mergedProducts.length, 2);
+  const p1 = mergedProducts.find((p) => p.id === 'p1');
+  assert.equal(p1?.title, 'Live Jersey');
+  assert.equal(p1?.priceCents, 18000);
+  assert.equal(p1?.businessProfileId, 'bp_1');
+  assert.equal(p1?.countryCode, 'GH');
+
+  const mergedOrders = mergeMarketplaceOrders(
+    [
+      {
+        id: 'ord_1',
+        buyerUid: 'buyer_1',
+        buyerName: 'Ada',
+        buyerEmail: 'ada@example.com',
+        storeId: 'store_a',
+        storeName: 'XTRA MARKET',
+        storeOwnerUid: 'user_1',
+        items: [{ productId: 'p1', title: 'Jerseys', priceCents: 15000, quantity: 1, imageUrl: '' }],
+        subtotalCents: 15000,
+        shippingCents: 500,
+        totalCents: 15500,
+        currency: 'GHS',
+        paymentMethod: 'card',
+        paymentStatus: 'paid',
+        status: 'CONFIRMED',
+        shippingName: 'Ada',
+        shippingPhone: '0240000000',
+        shippingAddress: '10 Oxford St',
+        shippingCity: 'Accra',
+        shippingCountry: 'Ghana',
+        shippingCountryCode: 'GH',
+        note: '',
+        createdAtMs: 2000,
+        updatedAtMs: 2000,
+      },
+    ],
+    [
+      {
+        id: 'ord_1',
+        buyerUid: 'buyer_1',
+        buyerName: 'Ada',
+        buyerEmail: 'ada@example.com',
+        storeId: 'store_a',
+        storeName: 'XTRA MARKET',
+        storeOwnerUid: 'user_1',
+        storeBusinessProfileId: 'bp_1',
+        items: [{ productId: 'p1', title: 'Jerseys', priceCents: 15000, quantity: 1, imageUrl: '' }],
+        subtotalCents: 15000,
+        shippingCents: 500,
+        totalCents: 15500,
+        currency: 'GHS',
+        paymentMethod: 'card',
+        paymentStatus: 'pending',
+        status: 'PENDING',
+        shippingName: 'Ada',
+        shippingPhone: '0240000000',
+        shippingAddress: '10 Oxford St',
+        shippingCity: 'Accra',
+        note: '',
+        createdAtMs: 1000,
+        updatedAtMs: 1000,
+      },
+    ]
+  );
+  assert.equal(mergedOrders.length, 1);
+  assert.equal(mergedOrders[0].paymentStatus, 'paid');
+  assert.equal(mergedOrders[0].storeBusinessProfileId, 'bp_1');
+});
+
+test('calculateMarketplaceShippingCents applies currency-scaled thresholds and fees', () => {
+  assert.equal(calculateMarketplaceShippingCents(0, 'USD'), 0);
+  assert.equal(calculateMarketplaceShippingCents(10000, 'USD'), 1500);
+  assert.equal(calculateMarketplaceShippingCents(25000, 'USD'), 0);
+
+  // GHS uses threshold GHS 2,500 (250000 pesewas) and fee GHS 50 (5000 pesewas)
+  assert.equal(calculateMarketplaceShippingCents(15000, 'GHS'), 5000);
+  assert.equal(calculateMarketplaceShippingCents(300000, 'GHS'), 0);
+
+  // NGN uses threshold NGN 150,000 (15000000 kobo) and fee NGN 5,000 (500000 kobo)
+  assert.equal(calculateMarketplaceShippingCents(5000000, 'NGN'), 500000);
+  assert.equal(calculateMarketplaceShippingCents(16000000, 'NGN'), 0);
+});
+
+test('resolveMarketplaceInboxEntries includes seller orders linked via ownedBusinessIds', () => {
+  const bpStore: MarketplaceStore = {
+    ...STORE_A,
+    id: 'store_bp_linked',
+    ownerUid: 'other_admin_uid',
+    businessProfileId: 'bp_owned_1',
+  };
+  const bpOrder: MarketplaceOrder = {
+    id: 'ord_bp_1',
+    buyerUid: 'buyer_1',
+    buyerName: 'Ama',
+    buyerEmail: 'ama@example.com',
+    storeId: 'store_bp_linked',
+    storeName: 'Business Studio',
+    storeOwnerUid: 'other_admin_uid',
+    storeBusinessProfileId: 'bp_owned_1',
+    items: [{ productId: 'p1', title: 'Studio Piece', priceCents: 20000, quantity: 1, imageUrl: '' }],
+    subtotalCents: 20000,
+    shippingCents: 0,
+    totalCents: 20000,
+    currency: 'GHS',
+    paymentMethod: 'cod',
+    paymentStatus: 'pending',
+    status: 'PENDING',
+    shippingName: 'Ama',
+    shippingPhone: '0240000000',
+    shippingAddress: 'High St',
+    shippingCity: 'Accra',
+    note: '',
+    createdAtMs: 3000,
+    updatedAtMs: 3000,
+  };
+
+  const entries = resolveMarketplaceInboxEntries({
+    currentUid: 'user_1',
+    role: 'selling',
+    filter: 'all',
+    buyerOrders: [],
+    sellerOrders: [bpOrder],
+    threads: [],
+    products: PRODUCTS,
+    stores: [bpStore],
+    knownUsers: [BASE_USER],
+    ownedBusinessIds: ['bp_owned_1'],
+  });
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].order?.id, 'ord_bp_1');
+});
+
+

@@ -1,5 +1,5 @@
 import { type Request, type Response, type NextFunction } from "express";
-import { db, storesTable, sessionsTable, usersTable } from "@workspace/db";
+import { db, storesTable, sessionsTable, usersTable, paymentTransactionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { extractTenantFromHost, validateTenantSlug, type TenantHostInfo } from "@workspace/tenant-routing";
 import { logger } from "../lib/logger";
@@ -244,6 +244,21 @@ export async function tenantResolver(req: TenantRequest, res: Response, next: Ne
     ) {
       const [found] = await db.select().from(storesTable).where(eq(storesTable.id, sessionBoundStoreId)).limit(1);
       storeRecord = found;
+    }
+
+    if (!storeRecord && checkPath.startsWith("/api/payments/verify/")) {
+      const verifyRef = checkPath.replace(/^\/api\/payments\/verify\//, "").split("/")[0]?.trim();
+      if (verifyRef) {
+        const [txRow] = await db
+          .select({ storeId: paymentTransactionsTable.storeId })
+          .from(paymentTransactionsTable)
+          .where(eq(paymentTransactionsTable.reference, decodeURIComponent(verifyRef)))
+          .limit(1);
+        if (txRow?.storeId) {
+          const [found] = await db.select().from(storesTable).where(eq(storesTable.id, txRow.storeId)).limit(1);
+          storeRecord = found;
+        }
+      }
     }
 
     if (!storeRecord) {

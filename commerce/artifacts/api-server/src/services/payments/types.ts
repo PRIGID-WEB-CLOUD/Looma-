@@ -54,8 +54,9 @@ export interface InitializePaymentParams {
   storeId: string;
   orderId?: string;
   reference: string;
-  amount: number; // in minor units (cents / kobo)
-  currency: string; // e.g. "USD", "NGN", "GHS", "EUR"
+  amount: number; // in minor units (cents / kobo) of baseCurrency (or currency when baseCurrency omitted)
+  currency: string; // desired charge currency e.g. "USD", "NGN", "GHS", "EUR"
+  baseCurrency?: string; // store's native pricing currency (defaults to "USD")
   customerEmail: string;
   customerName?: string;
   items?: Array<{ name: string; quantity: number; price: number; productId?: string }>;

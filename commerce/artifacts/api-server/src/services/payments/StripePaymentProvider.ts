@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { convertFromUSD } from "../exchangeRate";
+import { getExchangeRate } from "../exchangeRate";
 import type {
   IPaymentProvider,
   PaymentProviderType,
@@ -237,8 +237,9 @@ export class StripePaymentProvider implements IPaymentProvider {
       headers["Stripe-Account"] = connection.accountId;
     }
 
-    const requestedCurrency = (params.currency || "usd").toLowerCase();
-    const accountCurrency = (connection.accountCurrency || "usd").toLowerCase();
+    const baseCurrency = (params.baseCurrency || "USD").toUpperCase();
+    const requestedCurrency = (params.currency || baseCurrency).toLowerCase();
+    const accountCurrency = (connection.accountCurrency || baseCurrency).toLowerCase();
 
     // Determine target currency: prefer requested if supported by Stripe, otherwise fall back to account currency / USD
     const isSupported = STRIPE_SUPPORTED_CURRENCIES.has(requestedCurrency);
@@ -246,14 +247,13 @@ export class StripePaymentProvider implements IPaymentProvider {
       ? requestedCurrency
       : (STRIPE_SUPPORTED_CURRENCIES.has(accountCurrency) ? accountCurrency : "usd");
 
-    // Convert base USD cents to target currency
-    let targetAmount = params.amount;
-    let rate = 1.0;
-    if (targetCurrency !== "usd") {
-      const conversion = await convertFromUSD(params.amount, targetCurrency.toUpperCase());
-      targetAmount = conversion.convertedAmount;
-      rate = conversion.rate;
-    }
+    // Convert from store baseCurrency (minor units) to targetCurrency (minor units)
+    const rate = targetCurrency.toUpperCase() === baseCurrency
+      ? 1.0
+      : await getExchangeRate(targetCurrency.toUpperCase(), baseCurrency);
+    const targetAmount = targetCurrency.toUpperCase() === baseCurrency
+      ? Math.round(params.amount)
+      : Math.max(100, Math.round(params.amount * rate));
 
     const buildLineItems = (curr: string, amt: number, convRate: number) => {
       const itemsSum = (params.items || []).reduce((sum, item) => sum + Math.round((item.price || 0) * 100 * convRate) * (item.quantity || 1), 0);
@@ -301,17 +301,19 @@ export class StripePaymentProvider implements IPaymentProvider {
 
     let session = await response.json().catch(() => ({})) as any;
 
-    // Resilient fallback: If Stripe rejects currency as invalid for this account, retry in USD base
+    // Resilient fallback: If Stripe rejects currency as invalid for this account, retry in USD
     if (!response.ok && targetCurrency !== "usd" && (
       session.error?.message?.toLowerCase().includes("invalid currency") ||
       session.error?.message?.toLowerCase().includes("currency") ||
       session.error?.code === "parameter_invalid_empty"
     )) {
       console.warn(`[StripePaymentProvider] Currency '${targetCurrency}' unsupported by Stripe account, falling back to USD`);
+      const usdRate = baseCurrency === "USD" ? 1.0 : await getExchangeRate("USD", baseCurrency);
+      const usdAmount = baseCurrency === "USD" ? Math.round(params.amount) : Math.max(100, Math.round(params.amount * usdRate));
       response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
         method: "POST",
         headers,
-        body: buildCheckoutBody("usd", params.amount, 1.0).toString(),
+        body: buildCheckoutBody("usd", usdAmount, usdRate).toString(),
         signal: AbortSignal.timeout(15_000),
       });
       session = await response.json().catch(() => ({})) as any;

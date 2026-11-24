@@ -7,8 +7,8 @@ type Category = { id: string; name: string };
 type Variant = { id: string; name?: string; size?: string; color?: string; price?: number; sku?: string; stock?: number };
 type Product = {
   id: string; name: string; description: string; price: number;
-  compareAtPrice?: number | null; imageUrl: string | null; images?: string | null;
-  categoryId: string; status: string; tags?: string | null;
+  compareAtPrice?: number | null; imageUrl: string | null; images?: string[] | string | null;
+  categoryId: string; status: string; tags?: string[] | string | null;
   seoTitle?: string | null; seoDescription?: string | null;
   trackQuantity: boolean; metaSyncEnabled: boolean; variants?: Variant[];
 };
@@ -263,9 +263,31 @@ export default function AdminProductEditorPage() {
   useEffect(() => {
     if (existingProduct) {
       let parsedTags: string[] = [];
-      try { parsedTags = existingProduct.tags ? JSON.parse(existingProduct.tags) : []; } catch { parsedTags = []; }
+      if (Array.isArray(existingProduct.tags)) {
+        parsedTags = existingProduct.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      } else if (typeof existingProduct.tags === "string" && existingProduct.tags.trim()) {
+        try {
+          const parsed = JSON.parse(existingProduct.tags);
+          parsedTags = Array.isArray(parsed)
+            ? parsed.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+            : existingProduct.tags.split(",").map((t) => t.trim()).filter(Boolean);
+        } catch {
+          parsedTags = existingProduct.tags.split(",").map((t) => t.trim()).filter(Boolean);
+        }
+      }
       let parsedImages: string[] = [];
-      try { parsedImages = existingProduct.images ? JSON.parse(existingProduct.images) : []; } catch { parsedImages = []; }
+      if (Array.isArray(existingProduct.images)) {
+        parsedImages = existingProduct.images.filter((u): u is string => typeof u === "string" && u.trim().length > 0);
+      } else if (typeof existingProduct.images === "string" && existingProduct.images.trim()) {
+        try {
+          const parsed = JSON.parse(existingProduct.images);
+          parsedImages = Array.isArray(parsed)
+            ? parsed.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+            : [];
+        } catch {
+          parsedImages = [];
+        }
+      }
 
       setForm({
         name: existingProduct.name,

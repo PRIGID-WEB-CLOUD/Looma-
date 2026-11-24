@@ -16,22 +16,32 @@ import {
 } from 'lucide-react';
 import type {
   CartItem,
+  CheckoutPaymentConfig,
   CommerceProxyStatus,
   PaymentMethod,
+  PaymentProviderId,
   ProductVariant,
 } from '../types/marketplace';
 import type { BusinessProfile } from '../types/business';
 import type { UserProfile } from '../types/social';
 import {
   createMarketplaceOrderRecord,
+  createUpstreamOfflineOrder,
   fetchCommerceProxyStatus,
   fetchPublicProductDetail,
+  fetchStoreCheckoutConfig,
   submitUpstreamProxyCheckout,
   type PublicProductDetailResult,
 } from '../services/commerce';
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
-import { resolveListingImages } from '../utils/marketplaceLogic';
+import { COUNTRY_OPTIONS, resolveCountryOption } from '../utils/countries';
+import {
+  calculateMarketplaceShippingCents,
+  resolveListingImages,
+} from '../utils/marketplaceLogic';
 import { VerifiedBadge } from './VerifiedBadge';
+
+const PENDING_COMMERCE_CHECKOUT_KEY = 'looma_pending_commerce_checkout_v1';
 
 interface ProductDetailPageProps {
   productId: string;
@@ -88,8 +98,13 @@ export function ProductDetailPage({
   const [shippingPhone, setShippingPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingCity, setShippingCity] = useState(currentProfile.location || '');
+  const [shippingCountry, setShippingCountry] = useState('GH');
+  const [shippingState, setShippingState] = useState('');
+  const [shippingPostalCode, setShippingPostalCode] = useState('');
   const [orderNote, setOrderNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
+  const [checkoutConfig, setCheckoutConfig] = useState<CheckoutPaymentConfig | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<PaymentProviderId | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<{
@@ -109,6 +124,8 @@ export function ProductDetailPage({
     setCheckoutOpen(false);
     setConfirmedOrder(null);
     setCheckoutError(null);
+    setCheckoutConfig(null);
+    setSelectedProvider(undefined);
 
     void Promise.all([
       fetchPublicProductDetail(productId),
@@ -120,10 +137,22 @@ export function ProductDetailPage({
       if (status.upstreamConfigured) {
         setPaymentMethod('card');
       }
-      if (loadedDetail && loadedDetail.variants.length > 0) {
-        const firstAvailable =
-          loadedDetail.variants.find((v) => v.stock > 0) || loadedDetail.variants[0];
-        setSelectedVariantId(firstAvailable.id);
+      if (loadedDetail) {
+        if (loadedDetail.variants.length > 0) {
+          const firstAvailable =
+            loadedDetail.variants.find((v) => v.stock > 0) || loadedDetail.variants[0];
+          setSelectedVariantId(firstAvailable.id);
+        }
+        if (status.upstreamConfigured) {
+          const targetStoreId = loadedDetail.store.externalStoreId || loadedDetail.store.id;
+          void fetchStoreCheckoutConfig(targetStoreId).then((cfg) => {
+            if (!active) return;
+            setCheckoutConfig(cfg);
+            if (cfg && cfg.activeProviders.length > 0) {
+              setSelectedProvider(cfg.activeProvider);
+            }
+          });
+        }
       }
       setLoading(false);
     });
@@ -247,14 +276,23 @@ export function ProductDetailPage({
       !shippingName.trim() ||
       !shippingPhone.trim() ||
       !shippingAddress.trim() ||
-      !shippingCity.trim()
+      !shippingCity.trim() ||
+      !shippingCountry.trim()
     ) {
-      setCheckoutError('Please fill in all recipient and delivery fields.');
+      setCheckoutError('Please fill in all recipient, delivery address, and country fields.');
       return;
     }
 
+    const countryMeta = resolveCountryOption(shippingCountry);
+    const countryName = countryMeta?.name || shippingCountry.trim();
+    const countryCode = countryMeta?.code || shippingCountry.trim().toUpperCase();
+
     const subtotalCents = effectivePriceCents * quantity;
-    const shippingCents = subtotalCents < 25000 ? 1500 : 0;
+    const shippingCents = calculateMarketplaceShippingCents(
+      subtotalCents,
+      detail.product.currency,
+      countryCode
+    );
     const totalCents = subtotalCents + shippingCents;
     const variantLabel = selectedVariant
       ? [selectedVariant.size, selectedVariant.color].filter(Boolean).join(' / ')
@@ -278,15 +316,22 @@ export function ProductDetailPage({
     setCheckoutError(null);
     try {
       if (paymentMethod === 'card' && proxyStatus?.upstreamConfigured) {
+        const upstreamStoreId = detail.store.externalStoreId || detail.store.id;
         const res = await submitUpstreamProxyCheckout({
-          storeId: detail.store.externalStoreId || detail.store.id,
+          storeId: upstreamStoreId,
           items: [item],
           shippingName,
           shippingPhone,
           shippingAddress,
           shippingCity,
+          shippingCountry: countryName,
+          shippingCountryCode: countryCode,
+          shippingState,
+          shippingPostalCode,
+          shippingCents,
           note: orderNote,
           paymentMethod,
+          provider: selectedProvider,
           customerEmail: accountEmail || undefined,
           currency: detail.product.currency,
         });
@@ -294,8 +339,63 @@ export function ProductDetailPage({
           throw new Error(res.error || 'Unable to initialize online payment checkout.');
         }
         if (res.checkoutUrl && typeof window !== 'undefined') {
+          try {
+            window.sessionStorage.setItem(
+              PENDING_COMMERCE_CHECKOUT_KEY,
+              JSON.stringify({
+                storeId: upstreamStoreId,
+                storeName: item.storeName,
+                clearBag: false,
+                createdAtMs: Date.now(),
+              })
+            );
+          } catch {
+            // ignore sessionStorage error
+          }
           window.location.assign(res.checkoutUrl);
           return;
+        }
+        throw new Error('Payment gateway did not return a checkout URL. Try another payment method.');
+      }
+
+      if (proxyStatus?.upstreamConfigured && (paymentMethod === 'cod' || paymentMethod === 'wallet')) {
+        const upstreamStoreId = detail.store.externalStoreId || detail.store.id;
+        const offlineRes = await createUpstreamOfflineOrder({
+          storeId: upstreamStoreId,
+          customerName: shippingName.trim() || currentProfile.displayName || 'Looma Buyer',
+          customerEmail: accountEmail || undefined,
+          paymentMethod,
+          shippingCents,
+          note: orderNote,
+          shippingAddress: {
+            name: shippingName.trim(),
+            phone: shippingPhone.trim(),
+            address: shippingAddress.trim(),
+            city: shippingCity.trim(),
+            country: countryName,
+            countryCode,
+            ...(shippingState.trim() ? { state: shippingState.trim() } : {}),
+            ...(shippingPostalCode.trim() ? { postalCode: shippingPostalCode.trim() } : {}),
+          },
+          items: [
+            {
+              productId: item.productId,
+              ...(item.variantId ? { variantId: item.variantId } : {}),
+              quantity: item.quantity,
+            },
+          ],
+        });
+        if (offlineRes.ok && offlineRes.order) {
+          setConfirmedOrder({
+            id: offlineRes.order.id,
+            totalCents: offlineRes.order.totalCents,
+            currency: offlineRes.order.currency,
+            storeName: item.storeName,
+          });
+          return;
+        }
+        if (offlineRes.error && !offlineRes.error.toLowerCase().includes('storefront not found')) {
+          throw new Error(offlineRes.error);
         }
       }
 
@@ -316,7 +416,8 @@ export function ProductDetailPage({
         storeId: detail.store.id,
         storeName: item.storeName,
         storeOwnerUid:
-          detail.businessProfile?.ownerUid || detail.store.ownerUid || detail.product.ownerUid,
+          detail.businessProfile?.ownerUid || detail.store.ownerUid || detail.product.ownerUid || currentProfile.uid,
+        storeBusinessProfileId: detail.businessProfile?.id || detail.store.businessProfileId,
         items: [item],
         shippingCents,
         currency: detail.product.currency,
@@ -325,6 +426,10 @@ export function ProductDetailPage({
         shippingPhone,
         shippingAddress,
         shippingCity,
+        shippingCountry: countryName,
+        shippingCountryCode: countryCode,
+        shippingState,
+        shippingPostalCode,
         note: orderNote,
       });
 
@@ -391,7 +496,11 @@ export function ProductDetailPage({
   const isOwnListing = Boolean(isAuthorized && sellerOwnerUid && sellerOwnerUid === currentProfile.uid);
 
   const subtotalCents = effectivePriceCents * quantity;
-  const shippingCents = subtotalCents < 25000 ? 1500 : 0;
+  const shippingCents = calculateMarketplaceShippingCents(
+    subtotalCents,
+    product.currency,
+    shippingCountry
+  );
   const totalCents = subtotalCents + shippingCents;
 
   return (
@@ -774,21 +883,79 @@ export function ProductDetailPage({
                         required
                         value={shippingCity}
                         onChange={(e) => setShippingCity(e.target.value)}
-                        placeholder="City & postal code"
+                        placeholder="City / Town"
                         className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
                       />
+                      <select
+                        value={shippingCountry}
+                        onChange={(e) => setShippingCountry(e.target.value)}
+                        aria-label="Shipping country"
+                        required
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      >
+                        {COUNTRY_OPTIONS.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name} ({c.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="text"
+                        value={shippingState}
+                        onChange={(e) => setShippingState(e.target.value)}
+                        placeholder="State / Region (optional)"
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={shippingPostalCode}
+                        onChange={(e) => setShippingPostalCode(e.target.value)}
+                        placeholder="Postal / ZIP code (optional)"
+                        className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <select
                         value={paymentMethod}
                         onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
                         aria-label="Payment method"
                         className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
                       >
-                        {proxyStatus?.upstreamConfigured && (
-                          <option value="card">Card / Online Checkout</option>
-                        )}
+                        {proxyStatus?.upstreamConfigured &&
+                          (!checkoutConfig || checkoutConfig.activeProviders.length > 0) && (
+                            <option value="card">Card / Mobile Money (Online)</option>
+                          )}
                         <option value="cod">Cash on Delivery (COD)</option>
                         <option value="wallet">Direct Invoice / Wallet</option>
                       </select>
+                      {paymentMethod === 'card' &&
+                      checkoutConfig &&
+                      checkoutConfig.activeProviders.length > 0 ? (
+                        <select
+                          value={selectedProvider || checkoutConfig.activeProvider}
+                          onChange={(e) =>
+                            setSelectedProvider(e.target.value as PaymentProviderId)
+                          }
+                          aria-label="Payment gateway provider"
+                          className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-xs"
+                        >
+                          {checkoutConfig.activeProviders.map((prov) => (
+                            <option key={prov.provider} value={prov.provider}>
+                              {prov.provider.toUpperCase()} — {prov.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="min-h-[40px] px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-500 dark:text-slate-400 flex items-center">
+                          {paymentMethod === 'card' &&
+                          checkoutConfig &&
+                          checkoutConfig.activeProviders.length === 0
+                            ? 'No online gateway configured; use COD.'
+                            : 'Secured order settlement'}
+                        </div>
+                      )}
                     </div>
                     <textarea
                       rows={2}

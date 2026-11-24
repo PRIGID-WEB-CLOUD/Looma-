@@ -185,7 +185,8 @@ router.get("/settings/google-config", async (req: TenantRequest, res: Response) 
 
 router.put("/settings", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
-  for (const [key, value] of Object.entries(req.body as Record<string, unknown>)) {
+  const body = req.body as Record<string, unknown>;
+  for (const [key, value] of Object.entries(body)) {
     if (typeof value !== "string") continue;
     if (SECRET_SETTINGS.has(key) && value === "●●●●●●●●") continue;
     const storedValue = SECRET_SETTINGS.has(key) && value
@@ -194,8 +195,23 @@ router.put("/settings", async (req: TenantRequest, res: Response) => {
     await db.insert(appSettingsTable).values({ id: randomUUID(), storeId, key, value: storedValue, updatedAt: new Date() })
       .onConflictDoUpdate({ target: [appSettingsTable.storeId, appSettingsTable.key], set: { value: storedValue, updatedAt: new Date() } });
   }
+
+  const storeUpdates: Record<string, unknown> = {};
+  if (typeof body.store_name === "string" && body.store_name.trim()) {
+    storeUpdates.name = body.store_name.trim().slice(0, 120);
+  }
+  if (typeof body.store_currency === "string" && body.store_currency.trim()) {
+    storeUpdates.currency = body.store_currency.trim().toUpperCase().slice(0, 8);
+  }
+  if (Object.keys(storeUpdates).length > 0) {
+    storeUpdates.updatedAt = new Date();
+    await db.update(storesTable).set(storeUpdates).where(eq(storesTable.id, storeId)).catch(() => {});
+  }
+
   const settings = await readSettings(storeId);
   await loadBrandingCache(storeId).catch((err) => console.error("Failed to refresh branding cache:", err));
+  await enqueueStoreOutboxSnapshot(storeId, "STORE_UPDATED").catch(() => {});
+  processPendingOutbox({ storeId }).catch(() => {});
   return res.json({ settings: safeSettings(settings), status: configured(settings) });
 });
 

@@ -9,6 +9,22 @@ export type OrderStatus =
   | 'CANCELLED';
 export type PaymentMethod = 'card' | 'cod' | 'wallet';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
+export type PaymentProviderId = 'stripe' | 'paystack' | 'flutterwave';
+
+export interface CheckoutPaymentProviderOption {
+  provider: PaymentProviderId;
+  name: string;
+  publishableKey: string | null;
+  livemode: boolean;
+}
+
+export interface CheckoutPaymentConfig {
+  activeProvider: PaymentProviderId;
+  publishableKey: string | null;
+  livemode: boolean;
+  activeProviders: CheckoutPaymentProviderOption[];
+  currency: string;
+}
 
 export interface ProductVariant {
   id: string;
@@ -34,6 +50,9 @@ export interface MarketplaceStore {
   publishStatus: StorePublishStatus;
   externalStoreId?: string;
   businessProfileId?: string;
+  country?: string;
+  countryCode?: string;
+  location?: string;
   verified: boolean;
   featured: boolean;
   createdAtMs: number;
@@ -56,6 +75,8 @@ export interface MarketplaceProduct {
   imageUrl: string;
   galleryUrls?: string[];
   location?: string;
+  country?: string;
+  countryCode?: string;
   condition?: ProductCondition;
   stock: number;
   trackQuantity?: boolean;
@@ -112,11 +133,17 @@ export interface MarketplaceOrder {
   currency: string;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  paymentProvider?: PaymentProviderId | string;
+  paymentReference?: string;
   status: OrderStatus;
   shippingName: string;
   shippingPhone: string;
   shippingAddress: string;
   shippingCity: string;
+  shippingCountry?: string;
+  shippingCountryCode?: string;
+  shippingState?: string;
+  shippingPostalCode?: string;
   note: string;
   createdAtMs: number;
   updatedAtMs: number;

@@ -371,12 +371,33 @@ export async function updateBusinessProfile(
         updatedAt: serverTimestamp(),
       });
     }
+    void syncCommerceStoreProfile(bpId).catch(() => {
+      // Best-effort sync to Commerce store metadata
+    });
   } catch (err) {
     if (err instanceof Error && err.message.includes('already taken')) {
       throw err;
     }
     handleFirestoreError(err, OperationType.UPDATE, `businessProfiles/${bpId}`);
   }
+}
+
+export async function syncCommerceStoreProfile(bpId: string): Promise<{ ok: boolean; skipped?: boolean }> {
+  const user = auth.currentUser;
+  if (!user) return { ok: false, skipped: true };
+  const token = await user.getIdToken();
+  const res = await fetch(`/api/business-profiles/${encodeURIComponent(bpId)}/sync-store`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    return { ok: false };
+  }
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; skipped?: boolean };
+  return { ok: Boolean(data.ok), skipped: Boolean(data.skipped) };
 }
 
 export async function getBusinessProfileById(bpId: string): Promise<BusinessProfile | null> {

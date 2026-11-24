@@ -14,7 +14,8 @@ import {
 } from "@workspace/db";
 import { buildTenantUrl, sanitizeTenantSlug } from "@workspace/tenant-routing";
 import { ADMIN_IDLE_TTL_MS, SESSION_COOKIE } from "../middleware/requireAdmin";
-import { reconcileStoreOutbox } from "../services/firestoreSyncWorker";
+import { processPendingOutbox, reconcileStoreOutbox } from "../services/firestoreSyncWorker";
+import { enqueueStoreOutboxSnapshot } from "../services/inventoryService";
 import { isRateLimited } from "./auth";
 
 const router = Router();
@@ -114,7 +115,56 @@ const provisionSchema = z.object({
   slug: z.string().trim().min(2).max(100),
   name: z.string().trim().min(2).max(120),
   currency: z.string().trim().min(3).max(8).optional().default("USD"),
+  tagline: z.string().trim().max(240).optional(),
+  location: z.string().trim().max(120).optional(),
+  country: z.string().trim().max(120).optional(),
+  countryCode: z.string().trim().max(10).optional(),
+  logoUrl: z.string().trim().max(250000).optional(),
+  bannerUrl: z.string().trim().max(250000).optional(),
+  category: z.string().trim().max(80).optional(),
 });
+
+async function upsertStoreSetting(storeId: string, key: string, value: string) {
+  await db
+    .insert(appSettingsTable)
+    .values({ id: randomUUID(), storeId, key, value, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [appSettingsTable.storeId, appSettingsTable.key],
+      set: { value, updatedAt: new Date() },
+    });
+}
+
+async function applyBusinessMetadataToStore(
+  storeId: string,
+  meta: {
+    name?: string;
+    currency?: string;
+    tagline?: string;
+    location?: string;
+    country?: string;
+    countryCode?: string;
+    logoUrl?: string;
+    bannerUrl?: string;
+    category?: string;
+  }
+) {
+  const entries: Array<[string, string | undefined]> = [
+    ["store_name", meta.name?.trim()],
+    ["store_currency", meta.currency?.trim().toUpperCase().slice(0, 8)],
+    ["brand_tagline", meta.tagline?.trim()],
+    ["store_location", meta.location?.trim()],
+    ["store_country", meta.country?.trim()],
+    ["store_country_code", meta.countryCode?.trim().toUpperCase()],
+    ["brand_logo_url", meta.logoUrl?.trim()],
+    ["brand_hero_image", meta.bannerUrl?.trim()],
+    ["brand_category", meta.category?.trim()],
+  ];
+  for (const [k, v] of entries) {
+    if (v) {
+      await upsertStoreSetting(storeId, k, v).catch(() => {});
+    }
+  }
+}
 
 router.post("/internal/stores/provision", async (req: Request, res: Response) => {
   if (!verifyInternalSecret(req, res)) return;
@@ -124,7 +174,22 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
     return res.status(400).json({ error: "Invalid store provision payload.", details: parsed.error.flatten() });
   }
 
-  const { businessProfileId, ownerFirebaseUid, ownerEmail, ownerName, slug, name, currency } = parsed.data;
+  const {
+    businessProfileId,
+    ownerFirebaseUid,
+    ownerEmail,
+    ownerName,
+    slug,
+    name,
+    currency,
+    tagline,
+    location,
+    country,
+    countryCode,
+    logoUrl,
+    bannerUrl,
+    category,
+  } = parsed.data;
 
   try {
     const [existingByBp] = await db
@@ -134,6 +199,25 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
       .limit(1);
 
     if (existingByBp) {
+      if (existingByBp.publishStatus === "DRAFT" && !existingByBp.isPublished && existingByBp.status !== "suspended") {
+        await db
+          .update(storesTable)
+          .set({ isPublished: true, publishStatus: "PUBLISHED", updatedAt: new Date() })
+          .where(eq(storesTable.id, existingByBp.id));
+      }
+      await applyBusinessMetadataToStore(existingByBp.id, {
+        name,
+        currency,
+        tagline,
+        location,
+        country,
+        countryCode,
+        logoUrl,
+        bannerUrl,
+        category,
+      });
+      await enqueueStoreOutboxSnapshot(existingByBp.id, "STORE_UPDATED").catch(() => {});
+      processPendingOutbox({ storeId: existingByBp.id }).catch(() => {});
       return res.status(200).json({
         storeId: existingByBp.id,
         storeSlug: existingByBp.slug,
@@ -171,8 +255,8 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
         ownerFirebaseUid,
         planTier: "starter",
         status: "active",
-        isPublished: false,
-        publishStatus: "DRAFT",
+        isPublished: true,
+        publishStatus: "PUBLISHED",
         publishableKey: pubKey,
         secretKeyHash,
         currency: cleanCurrency,
@@ -197,12 +281,21 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
         status: "Active",
       });
 
-      await tx.insert(appSettingsTable).values([
+      const initialSettings = [
         { id: randomUUID(), storeId, key: "store_name", value: name, updatedAt: new Date() },
         { id: randomUUID(), storeId, key: "store_email", value: ownerEmail, updatedAt: new Date() },
         { id: randomUUID(), storeId, key: "store_currency", value: cleanCurrency, updatedAt: new Date() },
         { id: randomUUID(), storeId, key: "brand_primary_color", value: "#0f172a", updatedAt: new Date() },
-      ]);
+      ];
+      if (tagline?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "brand_tagline", value: tagline.trim(), updatedAt: new Date() });
+      if (location?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "store_location", value: location.trim(), updatedAt: new Date() });
+      if (country?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "store_country", value: country.trim(), updatedAt: new Date() });
+      if (countryCode?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "store_country_code", value: countryCode.trim().toUpperCase(), updatedAt: new Date() });
+      if (logoUrl?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "brand_logo_url", value: logoUrl.trim(), updatedAt: new Date() });
+      if (bannerUrl?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "brand_hero_image", value: bannerUrl.trim(), updatedAt: new Date() });
+      if (category?.trim()) initialSettings.push({ id: randomUUID(), storeId, key: "brand_category", value: category.trim(), updatedAt: new Date() });
+
+      await tx.insert(appSettingsTable).values(initialSettings);
 
       await tx.insert(commerceSyncOutboxTable).values({
         id: randomUUID(),
@@ -211,17 +304,33 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
         storeId,
         eventType: "STORE_PROVISIONED",
         payload: {
+          id: storeId,
           storeId,
+          slug: finalSlug,
           storeSlug: finalSlug,
           businessProfileId,
+          ownerUid: ownerFirebaseUid,
+          ownerHandle: finalSlug,
           ownerFirebaseUid,
           name,
+          tagline: tagline?.trim() || "",
+          logoUrl: logoUrl?.trim() || "",
+          bannerUrl: bannerUrl?.trim() || "",
+          category: category?.trim() || "General",
+          country: country?.trim() || "",
+          countryCode: countryCode?.trim().toUpperCase() || "",
+          location: location?.trim() || country?.trim() || "",
           currency: cleanCurrency,
-          publishStatus: "DRAFT",
+          publishStatus: "PUBLISHED",
+          externalStoreId: storeId,
+          verified: false,
+          featured: false,
         },
         attempts: 0,
       });
     });
+
+    processPendingOutbox({ storeId }).catch(() => {});
 
     return res.status(201).json({
       storeId,
@@ -231,6 +340,73 @@ router.post("/internal/stores/provision", async (req: Request, res: Response) =>
   } catch (err: any) {
     console.error("[Commerce Provision Store Error]", err);
     return res.status(500).json({ error: err?.message || "Failed to provision Commerce store." });
+  }
+});
+
+const syncStoreSchema = z.object({
+  businessProfileId: z.string().trim().min(1).max(160),
+  slug: z.string().trim().min(2).max(100).optional(),
+  name: z.string().trim().min(2).max(120).optional(),
+  currency: z.string().trim().min(3).max(8).optional(),
+  tagline: z.string().trim().max(240).optional(),
+  location: z.string().trim().max(120).optional(),
+  country: z.string().trim().max(120).optional(),
+  countryCode: z.string().trim().max(10).optional(),
+  logoUrl: z.string().trim().max(250000).optional(),
+  bannerUrl: z.string().trim().max(250000).optional(),
+  category: z.string().trim().max(80).optional(),
+});
+
+router.post("/internal/stores/sync", async (req: Request, res: Response) => {
+  if (!verifyInternalSecret(req, res)) return;
+
+  const parsed = syncStoreSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid store sync payload.", details: parsed.error.flatten() });
+  }
+
+  const data = parsed.data;
+  try {
+    const [store] = await db
+      .select()
+      .from(storesTable)
+      .where(eq(storesTable.businessProfileId, data.businessProfileId))
+      .limit(1);
+
+    if (!store) {
+      return res.json({ ok: true, skipped: true, reason: "STORE_NOT_PROVISIONED" });
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (data.name?.trim()) updates.name = data.name.trim();
+    if (data.currency?.trim()) updates.currency = data.currency.trim().toUpperCase().slice(0, 8);
+    if (data.slug?.trim()) {
+      const cleanSlug = sanitizeTenantSlug(data.slug);
+      if (cleanSlug && cleanSlug !== store.slug) {
+        const [collision] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.slug, cleanSlug))
+          .limit(1);
+        if (!collision || collision.id === store.id) {
+          updates.slug = cleanSlug;
+        }
+      }
+    }
+
+    await db.update(storesTable).set(updates).where(eq(storesTable.id, store.id));
+    await applyBusinessMetadataToStore(store.id, data);
+    await enqueueStoreOutboxSnapshot(store.id, "STORE_UPDATED").catch(() => {});
+    processPendingOutbox({ storeId: store.id }).catch(() => {});
+
+    return res.json({
+      ok: true,
+      storeId: store.id,
+      storeSlug: typeof updates.slug === "string" ? updates.slug : store.slug,
+    });
+  } catch (err: any) {
+    console.error("[Commerce Sync Store Error]", err);
+    return res.status(500).json({ error: err?.message || "Failed to sync Commerce store." });
   }
 });
 

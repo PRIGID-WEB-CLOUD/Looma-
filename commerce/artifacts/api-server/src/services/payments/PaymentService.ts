@@ -943,8 +943,8 @@ export class PaymentService {
     const provider = this.getProvider(activeProviderName);
 
     const connection = await this.getDecryptedConnection(storeId, activeProviderName);
-    if (!connection) {
-      throw Object.assign(new Error(`Payment provider ${activeProviderName} is not connected or active.`), { statusCode: 503 });
+    if (!connection || connection.status !== "CONNECTED" || (!connection.accessToken && !provider.isPlatformConfigured())) {
+      throw Object.assign(new Error(`Payment provider ${activeProviderName} is not connected or active for this store.`), { statusCode: 503 });
     }
 
     // Persist pending payment transaction record

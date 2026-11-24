@@ -88,6 +88,37 @@ export const PRODUCT_CONDITIONS: ProductCondition[] = [
 export const CURRENCY_OPTIONS = ['USD', 'GHS', 'EUR', 'GBP', 'NGN'] as const;
 export const RADIUS_OPTIONS_KM = [10, 25, 65, 100, 250] as const;
 
+const SHIPPING_SCHEDULE_BY_CURRENCY: Record<
+  string,
+  { freeThresholdCents: number; flatFeeCents: number }
+> = {
+  USD: { freeThresholdCents: 25000, flatFeeCents: 1500 },
+  EUR: { freeThresholdCents: 25000, flatFeeCents: 1500 },
+  GBP: { freeThresholdCents: 20000, flatFeeCents: 1200 },
+  CAD: { freeThresholdCents: 30000, flatFeeCents: 1800 },
+  AUD: { freeThresholdCents: 35000, flatFeeCents: 2000 },
+  CHF: { freeThresholdCents: 25000, flatFeeCents: 1500 },
+  SGD: { freeThresholdCents: 30000, flatFeeCents: 1500 },
+  GHS: { freeThresholdCents: 250000, flatFeeCents: 5000 },
+  NGN: { freeThresholdCents: 15000000, flatFeeCents: 500000 },
+  KES: { freeThresholdCents: 2500000, flatFeeCents: 50000 },
+  ZAR: { freeThresholdCents: 400000, flatFeeCents: 15000 },
+  JPY: { freeThresholdCents: 3500000, flatFeeCents: 150000 },
+};
+
+export function calculateMarketplaceShippingCents(
+  subtotalCents: number,
+  currency: string = 'USD',
+  _countryCode?: string
+): number {
+  if (!Number.isFinite(subtotalCents) || subtotalCents <= 0) {
+    return 0;
+  }
+  const code = (currency || 'USD').trim().toUpperCase() || 'USD';
+  const schedule = SHIPPING_SCHEDULE_BY_CURRENCY[code] || SHIPPING_SCHEDULE_BY_CURRENCY.USD;
+  return subtotalCents < schedule.freeThresholdCents ? schedule.flatFeeCents : 0;
+}
+
 export function resolveListingImages(
   product: Pick<MarketplaceProduct, 'imageUrl' | 'galleryUrls'>
 ): string[] {
@@ -179,30 +210,139 @@ export function filterMarketplaceProducts(
     query?: string;
     locationQuery?: string;
     localOnly?: boolean;
+    country?: string;
+    storesById?: Record<string, Pick<MarketplaceStore, 'country' | 'countryCode' | 'location'>>;
   }
 ): MarketplaceProduct[] {
   const storeId = options.storeId || 'all';
   const category = options.category || 'All';
   const q = (options.query || '').trim().toLowerCase();
   const loc = (options.locationQuery || '').trim().toLowerCase();
+  const country = (options.country || '').trim().toLowerCase();
 
   const filtered = products.filter((prod) => {
     if (storeId !== 'all' && prod.storeId !== storeId) return false;
     if (category !== 'All' && prod.category !== category) return false;
+
+    const storeMeta = options.storesById?.[prod.storeId];
+    const prodCountry = (prod.country || storeMeta?.country || '').trim().toLowerCase();
+    const prodCountryCode = (prod.countryCode || storeMeta?.countryCode || '').trim().toLowerCase();
+    const prodLoc = (prod.location || storeMeta?.location || '').trim().toLowerCase();
+
+    if (country && country !== 'all') {
+      const matchesCountry =
+        (prodCountry && prodCountry === country) ||
+        (prodCountryCode && prodCountryCode === country) ||
+        (prodLoc && prodLoc.includes(country));
+      if (!matchesCountry) {
+        return false;
+      }
+    }
+
     if (options.localOnly && loc) {
-      const prodLoc = (prod.location || '').toLowerCase();
       if (prodLoc && !prodLoc.includes(loc) && !loc.includes(prodLoc)) {
         return false;
       }
     }
     if (q) {
-      const hay = `${prod.title} ${prod.description} ${prod.storeName} ${prod.category} ${prod.location || ''} ${prod.tag || ''}`.toLowerCase();
+      const hay = `${prod.title} ${prod.description} ${prod.storeName} ${prod.category} ${prodLoc} ${prodCountry} ${prod.tag || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
 
   return filtered;
+}
+
+export function mergeMarketplaceStores(
+  upstreamStores: MarketplaceStore[],
+  firestoreStores: MarketplaceStore[]
+): MarketplaceStore[] {
+  const merged = new Map<string, MarketplaceStore>();
+  for (const store of firestoreStores) {
+    merged.set(store.id, store);
+  }
+  for (const upstream of upstreamStores) {
+    const existing = merged.get(upstream.id);
+    if (existing) {
+      merged.set(upstream.id, {
+        ...existing,
+        ...upstream,
+        ownerUid: upstream.ownerUid || existing.ownerUid,
+        businessProfileId: upstream.businessProfileId || existing.businessProfileId,
+        country: upstream.country || existing.country,
+        countryCode: upstream.countryCode || existing.countryCode,
+        location: upstream.location || existing.location,
+        logoUrl: upstream.logoUrl || existing.logoUrl,
+        bannerUrl: upstream.bannerUrl || existing.bannerUrl,
+        verified: upstream.verified || existing.verified,
+        featured: upstream.featured || existing.featured,
+      });
+    } else {
+      merged.set(upstream.id, upstream);
+    }
+  }
+  return Array.from(merged.values()).sort(
+    (a, b) => Number(b.featured) - Number(a.featured) || b.updatedAtMs - a.updatedAtMs
+  );
+}
+
+export function mergeMarketplaceProducts(
+  upstreamProducts: MarketplaceProduct[],
+  firestoreProducts: MarketplaceProduct[]
+): MarketplaceProduct[] {
+  const merged = new Map<string, MarketplaceProduct>();
+  for (const prod of firestoreProducts) {
+    merged.set(prod.id, prod);
+  }
+  for (const upstream of upstreamProducts) {
+    const existing = merged.get(upstream.id);
+    if (existing) {
+      merged.set(upstream.id, {
+        ...existing,
+        ...upstream,
+        ownerUid: upstream.ownerUid || existing.ownerUid,
+        businessProfileId: upstream.businessProfileId || existing.businessProfileId,
+        country: upstream.country || existing.country,
+        countryCode: upstream.countryCode || existing.countryCode,
+        location: upstream.location || existing.location,
+        galleryUrls:
+          upstream.galleryUrls && upstream.galleryUrls.length > 0
+            ? upstream.galleryUrls
+            : existing.galleryUrls,
+        featured: upstream.featured || existing.featured,
+      });
+    } else {
+      merged.set(upstream.id, upstream);
+    }
+  }
+  return Array.from(merged.values()).sort(
+    (a, b) => Number(b.featured) - Number(a.featured) || b.updatedAtMs - a.updatedAtMs
+  );
+}
+
+export function mergeMarketplaceOrders(
+  upstreamOrders: MarketplaceOrder[],
+  firestoreOrders: MarketplaceOrder[]
+): MarketplaceOrder[] {
+  const merged = new Map<string, MarketplaceOrder>();
+  for (const order of firestoreOrders) {
+    merged.set(order.id, order);
+  }
+  for (const upstream of upstreamOrders) {
+    const existing = merged.get(upstream.id);
+    if (existing) {
+      merged.set(upstream.id, {
+        ...existing,
+        ...upstream,
+        storeBusinessProfileId:
+          upstream.storeBusinessProfileId || existing.storeBusinessProfileId,
+      });
+    } else {
+      merged.set(upstream.id, upstream);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => b.createdAtMs - a.createdAtMs);
 }
 
 export function upsertRecentSearch(
@@ -342,6 +482,7 @@ export function resolveMarketplaceInboxEntries(params: {
   stores: MarketplaceStore[];
   knownUsers: UserProfile[];
   threadHints?: TrackedMarketplaceThreadHint[];
+  ownedBusinessIds?: string[];
 }): MarketplaceInboxEntry[] {
   const {
     currentUid,
@@ -354,16 +495,31 @@ export function resolveMarketplaceInboxEntries(params: {
     stores,
     knownUsers,
     threadHints = [],
+    ownedBusinessIds = [],
   } = params;
 
   const entries: MarketplaceInboxEntry[] = [];
   const usedThreadIds = new Set<string>();
+  const ownedBpIds = new Set(
+    ownedBusinessIds.map((id) => id.trim()).filter(Boolean)
+  );
 
   const ownedStoreIds = new Set(
-    stores.filter((s) => s.ownerUid === currentUid).map((s) => s.id)
+    stores
+      .filter(
+        (s) =>
+          s.ownerUid === currentUid ||
+          (s.businessProfileId ? ownedBpIds.has(s.businessProfileId) : false)
+      )
+      .map((s) => s.id)
   );
   const ownedProductTitles = products
-    .filter((p) => p.ownerUid === currentUid || ownedStoreIds.has(p.storeId))
+    .filter(
+      (p) =>
+        p.ownerUid === currentUid ||
+        ownedStoreIds.has(p.storeId) ||
+        (p.businessProfileId ? ownedBpIds.has(p.businessProfileId) : false)
+    )
     .map((p) => p.title.trim().toLowerCase())
     .filter((t) => t.length >= 3);
 
@@ -397,7 +553,10 @@ export function resolveMarketplaceInboxEntries(params: {
     role === 'buying'
       ? buyerOrders
       : sellerOrders.filter(
-          (o) => o.storeOwnerUid === currentUid || ownedStoreIds.has(o.storeId)
+          (o) =>
+            o.storeOwnerUid === currentUid ||
+            ownedStoreIds.has(o.storeId) ||
+            (o.storeBusinessProfileId ? ownedBpIds.has(o.storeBusinessProfileId) : false)
         );
 
   for (const order of scopedOrders) {

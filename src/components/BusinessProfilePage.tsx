@@ -17,7 +17,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Timestamp, collection, onSnapshot, query, where, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import type {
   BusinessInvite,
@@ -51,7 +51,9 @@ import {
   toggleFollowBusinessProfile,
   updateBusinessMemberRole,
 } from '../services/businessProfiles';
+import { fetchBusinessShopProducts } from '../services/commerce';
 import { formatCurrencyCents } from '../services/marketplaceCatalogAssets';
+import { mergeMarketplaceProducts } from '../utils/marketplaceLogic';
 import { Avatar } from './Avatar';
 import { PostCard } from './PostCard';
 import { RequestVerificationModal } from './RequestVerificationModal';
@@ -92,6 +94,7 @@ function getVerificationStatusMeta(status: VerificationRequestStatus): {
 
 interface BusinessProfilePageProps {
   slug: string;
+  initialSubTab?: 'posts' | 'shop' | 'team';
   currentProfile: UserProfile;
   isAuthorized: boolean;
   memberships: BusinessMembership[];
@@ -143,6 +146,7 @@ interface BusinessProfilePageProps {
 
 export function BusinessProfilePage({
   slug,
+  initialSubTab = 'posts',
   currentProfile,
   isAuthorized,
   memberships,
@@ -181,11 +185,20 @@ export function BusinessProfilePage({
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [subTab, setSubTab] = useState<'posts' | 'shop' | 'team'>('posts');
+  const [subTab, setSubTab] = useState<'posts' | 'shop' | 'team'>(initialSubTab);
+
+  useEffect(() => {
+    setSubTab(initialSubTab);
+  }, [initialSubTab, slug]);
 
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
-  const [catalogProducts, setCatalogProducts] = useState<MarketplaceProduct[]>([]);
+  const [upstreamShopProducts, setUpstreamShopProducts] = useState<MarketplaceProduct[]>([]);
+  const [firestoreShopProducts, setFirestoreShopProducts] = useState<MarketplaceProduct[]>([]);
+  const catalogProducts = useMemo(
+    () => mergeMarketplaceProducts(upstreamShopProducts, firestoreShopProducts),
+    [upstreamShopProducts, firestoreShopProducts]
+  );
   const [members, setMembers] = useState<BusinessMembership[]>([]);
   const [invites, setInvites] = useState<BusinessInvite[]>([]);
 
@@ -248,57 +261,215 @@ export function BusinessProfilePage({
     );
   }, [businessProfile, currentProfile.uid, isAuthorized]);
 
-  // Subscribe to published products linked to this Business Profile
+  // Subscribe to published products linked to this Business Profile (Commerce API + Firestore merged)
   useEffect(() => {
     if (!businessProfile) {
-      setCatalogProducts([]);
+      setUpstreamShopProducts([]);
+      setFirestoreShopProducts([]);
       return;
     }
-    const targetStoreId = businessProfile.commerceStoreId || '';
-    if (!targetStoreId) {
-      setCatalogProducts([]);
-      return;
+
+    let active = true;
+    void fetchBusinessShopProducts({
+      commerceStoreId: businessProfile.commerceStoreId,
+      commerceStoreSlug: businessProfile.commerceStoreSlug || businessProfile.slug,
+      businessProfileId: businessProfile.id,
+      slug: businessProfile.slug,
+      ownerUid: businessProfile.ownerUid,
+    }).then((items) => {
+      if (!active) return;
+      setUpstreamShopProducts(items);
+    });
+
+    const toMillis = (val: unknown, fallback: number = 0): number => {
+      if (val instanceof Timestamp) return val.toMillis();
+      if (typeof val === 'number' && Number.isFinite(val)) return val;
+      if (typeof val === 'string' && val.trim()) {
+        const parsed = Date.parse(val);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      if (val && typeof val === 'object' && 'toMillis' in val && typeof (val as { toMillis: () => number }).toMillis === 'function') {
+        return (val as { toMillis: () => number }).toMillis();
+      }
+      return fallback;
+    };
+
+    const mapSnapshotDoc = (docSnap: QueryDocumentSnapshot<DocumentData>): MarketplaceProduct => {
+      const d = docSnap.data();
+      const createdAtMs = toMillis(d.createdAt, Date.now());
+      const updatedAtMs = toMillis(d.updatedAt || d.createdAt, createdAtMs);
+      return {
+        id: String(d.id || docSnap.id),
+        storeId: String(d.storeId || businessProfile.commerceStoreId || ''),
+        storeName: String(d.storeName || businessProfile.displayName),
+        storeSlug: String(d.storeSlug || businessProfile.slug),
+        ownerUid: String(d.ownerUid || businessProfile.ownerUid),
+        businessProfileId: String(d.businessProfileId || businessProfile.id),
+        title: String(d.title || d.name || ''),
+        description: String(d.description || ''),
+        category: String(d.category || 'General'),
+        priceCents: Number(d.priceCents || 0),
+        ...(typeof d.compareAtPriceCents === 'number'
+          ? { compareAtPriceCents: d.compareAtPriceCents }
+          : {}),
+        currency: String(d.currency || businessProfile.currency || 'USD'),
+        imageUrl: String(d.imageUrl || ''),
+        stock: Number(d.stock || 0),
+        status: 'ACTIVE',
+        featured: Boolean(d.featured),
+        ...(typeof d.tag === 'string' ? { tag: d.tag } : {}),
+        ...(typeof d.location === 'string' ? { location: d.location } : {}),
+        ...(typeof d.country === 'string' ? { country: d.country } : {}),
+        ...(typeof d.countryCode === 'string' ? { countryCode: d.countryCode } : {}),
+        ...(typeof d.condition === 'string' ? { condition: d.condition as MarketplaceProduct['condition'] } : {}),
+        ...(Array.isArray(d.galleryUrls) ? { galleryUrls: d.galleryUrls as string[] } : {}),
+        createdAtMs,
+        updatedAtMs,
+      };
+    };
+
+    const sourceMaps: Record<string, Map<string, MarketplaceProduct>> = {
+      byStoreId: new Map(),
+      byBpId: new Map(),
+      bySlug: new Map(),
+      byDiscoveredStoreId: new Map(),
+    };
+
+    const syncCombined = () => {
+      if (!active) return;
+      const combined = new Map<string, MarketplaceProduct>();
+      for (const bucket of Object.values(sourceMaps)) {
+        for (const [id, prod] of bucket.entries()) {
+          const prev = combined.get(id);
+          if (!prev || prod.updatedAtMs >= prev.updatedAtMs) {
+            combined.set(id, prod);
+          }
+        }
+      }
+      setFirestoreShopProducts(Array.from(combined.values()));
+    };
+
+    const unsubs: Array<() => void> = [];
+
+    if (businessProfile.commerceStoreId) {
+      unsubs.push(
+        onSnapshot(
+          query(
+            collection(db, 'marketplaceProducts'),
+            where('storeId', '==', businessProfile.commerceStoreId),
+            where('status', '==', 'ACTIVE')
+          ),
+          (snap) => {
+            sourceMaps.byStoreId = new Map(snap.docs.map((docSnap) => {
+              const p = mapSnapshotDoc(docSnap);
+              return [p.id, p];
+            }));
+            syncCombined();
+          },
+          () => {
+            sourceMaps.byStoreId.clear();
+            syncCombined();
+          }
+        )
+      );
     }
-    const q = query(
-      collection(db, 'marketplaceProducts'),
-      where('storeId', '==', targetStoreId),
-      where('status', '==', 'ACTIVE')
+
+    unsubs.push(
+      onSnapshot(
+        query(
+          collection(db, 'marketplaceProducts'),
+          where('businessProfileId', '==', businessProfile.id),
+          where('status', '==', 'ACTIVE')
+        ),
+        (snap) => {
+          sourceMaps.byBpId = new Map(snap.docs.map((docSnap) => {
+            const p = mapSnapshotDoc(docSnap);
+            return [p.id, p];
+          }));
+          syncCombined();
+        },
+        () => {
+          sourceMaps.byBpId.clear();
+          syncCombined();
+        }
+      )
     );
-    return onSnapshot(
-      q,
-      (snap) => {
-        const items: MarketplaceProduct[] = snap.docs.map((docSnap) => {
-          const d = docSnap.data();
-          return {
-            id: String(d.id || docSnap.id),
-            storeId: String(d.storeId || targetStoreId),
-            storeName: String(d.storeName || businessProfile.displayName),
-            storeSlug: String(d.storeSlug || businessProfile.slug),
-            ownerUid: String(d.ownerUid || businessProfile.ownerUid),
-            title: String(d.title || ''),
-            description: String(d.description || ''),
-            category: String(d.category || ''),
-            priceCents: Number(d.priceCents || 0),
-            ...(typeof d.compareAtPriceCents === 'number'
-              ? { compareAtPriceCents: d.compareAtPriceCents }
-              : {}),
-            currency: String(d.currency || businessProfile.currency || 'USD'),
-            imageUrl: String(d.imageUrl || ''),
-            stock: Number(d.stock || 0),
-            status: 'ACTIVE',
-            featured: Boolean(d.featured),
-            ...(typeof d.tag === 'string' ? { tag: d.tag } : {}),
-            ...(typeof d.location === 'string' ? { location: d.location } : {}),
-            ...(typeof d.condition === 'string' ? { condition: d.condition as MarketplaceProduct['condition'] } : {}),
-            ...(Array.isArray(d.galleryUrls) ? { galleryUrls: d.galleryUrls as string[] } : {}),
-            createdAtMs: Date.now(),
-            updatedAtMs: Date.now(),
-          };
-        });
-        setCatalogProducts(items);
-      },
-      () => setCatalogProducts([])
+
+    if (businessProfile.slug) {
+      unsubs.push(
+        onSnapshot(
+          query(
+            collection(db, 'marketplaceProducts'),
+            where('storeSlug', '==', businessProfile.slug),
+            where('status', '==', 'ACTIVE')
+          ),
+          (snap) => {
+            sourceMaps.bySlug = new Map(snap.docs.map((docSnap) => {
+              const p = mapSnapshotDoc(docSnap);
+              return [p.id, p];
+            }));
+            syncCombined();
+          },
+          () => {
+            sourceMaps.bySlug.clear();
+            syncCombined();
+          }
+        )
+      );
+    }
+
+    // Also discover store ID via marketplaceStores if businessProfile.commerceStoreId is stale or not yet written
+    let unsubDiscoveredStoreProducts: (() => void) | null = null;
+    let lastDiscoveredStoreId = '';
+    unsubs.push(
+      onSnapshot(
+        query(
+          collection(db, 'marketplaceStores'),
+          where('businessProfileId', '==', businessProfile.id),
+          where('publishStatus', '==', 'PUBLISHED')
+        ),
+        (storeSnap) => {
+          const discoveredId = storeSnap.docs[0]?.id || '';
+          if (
+            discoveredId &&
+            discoveredId !== businessProfile.commerceStoreId &&
+            discoveredId !== lastDiscoveredStoreId
+          ) {
+            lastDiscoveredStoreId = discoveredId;
+            unsubDiscoveredStoreProducts?.();
+            unsubDiscoveredStoreProducts = onSnapshot(
+              query(
+                collection(db, 'marketplaceProducts'),
+                where('storeId', '==', discoveredId),
+                where('status', '==', 'ACTIVE')
+              ),
+              (prodSnap) => {
+                sourceMaps.byDiscoveredStoreId = new Map(
+                  prodSnap.docs.map((docSnap) => {
+                    const p = mapSnapshotDoc(docSnap);
+                    return [p.id, p];
+                  })
+                );
+                syncCombined();
+              },
+              () => {
+                sourceMaps.byDiscoveredStoreId.clear();
+                syncCombined();
+              }
+            );
+          }
+        },
+        () => {
+          // Non-fatal
+        }
+      )
     );
+
+    return () => {
+      active = false;
+      unsubDiscoveredStoreProducts?.();
+      for (const fn of unsubs) fn();
+    };
   }, [businessProfile]);
 
   useEffect(() => {
@@ -864,14 +1035,27 @@ export function BusinessProfilePage({
 
       {subTab === 'shop' && (
         catalogProducts.length === 0 ? (
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-2">
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
             <ShoppingBag className="w-8 h-8 text-slate-400 mx-auto" aria-hidden="true" />
             <p className="text-sm font-semibold">No active storefront products yet</p>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {isOwnerOrAdmin
-                ? 'Launch the Seller Portal above to publish products into Looma Marketplace.'
+                ? 'Launch your Seller Portal to add and publish products into Looma Marketplace.'
                 : `${businessProfile.displayName} has not listed public catalog items yet.`}
             </p>
+            {isOwnerOrAdmin && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  disabled={portalBusy}
+                  onClick={() => void handleLaunchCommerce()}
+                  className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  <Store className="w-4 h-4" aria-hidden="true" />
+                  <span>{portalBusy ? 'Authorizing...' : 'Launch Seller Portal'}</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

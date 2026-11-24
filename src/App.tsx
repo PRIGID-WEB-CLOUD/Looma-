@@ -499,12 +499,19 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
     }
   }, [activeBusinessProfile?.id, platformMode]);
 
-  const openBusinessProfileRoute = (slug: string) => {
+  const openBusinessProfileRoute = (
+    slug: string,
+    tab?: 'posts' | 'shop' | 'team'
+  ) => {
     const clean = slug.trim().toLowerCase();
     if (!clean) return;
     setSelectedBusinessSlug(clean);
     setActiveTab('business-profile');
-    navigateToPath(`/business/${clean}`);
+    navigateToPath(
+      tab && tab !== 'posts'
+        ? `/business/${clean}?tab=${encodeURIComponent(tab)}`
+        : `/business/${clean}`
+    );
   };
 
   const openProductDetailRoute = (productId: string) => {
@@ -1527,6 +1534,11 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
             <Suspense fallback={<RouteLoadingFallback />}>
               <BusinessProfilePage
                 slug={selectedBusinessSlug}
+                initialSubTab={
+                  searchParams?.get('tab') === 'shop' || searchParams?.get('tab') === 'team'
+                    ? (searchParams.get('tab') as 'shop' | 'team')
+                    : 'posts'
+                }
                 currentProfile={store.profile}
                 isAuthorized={store.isAuthorized}
                 memberships={memberships}
@@ -1730,6 +1742,7 @@ function AppContent({ store }: { store: ReturnType<typeof useSocialStore> }) {
                   ownerBusinesses={publicProfileBusinesses}
                   loadingBusinesses={loadingPublicBusinesses}
                   onOpenBusinessProfile={openBusinessProfileRoute}
+                  onOpenBusinessShop={(slug) => openBusinessProfileRoute(slug, 'shop')}
                   isFollowing={store.followedUserIds.includes(
                     liveCreator.uid
                   )}

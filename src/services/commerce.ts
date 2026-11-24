@@ -16,12 +16,14 @@ import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { MARKETPLACE_STUDIO_ASSETS, makeCommerceId, slugifyStoreHandle } from './marketplaceCatalogAssets';
 import type {
   CartItem,
+  CheckoutPaymentConfig,
   CommerceProxyStatus,
   MarketplaceOrder,
   MarketplaceProduct,
   MarketplaceStore,
   OrderStatus,
   PaymentMethod,
+  PaymentProviderId,
   PaymentStatus,
   ProductCondition,
   ProductStatus,
@@ -34,6 +36,10 @@ import type { BusinessProfile } from '../types/business';
 function timestampToMs(val: unknown, fallback: number = Date.now()): number {
   if (val instanceof Timestamp) return val.toMillis();
   if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (typeof val === 'string' && val.trim()) {
+    const parsed = Date.parse(val);
+    if (Number.isFinite(parsed)) return parsed;
+  }
   if (
     val &&
     typeof val === 'object' &&
@@ -125,35 +131,233 @@ export async function fetchUpstreamAdminStats(
   }
 }
 
-export async function fetchUpstreamMarketplaceCatalog(storeId?: string): Promise<{
+export async function fetchUpstreamMarketplaceCatalog(storeIdOrSlug?: string): Promise<{
   ok: boolean;
   stores?: MarketplaceStore[];
   products?: MarketplaceProduct[];
 }> {
   try {
-    const headers = await buildAuthHeaders(
-      storeId ? { 'X-Store-Id': storeId } : undefined
-    );
-    const endpoint = storeId
-      ? `/api/commerce/products?storeId=${encodeURIComponent(storeId)}`
+    const cleanStore = (storeIdOrSlug || '').trim();
+    const productsUrl = cleanStore
+      ? `/api/marketplace/products?store=${encodeURIComponent(cleanStore)}`
       : '/api/marketplace/products';
-    const res = await fetch(endpoint, { headers, cache: 'no-store' });
-    if (!res.ok) return { ok: false };
-    const payload = (await res.json().catch(() => null)) as
-      | { stores?: MarketplaceStore[]; products?: MarketplaceProduct[] }
-      | MarketplaceProduct[]
-      | null;
-    if (!payload) return { ok: false };
-    if (Array.isArray(payload)) {
-      return { ok: true, products: payload };
+    const headers = await buildAuthHeaders();
+    const [storesRes, productsRes] = await Promise.all([
+      fetch('/api/marketplace/stores', { method: 'GET', headers, cache: 'no-store' }),
+      fetch(productsUrl, { method: 'GET', headers, cache: 'no-store' }),
+    ]);
+
+    if (!storesRes.ok && !productsRes.ok) {
+      return { ok: false };
     }
+
+    let mappedStores: MarketplaceStore[] | undefined;
+    if (storesRes.ok) {
+      const storePayload = (await storesRes.json().catch(() => null)) as
+        | { stores?: Array<Record<string, unknown>> }
+        | null;
+      if (Array.isArray(storePayload?.stores)) {
+        mappedStores = storePayload.stores
+          .map((raw) => {
+            const id = typeof raw.id === 'string' ? raw.id : '';
+            if (!id) return null;
+            return mapStoreDoc(id, {
+              ...raw,
+              publishStatus: raw.isPublished === false ? 'DRAFT' : 'PUBLISHED',
+              externalStoreId: raw.externalStoreId || id,
+              verified: raw.verified ?? true,
+            });
+          })
+          .filter((item): item is MarketplaceStore => Boolean(item));
+      }
+    }
+
+    let mappedProducts: MarketplaceProduct[] | undefined;
+    if (productsRes.ok) {
+      const prodPayload = (await productsRes.json().catch(() => null)) as
+        | { products?: Array<Record<string, unknown>> }
+        | Array<Record<string, unknown>>
+        | null;
+      const rawProducts = Array.isArray(prodPayload)
+        ? prodPayload
+        : Array.isArray(prodPayload?.products)
+          ? prodPayload.products
+          : [];
+      mappedProducts = rawProducts
+        .map((raw) => {
+          const id = typeof raw.id === 'string' ? raw.id : '';
+          if (!id) return null;
+          return mapProductDoc(id, {
+            ...raw,
+            status: typeof raw.status === 'string' ? raw.status : 'ACTIVE',
+          });
+        })
+        .filter((item): item is MarketplaceProduct => Boolean(item));
+    }
+
     return {
       ok: true,
-      stores: Array.isArray(payload.stores) ? payload.stores : undefined,
-      products: Array.isArray(payload.products) ? payload.products : undefined,
+      stores: mappedStores,
+      products: mappedProducts,
     };
   } catch {
     return { ok: false };
+  }
+}
+
+export async function fetchBusinessShopProducts(input: {
+  commerceStoreId?: string;
+  commerceStoreSlug?: string;
+  businessProfileId?: string;
+  slug?: string;
+  ownerUid?: string;
+}): Promise<MarketplaceProduct[]> {
+  const candidates = [
+    input.commerceStoreId,
+    input.commerceStoreSlug,
+    input.businessProfileId,
+    input.slug,
+  ]
+    .map((val) => (val || '').trim())
+    .filter((val, idx, arr) => Boolean(val) && arr.indexOf(val) === idx);
+
+  const lowerCandidates = new Set(candidates.map((c) => c.toLowerCase()));
+  const ownerUid = (input.ownerUid || '').trim();
+  const collectById = new Map<string, MarketplaceProduct>();
+
+  const matchesBusinessStore = (s: {
+    id?: string;
+    slug?: string;
+    businessProfileId?: string;
+    ownerUid?: string;
+  }) => {
+    const sid = (s.id || '').trim().toLowerCase();
+    const sslug = (s.slug || '').trim().toLowerCase();
+    const sbp = (s.businessProfileId || '').trim().toLowerCase();
+    return (
+      (sid && lowerCandidates.has(sid)) ||
+      (sslug && lowerCandidates.has(sslug)) ||
+      (sbp && lowerCandidates.has(sbp))
+    );
+  };
+
+  // Query all candidate store identifiers cleanly; also inspect stores list to catch slug/id renames
+  const catalogRes = await fetchUpstreamMarketplaceCatalog(candidates[0]);
+  if (catalogRes.ok) {
+    for (const p of catalogRes.products || []) {
+      if (p.status === 'ACTIVE') collectById.set(p.id, p);
+    }
+
+    if (collectById.size === 0 && Array.isArray(catalogRes.stores)) {
+      const matchedStores = catalogRes.stores.filter(
+        (s) =>
+          matchesBusinessStore(s) ||
+          (ownerUid && s.ownerUid === ownerUid && catalogRes.stores!.filter((st) => st.ownerUid === ownerUid).length === 1)
+      );
+      for (const st of matchedStores) {
+        if (!lowerCandidates.has(st.id.toLowerCase())) {
+          candidates.push(st.id);
+          lowerCandidates.add(st.id.toLowerCase());
+        }
+        if (st.slug && !lowerCandidates.has(st.slug.toLowerCase())) {
+          candidates.push(st.slug);
+          lowerCandidates.add(st.slug.toLowerCase());
+        }
+      }
+    }
+  }
+
+  for (const candidate of candidates.slice(1)) {
+    const res = await fetchUpstreamMarketplaceCatalog(candidate);
+    if (res.ok && Array.isArray(res.products)) {
+      for (const p of res.products) {
+        if (p.status === 'ACTIVE') collectById.set(p.id, p);
+      }
+    }
+  }
+
+  if (collectById.size === 0) {
+    // Final fallback: fetch general marketplace products and match by storeId/storeSlug/businessProfileId/ownerUid
+    const allRes = await fetchUpstreamMarketplaceCatalog();
+    if (allRes.ok && Array.isArray(allRes.products)) {
+      const matchedStoreIds = new Set(
+        (allRes.stores || [])
+          .filter(
+            (s) =>
+              matchesBusinessStore(s) ||
+              (ownerUid && s.ownerUid === ownerUid && (allRes.stores || []).filter((st) => st.ownerUid === ownerUid).length === 1)
+          )
+          .map((s) => s.id)
+      );
+      for (const p of allRes.products) {
+        if (p.status !== 'ACTIVE') continue;
+        if (
+          matchedStoreIds.has(p.storeId) ||
+          matchesBusinessStore({
+            id: p.storeId,
+            slug: p.storeSlug,
+            businessProfileId: p.businessProfileId,
+            ownerUid: p.ownerUid,
+          })
+        ) {
+          collectById.set(p.id, p);
+        }
+      }
+    }
+  }
+
+  return Array.from(collectById.values());
+}
+
+export async function fetchStoreCheckoutConfig(
+  storeId: string
+): Promise<CheckoutPaymentConfig | null> {
+  const cleanStoreId = storeId.trim();
+  if (!cleanStoreId) return null;
+  try {
+    const res = await fetch('/api/commerce/payments/checkout-config', {
+      method: 'GET',
+      headers: {
+        'X-Store-Id': cleanStoreId,
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!raw || typeof raw !== 'object') return null;
+
+    const rawProviders = Array.isArray(raw.activeProviders) ? raw.activeProviders : [];
+    const activeProviders = rawProviders
+      .filter((p): p is Record<string, unknown> => Boolean(p && typeof p === 'object'))
+      .map((p) => {
+        const provider = String(p.provider || '').toLowerCase();
+        if (provider !== 'stripe' && provider !== 'paystack' && provider !== 'flutterwave') {
+          return null;
+        }
+        return {
+          provider: provider as PaymentProviderId,
+          name: typeof p.name === 'string' ? p.name : provider.toUpperCase(),
+          publishableKey: typeof p.publishableKey === 'string' ? p.publishableKey : null,
+          livemode: Boolean(p.livemode),
+        };
+      })
+      .filter((p): p is CheckoutPaymentConfig['activeProviders'][number] => Boolean(p));
+
+    const activeProviderRaw = String(raw.activeProvider || activeProviders[0]?.provider || 'stripe').toLowerCase();
+    const activeProvider: PaymentProviderId =
+      activeProviderRaw === 'paystack' || activeProviderRaw === 'flutterwave'
+        ? activeProviderRaw
+        : 'stripe';
+
+    return {
+      activeProvider,
+      publishableKey: typeof raw.publishableKey === 'string' ? raw.publishableKey : null,
+      livemode: Boolean(raw.livemode),
+      activeProviders,
+      currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : 'USD',
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -192,8 +396,10 @@ export async function fetchPublicProductDetail(
 
   // 1. Query Commerce authoritative endpoint first when available
   try {
+    const headers = await buildAuthHeaders();
     const res = await fetch(`/api/marketplace/products/${encodeURIComponent(cleanId)}`, {
       method: 'GET',
+      headers,
       cache: 'no-store',
     });
     if (res.ok) {
@@ -350,11 +556,24 @@ export async function submitUpstreamProxyCheckout(input: {
   shippingPhone: string;
   shippingAddress: string;
   shippingCity: string;
+  shippingCountry?: string;
+  shippingCountryCode?: string;
+  shippingState?: string;
+  shippingPostalCode?: string;
+  shippingCents?: number;
   note: string;
   paymentMethod: PaymentMethod;
+  provider?: PaymentProviderId;
   customerEmail?: string;
   currency?: string;
-}): Promise<{ ok: boolean; checkoutUrl?: string; orderId?: string; reference?: string; error?: string }> {
+}): Promise<{
+  ok: boolean;
+  checkoutUrl?: string;
+  orderId?: string;
+  reference?: string;
+  provider?: PaymentProviderId;
+  error?: string;
+}> {
   try {
     const headers = await buildAuthHeaders({
       'X-Store-Id': input.storeId,
@@ -366,20 +585,38 @@ export async function submitUpstreamProxyCheckout(input: {
     const cleanEmail =
       (input.customerEmail || auth.currentUser?.email || '').trim() || 'buyer@looma.app';
 
+    const shippingAddressPayload: Record<string, string> = {
+      name: input.shippingName.trim(),
+      phone: input.shippingPhone.trim(),
+      address: input.shippingAddress.trim(),
+      city: input.shippingCity.trim(),
+    };
+    if (input.shippingState?.trim()) {
+      shippingAddressPayload.state = input.shippingState.trim();
+    }
+    if (input.shippingPostalCode?.trim()) {
+      shippingAddressPayload.postalCode = input.shippingPostalCode.trim();
+    }
+    if (input.shippingCountry?.trim()) {
+      shippingAddressPayload.country = input.shippingCountry.trim();
+    }
+    if (input.shippingCountryCode?.trim()) {
+      shippingAddressPayload.countryCode = input.shippingCountryCode.trim().toUpperCase();
+    }
+
     const res = await fetch('/api/commerce/payments/initialize', {
       method: 'POST',
       headers,
       body: JSON.stringify({
         customerName: input.shippingName.trim() || 'Looma Buyer',
         customerEmail: cleanEmail,
+        ...(input.provider ? { provider: input.provider } : {}),
         currency: (input.currency || input.items[0]?.currency || 'USD').toUpperCase(),
-        shippingAddress: {
-          name: input.shippingName.trim(),
-          phone: input.shippingPhone.trim(),
-          address: input.shippingAddress.trim(),
-          city: input.shippingCity.trim(),
-        },
-        callbackUrl: `${currentOrigin}/marketplace?checkout=verify`,
+        ...(typeof input.shippingCents === 'number' && input.shippingCents >= 0
+          ? { shippingCents: Math.round(input.shippingCents) }
+          : {}),
+        shippingAddress: shippingAddressPayload,
+        callbackUrl: `${currentOrigin}/marketplace?checkout=verify&storeId=${encodeURIComponent(input.storeId)}`,
         cancelUrl: `${currentOrigin}/marketplace`,
         note: input.note,
         items: input.items.map((item) => ({
@@ -399,18 +636,54 @@ export async function submitUpstreamProxyCheckout(input: {
             : `Checkout error (HTTP ${res.status})`,
       };
     }
+    const dataObj =
+      payload.data && typeof payload.data === 'object'
+        ? (payload.data as Record<string, unknown>)
+        : {};
+    const checkoutUrl =
+      typeof dataObj.authorization_url === 'string'
+        ? dataObj.authorization_url
+        : typeof dataObj.authorizationUrl === 'string'
+          ? dataObj.authorizationUrl
+          : typeof dataObj.checkoutUrl === 'string'
+            ? dataObj.checkoutUrl
+            : typeof payload.authorization_url === 'string'
+              ? payload.authorization_url
+              : typeof payload.authorizationUrl === 'string'
+                ? payload.authorizationUrl
+                : typeof payload.checkoutUrl === 'string'
+                  ? payload.checkoutUrl
+                  : typeof payload.url === 'string'
+                    ? payload.url
+                    : undefined;
+    const reference =
+      typeof dataObj.reference === 'string'
+        ? dataObj.reference
+        : typeof payload.reference === 'string'
+          ? payload.reference
+          : undefined;
+    const rawProvider =
+      typeof dataObj.provider === 'string'
+        ? dataObj.provider
+        : typeof payload.provider === 'string'
+          ? payload.provider
+          : undefined;
+    const provider =
+      rawProvider === 'stripe' || rawProvider === 'paystack' || rawProvider === 'flutterwave'
+        ? rawProvider
+        : undefined;
+
     return {
       ok: true,
-      checkoutUrl:
-        typeof payload.authorizationUrl === 'string'
-          ? payload.authorizationUrl
-          : typeof payload.checkoutUrl === 'string'
-            ? payload.checkoutUrl
-            : typeof payload.url === 'string'
-              ? payload.url
-              : undefined,
-      orderId: typeof payload.orderId === 'string' ? payload.orderId : undefined,
-      reference: typeof payload.reference === 'string' ? payload.reference : undefined,
+      checkoutUrl,
+      orderId:
+        typeof dataObj.orderId === 'string'
+          ? dataObj.orderId
+          : typeof payload.orderId === 'string'
+            ? payload.orderId
+            : undefined,
+      reference,
+      provider,
     };
   } catch (err) {
     return {
@@ -418,6 +691,354 @@ export async function submitUpstreamProxyCheckout(input: {
       error: err instanceof Error ? err.message : 'Checkout request failed.',
     };
   }
+}
+
+export async function verifyUpstreamProxyPayment(input: {
+  storeId: string;
+  reference: string;
+  queryParams?: Record<string, string>;
+}): Promise<{
+  ok: boolean;
+  order?: MarketplaceOrder;
+  error?: string;
+}> {
+  const cleanStoreId = input.storeId.trim();
+  const cleanRef = input.reference.trim();
+  if (!cleanRef) {
+    return { ok: false, error: 'Missing payment reference.' };
+  }
+  try {
+    const headers = await buildAuthHeaders(
+      cleanStoreId ? { 'X-Store-Id': cleanStoreId } : undefined
+    );
+    const params = new URLSearchParams();
+    if (input.queryParams) {
+      for (const [k, v] of Object.entries(input.queryParams)) {
+        if (k !== 'checkout' && v) {
+          params.set(k, v);
+        }
+      }
+    }
+    const qs = params.toString();
+    const res = await fetch(
+      `/api/commerce/payments/verify/${encodeURIComponent(cleanRef)}${qs ? `?${qs}` : ''}`,
+      {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+      }
+    );
+    const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok || payload.status === false) {
+      return {
+        ok: false,
+        error:
+          typeof payload.error === 'string'
+            ? payload.error
+            : `Verification failed (HTTP ${res.status})`,
+      };
+    }
+    const rawOrder =
+      payload.order && typeof payload.order === 'object'
+        ? (payload.order as Record<string, unknown>)
+        : null;
+    if (!rawOrder) {
+      return { ok: true };
+    }
+    return {
+      ok: true,
+      order: mapUpstreamOrder(rawOrder, cleanStoreId),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Payment verification failed.',
+    };
+  }
+}
+
+export async function fetchUpstreamBuyerOrders(
+  storeFilter?: string
+): Promise<MarketplaceOrder[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const headers = await buildAuthHeaders();
+    const url = storeFilter?.trim()
+      ? `/api/marketplace/orders/mine?store=${encodeURIComponent(storeFilter.trim())}`
+      : '/api/marketplace/orders/mine';
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json().catch(() => null)) as
+      | { orders?: Array<Record<string, unknown>> }
+      | null;
+    if (!Array.isArray(payload?.orders)) return [];
+    return payload.orders.map((raw) => mapUpstreamOrder(raw));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchUpstreamSellerOrders(
+  storeFilter?: string
+): Promise<MarketplaceOrder[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const headers = await buildAuthHeaders();
+    const url = storeFilter?.trim()
+      ? `/api/marketplace/orders/selling?store=${encodeURIComponent(storeFilter.trim())}`
+      : '/api/marketplace/orders/selling';
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json().catch(() => null)) as
+      | { orders?: Array<Record<string, unknown>> }
+      | null;
+    if (!Array.isArray(payload?.orders)) return [];
+    return payload.orders.map((raw) => mapUpstreamOrder(raw));
+  } catch {
+    return [];
+  }
+}
+
+export async function createUpstreamOfflineOrder(input: {
+  storeId: string;
+  customerName: string;
+  customerEmail?: string;
+  paymentMethod: 'cod' | 'wallet';
+  shippingCents: number;
+  note?: string;
+  shippingAddress: {
+    name: string;
+    phone: string;
+    address: string;
+    city: string;
+    country?: string;
+    countryCode?: string;
+    state?: string;
+    postalCode?: string;
+  };
+  items: Array<{ productId: string; variantId?: string; quantity: number }>;
+}): Promise<{ ok: boolean; order?: MarketplaceOrder; error?: string }> {
+  if (!auth.currentUser) {
+    return { ok: false, error: 'Authentication required to place an order.' };
+  }
+  try {
+    const headers = await buildAuthHeaders();
+    const res = await fetch('/api/marketplace/orders/offline', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        storeId: input.storeId,
+        customerName: input.customerName.trim() || 'Looma Buyer',
+        ...(input.customerEmail?.trim() ? { customerEmail: input.customerEmail.trim() } : {}),
+        paymentMethod: input.paymentMethod,
+        shippingCents: Math.max(0, Math.round(input.shippingCents)),
+        note: (input.note || '').trim(),
+        shippingAddress: input.shippingAddress,
+        items: input.items,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      order?: Record<string, unknown>;
+      error?: string;
+    };
+    if (!res.ok || !payload.order) {
+      return {
+        ok: false,
+        error: payload.error || `Order request failed (HTTP ${res.status})`,
+      };
+    }
+    return {
+      ok: true,
+      order: mapUpstreamOrder(payload.order, input.storeId),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unable to submit order.',
+    };
+  }
+}
+
+export async function updateUpstreamOrderStatus(
+  orderId: string,
+  updates: { status?: OrderStatus; paymentStatus?: PaymentStatus }
+): Promise<{ ok: boolean; order?: MarketplaceOrder; error?: string }> {
+  if (!auth.currentUser) {
+    return { ok: false, error: 'Authentication required.' };
+  }
+  try {
+    const headers = await buildAuthHeaders();
+    const res = await fetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/status`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(updates),
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      order?: Record<string, unknown>;
+      error?: string;
+    };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: payload.error || `Order update failed (HTTP ${res.status})`,
+      };
+    }
+    return {
+      ok: true,
+      order: payload.order ? mapUpstreamOrder(payload.order) : undefined,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unable to update upstream order.',
+    };
+  }
+}
+
+function mapUpstreamOrder(
+  raw: Record<string, unknown>,
+  fallbackStoreId: string = ''
+): MarketplaceOrder {
+  const shippingAddrObj =
+    raw.shippingAddress && typeof raw.shippingAddress === 'object'
+      ? (raw.shippingAddress as Record<string, unknown>)
+      : {};
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const totalCents =
+    typeof raw.totalCents === 'number'
+      ? raw.totalCents
+      : typeof raw.total === 'number'
+        ? Math.round(raw.total * 100)
+        : 0;
+  const subtotalCents =
+    typeof raw.subtotalCents === 'number' ? raw.subtotalCents : totalCents;
+  const shippingCents =
+    typeof raw.shippingCents === 'number' ? raw.shippingCents : 0;
+
+  const statusRaw = String(raw.status || 'PROCESSING').toUpperCase();
+  const status: OrderStatus =
+    statusRaw === 'DELIVERED'
+      ? 'DELIVERED'
+      : statusRaw === 'SHIPPED'
+        ? 'SHIPPED'
+        : statusRaw === 'CANCELLED'
+          ? 'CANCELLED'
+          : statusRaw === 'PROCESSING' || statusRaw === 'CONFIRMED' || statusRaw === 'PAID'
+            ? 'CONFIRMED'
+            : 'PENDING';
+
+  const payRaw = String(raw.paymentStatus || 'PAID').toLowerCase();
+  const paymentStatus: PaymentStatus =
+    payRaw === 'refunded' ? 'refunded' : payRaw === 'paid' ? 'paid' : 'pending';
+
+  return {
+    id: typeof raw.id === 'string' ? raw.id : '',
+    buyerUid:
+      typeof raw.buyerUid === 'string'
+        ? raw.buyerUid
+        : typeof raw.buyerFirebaseUid === 'string'
+          ? raw.buyerFirebaseUid
+          : '',
+    buyerName:
+      typeof raw.buyerName === 'string'
+        ? raw.buyerName
+        : typeof raw.customerName === 'string'
+          ? raw.customerName
+          : 'Customer',
+    buyerEmail:
+      typeof raw.buyerEmail === 'string'
+        ? raw.buyerEmail
+        : typeof raw.customerEmail === 'string'
+          ? raw.customerEmail
+          : '',
+    storeId: typeof raw.storeId === 'string' ? raw.storeId : fallbackStoreId,
+    storeName: typeof raw.storeName === 'string' ? raw.storeName : 'Storefront',
+    storeOwnerUid: typeof raw.storeOwnerUid === 'string' ? raw.storeOwnerUid : '',
+    storeBusinessProfileId:
+      typeof raw.businessProfileId === 'string' ? raw.businessProfileId : undefined,
+    items: rawItems.map((entry) => {
+      const item = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+      const unitCents =
+        typeof item.priceCents === 'number'
+          ? item.priceCents
+          : typeof item.price === 'number'
+            ? Math.round(item.price * 100)
+            : 0;
+      const qty =
+        typeof item.quantity === 'number'
+          ? item.quantity
+          : typeof item.qty === 'number'
+            ? item.qty
+            : 1;
+      return {
+        productId: typeof item.productId === 'string' ? item.productId : '',
+        title:
+          typeof item.title === 'string'
+            ? item.title
+            : typeof item.name === 'string'
+              ? item.name
+              : 'Item',
+        priceCents: unitCents,
+        quantity: qty,
+        imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : '',
+      };
+    }),
+    subtotalCents,
+    shippingCents,
+    totalCents,
+    currency: typeof raw.currency === 'string' ? raw.currency.toUpperCase() : 'USD',
+    paymentMethod:
+      raw.paymentMethod === 'cod' || raw.paymentMethod === 'wallet'
+        ? raw.paymentMethod
+        : 'card',
+    paymentStatus,
+    paymentProvider:
+      typeof raw.paymentProvider === 'string' ? raw.paymentProvider : undefined,
+    paymentReference:
+      typeof raw.paymentReference === 'string' ? raw.paymentReference : undefined,
+    status,
+    shippingName:
+      typeof shippingAddrObj.name === 'string'
+        ? shippingAddrObj.name
+        : typeof raw.customerName === 'string'
+          ? raw.customerName
+          : '',
+    shippingPhone:
+      typeof shippingAddrObj.phone === 'string' ? shippingAddrObj.phone : '',
+    shippingAddress:
+      typeof raw.shippingAddress === 'string'
+        ? raw.shippingAddress
+        : typeof shippingAddrObj.address === 'string'
+          ? shippingAddrObj.address
+          : typeof shippingAddrObj.line1 === 'string'
+            ? shippingAddrObj.line1
+            : '',
+    shippingCity:
+      typeof shippingAddrObj.city === 'string' ? shippingAddrObj.city : '',
+    shippingCountry:
+      typeof shippingAddrObj.country === 'string' ? shippingAddrObj.country : undefined,
+    shippingCountryCode:
+      typeof shippingAddrObj.countryCode === 'string'
+        ? shippingAddrObj.countryCode
+        : undefined,
+    shippingState:
+      typeof shippingAddrObj.state === 'string' ? shippingAddrObj.state : undefined,
+    shippingPostalCode:
+      typeof shippingAddrObj.postalCode === 'string'
+        ? shippingAddrObj.postalCode
+        : undefined,
+    note: typeof raw.note === 'string' ? raw.note : '',
+    createdAtMs: timestampToMs(raw.createdAt),
+    updatedAtMs: timestampToMs(raw.updatedAt || raw.createdAt),
+  };
 }
 
 function mapStoreDoc(id: string, data: Record<string, unknown>): MarketplaceStore {
@@ -429,21 +1050,40 @@ function mapStoreDoc(id: string, data: Record<string, unknown>): MarketplaceStor
     ownerUid: typeof data.ownerUid === 'string' ? data.ownerUid : '',
     ownerHandle: typeof data.ownerHandle === 'string' ? data.ownerHandle : 'creator',
     logoUrl: typeof data.logoUrl === 'string' ? data.logoUrl : '',
-    bannerUrl: typeof data.bannerUrl === 'string' ? data.bannerUrl : '',
+    bannerUrl:
+      typeof data.bannerUrl === 'string'
+        ? data.bannerUrl
+        : typeof data.heroImage === 'string'
+          ? data.heroImage
+          : '',
     category: typeof data.category === 'string' ? data.category : 'General',
     currency: typeof data.currency === 'string' ? data.currency : 'USD',
     publishStatus:
       data.publishStatus === 'PUBLISHED' || data.publishStatus === 'SUSPENDED'
         ? data.publishStatus
-        : 'DRAFT',
+        : data.isPublished === true
+          ? 'PUBLISHED'
+          : 'DRAFT',
     externalStoreId:
       typeof data.externalStoreId === 'string' ? data.externalStoreId : undefined,
     businessProfileId:
       typeof data.businessProfileId === 'string' ? data.businessProfileId : undefined,
+    country:
+      typeof data.country === 'string' && data.country.trim()
+        ? data.country.trim()
+        : undefined,
+    countryCode:
+      typeof data.countryCode === 'string' && data.countryCode.trim()
+        ? data.countryCode.trim().toUpperCase()
+        : undefined,
+    location:
+      typeof data.location === 'string' && data.location.trim()
+        ? data.location.trim()
+        : undefined,
     verified: Boolean(data.verified),
     featured: Boolean(data.featured),
     createdAtMs: timestampToMs(data.createdAt),
-    updatedAtMs: timestampToMs(data.updatedAt),
+    updatedAtMs: timestampToMs(data.updatedAt || data.createdAt),
   };
 }
 
@@ -464,6 +1104,12 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
         .map(mapRawVariant)
         .filter((v) => Boolean(v.id))
     : undefined;
+  const derivedPriceCents =
+    typeof data.priceCents === 'number'
+      ? data.priceCents
+      : typeof data.price === 'number'
+        ? Math.round(data.price * 100)
+        : 0;
   return {
     id,
     storeId: typeof data.storeId === 'string' ? data.storeId : '',
@@ -475,7 +1121,7 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
     title: typeof data.title === 'string' ? data.title : typeof data.name === 'string' ? data.name : 'Product',
     description: typeof data.description === 'string' ? data.description : '',
     category: typeof data.category === 'string' ? data.category : 'General',
-    priceCents: typeof data.priceCents === 'number' ? data.priceCents : 0,
+    priceCents: derivedPriceCents,
     compareAtPriceCents:
       typeof data.compareAtPriceCents === 'number'
         ? data.compareAtPriceCents
@@ -484,6 +1130,11 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
     imageUrl: typeof data.imageUrl === 'string' ? data.imageUrl : '',
     galleryUrls: rawGallery && rawGallery.length > 0 ? rawGallery : undefined,
     location: typeof data.location === 'string' && data.location.trim() ? data.location.trim() : undefined,
+    country: typeof data.country === 'string' && data.country.trim() ? data.country.trim() : undefined,
+    countryCode:
+      typeof data.countryCode === 'string' && data.countryCode.trim()
+        ? data.countryCode.trim().toUpperCase()
+        : undefined,
     condition: rawCondition,
     stock: typeof data.stock === 'number' ? data.stock : 0,
     trackQuantity: typeof data.trackQuantity === 'boolean' ? data.trackQuantity : undefined,
@@ -495,7 +1146,7 @@ function mapProductDoc(id: string, data: Record<string, unknown>): MarketplacePr
     tag: typeof data.tag === 'string' ? data.tag : undefined,
     variants: rawVariants && rawVariants.length > 0 ? rawVariants : undefined,
     createdAtMs: timestampToMs(data.createdAt),
-    updatedAtMs: timestampToMs(data.updatedAt),
+    updatedAtMs: timestampToMs(data.updatedAt || data.createdAt),
   };
 }
 
@@ -509,6 +1160,8 @@ function mapOrderDoc(id: string, data: Record<string, unknown>): MarketplaceOrde
     storeId: typeof data.storeId === 'string' ? data.storeId : '',
     storeName: typeof data.storeName === 'string' ? data.storeName : 'Storefront',
     storeOwnerUid: typeof data.storeOwnerUid === 'string' ? data.storeOwnerUid : '',
+    storeBusinessProfileId:
+      typeof data.storeBusinessProfileId === 'string' ? data.storeBusinessProfileId : undefined,
     items: rawItems.map((entry) => {
       const item = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
       return {
@@ -542,6 +1195,14 @@ function mapOrderDoc(id: string, data: Record<string, unknown>): MarketplaceOrde
     shippingPhone: typeof data.shippingPhone === 'string' ? data.shippingPhone : '',
     shippingAddress: typeof data.shippingAddress === 'string' ? data.shippingAddress : '',
     shippingCity: typeof data.shippingCity === 'string' ? data.shippingCity : '',
+    shippingCountry:
+      typeof data.shippingCountry === 'string' ? data.shippingCountry : undefined,
+    shippingCountryCode:
+      typeof data.shippingCountryCode === 'string' ? data.shippingCountryCode : undefined,
+    shippingState:
+      typeof data.shippingState === 'string' ? data.shippingState : undefined,
+    shippingPostalCode:
+      typeof data.shippingPostalCode === 'string' ? data.shippingPostalCode : undefined,
     note: typeof data.note === 'string' ? data.note : '',
     createdAtMs: timestampToMs(data.createdAt),
     updatedAtMs: timestampToMs(data.updatedAt),
@@ -749,6 +1410,9 @@ export async function saveMarketplaceStoreRecord(input: {
   publishStatus: StorePublishStatus;
   externalStoreId?: string;
   businessProfileId?: string;
+  country?: string;
+  countryCode?: string;
+  location?: string;
   verified: boolean;
   featured: boolean;
   isCreate: boolean;
@@ -775,6 +1439,15 @@ export async function saveMarketplaceStoreRecord(input: {
   }
   if (input.businessProfileId && input.businessProfileId.trim()) {
     payload.businessProfileId = input.businessProfileId.trim().slice(0, 128);
+  }
+  if (input.country && input.country.trim()) {
+    payload.country = input.country.trim().slice(0, 80);
+  }
+  if (input.countryCode && input.countryCode.trim()) {
+    payload.countryCode = input.countryCode.trim().toUpperCase().slice(0, 10);
+  }
+  if (input.location && input.location.trim()) {
+    payload.location = input.location.trim().slice(0, 80);
   }
   try {
     const ref = doc(db, 'marketplaceStores', id);
@@ -811,6 +1484,8 @@ export async function saveMarketplaceProductRecord(input: {
   imageUrl: string;
   galleryUrls?: string[];
   location?: string;
+  country?: string;
+  countryCode?: string;
   condition?: ProductCondition;
   stock: number;
   status: ProductStatus;
@@ -850,6 +1525,12 @@ export async function saveMarketplaceProductRecord(input: {
   }
   if (input.location && input.location.trim()) {
     payload.location = input.location.trim().slice(0, 80);
+  }
+  if (input.country && input.country.trim()) {
+    payload.country = input.country.trim().slice(0, 80);
+  }
+  if (input.countryCode && input.countryCode.trim()) {
+    payload.countryCode = input.countryCode.trim().toUpperCase().slice(0, 10);
   }
   if (input.condition) {
     payload.condition = input.condition;
@@ -896,6 +1577,7 @@ export async function createMarketplaceOrderRecord(input: {
   storeId: string;
   storeName: string;
   storeOwnerUid: string;
+  storeBusinessProfileId?: string;
   items: CartItem[];
   shippingCents: number;
   currency: string;
@@ -904,6 +1586,10 @@ export async function createMarketplaceOrderRecord(input: {
   shippingPhone: string;
   shippingAddress: string;
   shippingCity: string;
+  shippingCountry?: string;
+  shippingCountryCode?: string;
+  shippingState?: string;
+  shippingPostalCode?: string;
   note: string;
 }): Promise<string> {
   const id = makeCommerceId('ord');
@@ -915,7 +1601,7 @@ export async function createMarketplaceOrderRecord(input: {
   const totalCents = subtotalCents + shippingCents;
 
   try {
-    await setDoc(doc(db, 'marketplaceOrders', id), {
+    const orderDoc: Record<string, unknown> = {
       id,
       buyerUid: input.buyerUid,
       buyerName: input.buyerName.trim().slice(0, 80) || 'Member',
@@ -944,7 +1630,23 @@ export async function createMarketplaceOrderRecord(input: {
       note: input.note.trim().slice(0, 400),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (input.storeBusinessProfileId && input.storeBusinessProfileId.trim()) {
+      orderDoc.storeBusinessProfileId = input.storeBusinessProfileId.trim().slice(0, 128);
+    }
+    if (input.shippingCountry && input.shippingCountry.trim()) {
+      orderDoc.shippingCountry = input.shippingCountry.trim().slice(0, 80);
+    }
+    if (input.shippingCountryCode && input.shippingCountryCode.trim()) {
+      orderDoc.shippingCountryCode = input.shippingCountryCode.trim().toUpperCase().slice(0, 10);
+    }
+    if (input.shippingState && input.shippingState.trim()) {
+      orderDoc.shippingState = input.shippingState.trim().slice(0, 80);
+    }
+    if (input.shippingPostalCode && input.shippingPostalCode.trim()) {
+      orderDoc.shippingPostalCode = input.shippingPostalCode.trim().slice(0, 40);
+    }
+    await setDoc(doc(db, 'marketplaceOrders', id), orderDoc);
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `marketplaceOrders/${id}`);
